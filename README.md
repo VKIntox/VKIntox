@@ -67,7 +67,10 @@ The `setup_sober.sh` script:
 
 ### Known Issues/Info
 
-- Occasional crashes can happen; to minimise them, make sure your game is stabilised (e.g. in the catalog, everything, graphically speaking, finished loading in) before enabling the effects in the overlay.
+- Being inactive in homescreen freezes the game, then eventually crashes
+- Effect search bar may be non-functional
+- GNOME SDK and FreeDesktop SDK fetching is currently broken
+- Some complex method effects and/or effects that have included headers may fail to load
 - Startup takes long due to deferred reboot workaround
 - The installation script isn't as efficient as it could be
 
