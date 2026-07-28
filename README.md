@@ -68,7 +68,7 @@ The `setup_sober.sh` script:
 ### Known Issues/Info
 
 - Being inactive in homescreen freezes the game, then eventually crashes
-- Effect search bar may be non-functional
+- Initial restart after first launch with VKIntox is required for depth buffer to work
 - GNOME SDK and FreeDesktop SDK fetching is currently broken
 - Some complex method effects and/or effects that have included headers may fail to load
 - Startup takes long due to deferred reboot workaround
