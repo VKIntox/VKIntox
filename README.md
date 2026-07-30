@@ -73,6 +73,8 @@ The `setup_sober.sh` script:
 - Some complex method effects and/or effects that have included headers may fail to load
 - Startup takes long due to deferred reboot workaround
 - The installation script isn't as efficient as it could be
+- Having graphics settings set to Automatic or switching between graphics qualities could cause crashes
+- Depth buffer could freeze after joining a game, press Force re-detect to fix
 
 ### Special Thanks To
 slobodaapl, for making **vkShade** which is the direct source code reprise of this project
