@@ -45,27 +45,25 @@ check_cmd "python3"
 success "All required tools are available"
 
 info "Ensuring Flathub remote is configured..."
-if flatpak remote-list | grep -q "^flathub"; then
+if flatpak remote-list --user | grep -q "^flathub"; then
     success "Flathub remote already exists"
 else
     warn "Flathub remote not found — adding it now"
-    flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
     success "Flathub remote added"
 fi
 
 # ─── Install GNOME SDK ───────────────────────────────────────────────────────
-step "2/4 · Installing GNOME SDK"
+step "2/4 · Installing needed SDKs (Freedesktop & GNOME)"
+info "${DIM}!!! Answer 'y' if prompted about remotes or permissions${NC}"
 
 info "Installing org.gnome.Sdk (latest)..."
-info "${DIM}Answer 'y' if prompted about remotes or permissions${NC}"
 echo ""
+flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/50 2>&1
 
-if flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/50 2>&1; then
-    success "GNOME SDK installed successfully"
-else
-    error "Failed to install GNOME SDK"
-    exit 1
-fi
+info "Installing org.freedesktop.Sdk (latest)..."
+echo ""
+flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/25.08
 
 # ─── Build VKIntox ───────────────────────────────────────────────────────────
 step "3/4 · Building VKIntox"
