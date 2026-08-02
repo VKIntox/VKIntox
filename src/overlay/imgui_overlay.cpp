@@ -218,7 +218,7 @@ namespace VKIntox
         // Font loading
         std::string baseConfigDir = ConfigSerializer::getBaseConfigDir();
         std::vector<std::pair<std::string, std::string>> fontSearchPaths = {
-            {baseConfigDir + "/font/GoogleSansFlex.ttf", "Config directory"}
+            {baseConfigDir + "/font/font.ttf", "Config directory"}
         };
 
         const char* regularPath = nullptr;

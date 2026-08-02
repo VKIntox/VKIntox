@@ -112,9 +112,9 @@ mkdir -p "$FONT_DIR"
 
 # Copy font from the Flatpak app's assets (if available) or skip
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/assets/font/GoogleSansFlex.ttf" ]; then
-    cp "$SCRIPT_DIR/assets/font/GoogleSansFlex.ttf" "$FONT_DIR/"
-    success "Installed GoogleSansFlex.ttf to $FONT_DIR"
+if [ -f "$SCRIPT_DIR/assets/font/font.ttf" ]; then
+    cp "$SCRIPT_DIR/assets/font/font.ttf" "$FONT_DIR/"
+    success "Installed font.ttf (Google Sans Medium) to $FONT_DIR"
 fi
 if [ -f "$SCRIPT_DIR/assets/font/LICENSE" ]; then
     cp "$SCRIPT_DIR/assets/font/LICENSE" "$FONT_DIR/"
