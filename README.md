@@ -9,6 +9,12 @@ A Flatpak/Sober-first fork of **vkShade** which also adds:
 - More resolve ways to handle depth buffers
 - A nicer-ish UI
 
+### As shown here:
+
+![An image showcasing VKIntox in action](assets/showcase_screenshot1.png)
+![An image showcasing VKIntox's UI](assets/showcase_screenshot2.png)
+![An image showcasing VKIntox's depth resolve modes](assets/showcase_screenshot3.png)
+
 > Compiling and using for native apps or Flatpak apps outside of Sober is still possible, of course... But this project has been made with Sober in mind
 
 These help form a post effects processing experience just like ReShade, but accessible to Linux.
