@@ -3,11 +3,7 @@
 [![License](https://img.shields.io/badge/license-zlib-green)](./LICENSE)
 [![NixOS](https://img.shields.io/badge/NixOS-unstable-78C0E8?logo=nixos&logoColor=white)](https://nixos.org)
 
-A Flatpak/Sober-first fork of **vkShade** which also adds:
-- Parallel depth buffer tracking
-- Automatic preference of depth buffers that match the current window size
-- More resolve ways to handle depth buffers
-- A nicer-ish UI
+An independent fork of vkShade, which fixes the issues with depth buffers that vkBasalt, and inherently, vkShade have.
 
 ### As shown here:
 
@@ -15,24 +11,11 @@ A Flatpak/Sober-first fork of **vkShade** which also adds:
 ![An image showcasing VKIntox's UI](assets/showcase_screenshot2.png)
 ![An image showcasing VKIntox's depth resolve modes](assets/showcase_screenshot3.png)
 
-> Compiling and using for native apps or Flatpak apps outside of Sober is still possible, of course... But this project has been made with Sober in mind
 
-These help form a post effects processing experience just like ReShade, but accessible to Linux.
-
-**If depth-dependent effects look wrong, please open the Advanced tab and try changing between depth resolve modes, which after each one, you press F10 (or your set keybind) to reload.
 
 ## ⚠️ Please open an issue if **anything** goes wrong, as long as it is indefinitely VKIntox's fault.
 
 To set it up for Sober, run `./setup_sober.sh`
-
-## Disclaimer
-
-**Use at your own risk**: 
-- unstable shaders or extreme GPU load can still crash or freeze games.
-- VKIntox is driver-level but can still get you moderated
-- this is a very experimental project that has yet to improve.
-
-The codebase needs a lot of work and removage of extra unneeded features slobodaapl/**vkShade** has and those this project added... (e.g. MSAA resolve modes... transient attachment workaround...)
 
 ## Features
 
@@ -42,6 +25,8 @@ The base project, vkBasalt required editing config files and restarting. vkShade
 - **Multiple depth buffer resolve modes** and automatic picking
 - **A specialized setup for [Sober](https://vinegarhq.org/Home/index.html)**, an Android runtime that allows running Roblox on Linux
 
+These help form a post effects processing experience just like ReShade, but accessible to Linux.
+
 ### Depth Buffer
 
 The layer automatically picks a depth buffer that fits the game window, which in almost all cases works perfectly.
@@ -49,14 +34,12 @@ If misconfigured, for Roblox, the depth resolve mode should be Reverse-Z and inv
 
 ### ReShade Shader Support
 
-The `setup_sober.sh` script fetches all ReShade shaders and sets them up for you.
-
-**Requirements for shader installation:** `python3`, `curl`, `unzip` (all checked by the setup script).
-
+This project, thanks to vkBasalt, supports ReShade .fx files with compilation into Spir-V. However, you must note that some shaders may fail to work.
 ## Usage
 
 ### Prerequisites:
 - **A game that uses Vulkan**, and doesn't refuse Vulkan layers (rare, but is possible. DXVK or vkd3d might break VKIntox.)
+- **When running `setup_sober.sh`**, you'll need: `python3`, `curl`, `unzip` (all checked by the setup script).
 
 The `setup_sober.sh` script:
 - Fetches org.gnome.Sdk if necessary
@@ -93,12 +76,20 @@ sudo ninja -C build-release install
 
 - Being inactive in homescreen freezes the game, then eventually crashes
 - Initial restart after first launch with VKIntox is required for depth buffer to work
-- GNOME SDK and FreeDesktop SDK fetching is currently broken
 - Some complex method effects and/or effects that have included headers may fail to load
-- Startup takes long due to deferred reboot workaround
+- Startup may sometimes take long due to deferred reboot workaround
 - The installation script isn't as efficient as it could be
 - Having graphics settings set to Automatic or switching between graphics qualities could cause crashes
 - Depth buffer could freeze after joining a game, press Force re-detect to fix
+
+**If depth-dependent effects look wrong, please open the Advanced tab and try changing between depth resolve modes, which after each one, you press F10 (or your set keybind) to reload. Also try pressing Force re-detect when changing depth buffer settings.
+
+### Disclaimer
+
+**Use at your own risk**: 
+- Unstable shaders or extreme GPU load can crash or freeze games;
+- VKIntox is driver-level but can still get you moderated;
+- This is a very experimental project that has yet to improve.
 
 ### Special Thanks To
 slobodaapl, for making **vkShade** which is the direct source code reprise of this project
