@@ -36,13 +36,11 @@ The codebase needs a lot of work and removage of extra unneeded features sloboda
 
 ## Features
 
-The base project required editing config files and restarting. VKIntox adds:
+The base project, vkBasalt required editing config files and restarting. vkShade, inheriting vkBasalt, didn't have depth resolve modes. VKIntox added:
 
-- **In-game overlay** (`Home` key) with dockable/undockable tab windows and all management
-- **Multiple effect instances** (e.g., cas, cas.1, cas.2)
-- **Per-game profiles** with auto-detection and profile switching
-- **Save/load named configs**
-- **Shader manager** — browse directories, discover and load ReShade shaders (automatically setup by the script)
+- **A nicer in-game overlay** (activated via HOME by default)
+- **Multiple depth buffer resolve modes** and automatic picking
+- **A specialized setup for [Sober](https://vinegarhq.org/Home/index.html)**, an Android runtime that allows running Roblox on Linux
 
 ### Depth Buffer
 
@@ -57,11 +55,31 @@ The `setup_sober.sh` script fetches all ReShade shaders and sets them up for you
 
 ## Usage
 
+### Prerequisites:
+- **A game that uses Vulkan**, and doesn't refuse Vulkan layers (rare, but is possible. DXVK or vkd3d might break VKIntox.)
+
 The `setup_sober.sh` script:
 - Fetches org.gnome.Sdk if necessary
 - Compiles the project locally
 - Installs it as a local Flatpak repo and Vulkan Layer extension
+- Enables it via ENABLE_VKINTOX=1 env variable
 - Deploys shader manager configurations and all ReShade shaders
+
+To install for other Flatpak games:
+- Run `just flatpak-build`
+- Add environment variable `ENABLE_VKINTOX=1` for the game you want VKIntox on
+- Optionally, copy shaders that `setup_sober.sh` fetches
+
+To install for native games:
+- Install: GCC with versions above 9; Meson, Ninja; Vulkan headers; SPIR-V headers; glslangValidator; X11 + Xi development files; wayland-client, wayland-protocols, wayland-scanner; libxkbcommon.
+- Run this to fetch, compile and install:
+```bash
+git clone https://github.com/buwryme/VKIntox.git
+cd VKIntox
+meson setup --buildtype=release --prefix=/usr build-release
+ninja -C build-release
+sudo ninja -C build-release install
+```
 
 ### Key Bindings
 
