@@ -11,10 +11,6 @@ An independent fork of vkShade, which fixes the issues with depth buffers that v
 ![An image showcasing VKIntox's UI](assets/showcase_screenshot2.png)
 ![An image showcasing VKIntox's depth resolve modes](assets/showcase_screenshot3.png)
 
-
-
-## ⚠️ Please open an issue if **anything** goes wrong, as long as it is indefinitely VKIntox's fault.
-
 To set it up for Sober, run `./setup_sober.sh`
 
 ## Features
@@ -90,6 +86,8 @@ sudo ninja -C build-release install
 - Unstable shaders or extreme GPU load can crash or freeze games;
 - VKIntox is driver-level but can still get you moderated;
 - This is a very experimental project that has yet to improve.
+
+#### ⚠️ Please open an issue if **anything** goes wrong, as long as it is indefinitely VKIntox's fault.
 
 ### Special Thanks To
 slobodaapl, for making **vkShade** which is the direct source code reprise of this project
