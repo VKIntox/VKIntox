@@ -32,7 +32,7 @@ To set it up for Sober, run `./setup_sober.sh`
 - VKIntox is driver-level but can still get you moderated
 - this is a very experimental project that has yet to improve.
 
-The codebase needs a lot of work and removage of extra unneeded features slobodaapl/**vkShade** bundles in...
+The codebase needs a lot of work and removage of extra unneeded features slobodaapl/**vkShade** has and those this project added... (e.g. MSAA resolve modes... transient attachment workaround...)
 
 ## Features
 
