@@ -70,13 +70,10 @@ sudo ninja -C build-release install
 
 ### Known Issues/Info
 
-- Being inactive in homescreen freezes the game, then eventually crashes
 - Initial restart after first launch with VKIntox is required for depth buffer to work
-- Some complex method effects and/or effects that have included headers may fail to load
+- Effects, outside the ones already installed, might fail
 - Startup may sometimes take long due to deferred reboot workaround
-- The installation script isn't as efficient as it could be
 - Having graphics settings set to Automatic or switching between graphics qualities could cause crashes
-- Depth buffer could freeze after joining a game, press Force re-detect to fix
 
 **If depth-dependent effects look wrong, please open the Advanced tab and try changing between depth resolve modes, which after each one, you press F10 (or your set keybind) to reload. Also try pressing Force re-detect when changing depth buffer settings.
 
