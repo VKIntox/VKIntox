@@ -61,9 +61,9 @@ TEXTURES_DIR="$RESHADE_DIR/Textures"
 SHADER_MANAGER_CONF="$SOBER_CONFIG/shader_manager.conf"
 FONT_DIR="$SOBER_CONFIG/font"
 
-# Clean up legacy include folder if present to avoid pollution
-rm -rf "$SHADERS_DIR/include" "$SHADERS_DIR/Include"
-mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$FONT_DIR"
+# Clean up legacy folders to avoid pollution
+rm -rf "$RESHADE_DIR"
+mkdir -p "$RESHADE_DIR"
 
 # Copy the bundled font if present (Flatpak assets).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
