@@ -1,10 +1,6 @@
 #ifndef COMMAND_BUFFER_HPP_INCLUDED
 #define COMMAND_BUFFER_HPP_INCLUDED
 #include <vector>
-#include <fstream>
-#include <string>
-#include <iostream>
-#include <vector>
 #include <memory>
 
 #include "vulkan_include.hpp"

@@ -1,9 +1,6 @@
 #ifndef LOGICAL_DEVICE_HPP_INCLUDED
 #define LOGICAL_DEVICE_HPP_INCLUDED
-#include <vector>
-#include <fstream>
-#include <string>
-#include <iostream>
+#include <atomic>
 #include <vector>
 #include <memory>
 #include <unordered_map>
@@ -170,6 +167,13 @@ namespace VKIntox
 
         // ImGui overlay - lives at device level to survive swapchain recreation
         std::unique_ptr<ImGuiOverlay> imguiOverlay;
+
+        // Set by panicLayer() when the layer hits a fatal error. While true,
+        // interceptors take the pass-through fast path: the swapchain keeps
+        // presenting, the toast stays visible, but no effect work is done.
+        // Cleared only by DestroyDevice — the user must restart the game to
+        // re-enable effects after a panic.
+        std::atomic<bool> softDisabled{false};
     };
 } // namespace VKIntox
 

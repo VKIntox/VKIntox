@@ -101,7 +101,6 @@ namespace VKIntox
         {
             maxEffectsVal = std::clamp(maxEffectsVal, 1, 200);
             settingsManager.setMaxEffects(maxEffectsVal);
-            maxEffects = static_cast<size_t>(maxEffectsVal);
             saveSettings();
         }
 

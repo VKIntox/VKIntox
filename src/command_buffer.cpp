@@ -44,20 +44,17 @@ namespace VKIntox
         return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     }
 
+    // Restore barriers use the same mask as source barriers — both describe
+    // the depth attachment's observed layout. Kept as a separate name so
+    // call sites read naturally.
     static VkPipelineStageFlags getObservedDepthRestoreStages(const DepthState& depthState)
     {
-        if (getObservedDepthAttachmentLayout(depthState) == VK_IMAGE_LAYOUT_GENERAL)
-            return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-
-        return VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        return getObservedDepthSourceStages(depthState);
     }
 
     static VkAccessFlags getObservedDepthRestoreAccess(const DepthState& depthState)
     {
-        if (getObservedDepthAttachmentLayout(depthState) == VK_IMAGE_LAYOUT_GENERAL)
-            return VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-
-        return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        return getObservedDepthSourceAccess(depthState);
     }
 
     static bool shouldKeepObservedDepthInGeneralLayout(const DepthState& depthState)
@@ -136,17 +133,29 @@ namespace VKIntox
         // "in use" by the GPU until the CB that sampled from it completes.
         // Without this fence wait, UpdateDescriptorSets modifies memory that
         // the GPU may be reading → undefined behavior → VK_ERROR_DEVICE_LOST.
+        //
+        // Bounded timeout: if the GPU is wedged (the classic "0 fps" symptom),
+        // an unbounded wait would freeze every thread that touches globalLock.
+        // We skip the descriptor update on timeout — the previous frame's
+        // descriptor stays valid, so the worst case is one stale frame.
         if (imageIndex < pLogicalSwapchain->effectSubmitFences.size()
             && pLogicalSwapchain->effectSubmitFences[imageIndex] != VK_NULL_HANDLE)
         {
+            constexpr uint64_t FENCE_TIMEOUT_NS = 2'000'000'000ULL;  // 2 seconds
             VkResult waitResult = pLogicalDevice->vkd.WaitForFences(
                 pLogicalDevice->device, 1, &pLogicalSwapchain->effectSubmitFences[imageIndex],
-                VK_TRUE, UINT64_MAX);  // Must complete before we can safely update
+                VK_TRUE, FENCE_TIMEOUT_NS);
             if (waitResult == VK_ERROR_DEVICE_LOST)
             {
                 Logger::err("recordDepthResolveSnapshotViaShader: WaitForFences returned DEVICE_LOST for image "
                             + std::to_string(imageIndex) + " — descriptor set update skipped");
                 return;  // Don't record anything if device is lost
+            }
+            if (waitResult == VK_TIMEOUT)
+            {
+                Logger::warn("recordDepthResolveSnapshotViaShader: fence wait timed out for image "
+                             + std::to_string(imageIndex) + " — descriptor set update skipped this frame");
+                return;
             }
             pLogicalDevice->vkd.ResetFences(pLogicalDevice->device, 1, &pLogicalSwapchain->effectSubmitFences[imageIndex]);
         }
@@ -846,7 +855,20 @@ namespace VKIntox
 
         for (uint32_t i = 0; i < count; i++)
         {
-            pLogicalDevice->vkd.CreateSemaphore(pLogicalDevice->device, &info, nullptr, &semaphores[i]);
+            VkResult vr = pLogicalDevice->vkd.CreateSemaphore(pLogicalDevice->device, &info, nullptr, &semaphores[i]);
+            if (vr != VK_SUCCESS)
+            {
+                Logger::err("createSemaphores: CreateSemaphore failed at index "
+                            + std::to_string(i) + " (" + std::to_string(vr) + ")");
+                // Clean up the semaphores we already created so we don't leak.
+                for (uint32_t j = 0; j < i; ++j)
+                {
+                    if (semaphores[j] != VK_NULL_HANDLE)
+                        pLogicalDevice->vkd.DestroySemaphore(pLogicalDevice->device, semaphores[j], nullptr);
+                }
+                semaphores.clear();
+                return semaphores;
+            }
         }
         return semaphores;
     }

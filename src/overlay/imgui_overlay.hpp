@@ -1,10 +1,12 @@
 #ifndef IMGUI_OVERLAY_HPP_INCLUDED
 #define IMGUI_OVERLAY_HPP_INCLUDED
 
+#include <atomic>
 #include <vector>
 #include <memory>
 #include <string>
 #include <chrono>
+#include <mutex>
 #include <map>
 #include <set>
 
@@ -14,6 +16,7 @@
 #include "effects/params/effect_param.hpp"
 #include "config_serializer.hpp"
 #include "settings_manager.hpp"
+#include "logger.hpp"
 
 namespace VKIntox
 {
@@ -36,9 +39,20 @@ namespace VKIntox
     // UI preferences that persist across swapchain recreation
     // Effect-related state is managed by EffectRegistry
     // Settings are managed by SettingsManager
+    // UI visibility state that survives swapchain recreation.
     struct OverlayPersistentState
     {
         bool visible = false;
+    };
+
+    // Persistent toast notification shown in the top-right corner.
+    // Used for fatal layer errors that require user acknowledgement.
+    // The toast does not auto-dismiss; it stays until the user clicks it.
+    struct ToastNotification
+    {
+        std::string                         message;
+        LogLevel                            level = LogLevel::Error;
+        std::chrono::steady_clock::time_point createdAt = std::chrono::steady_clock::now();
     };
 
     // Snapshot of the depth-capture state, gathered each frame for the Advanced
@@ -75,6 +89,11 @@ namespace VKIntox
 
         void toggle();
         bool isVisible() const { return visible; }
+
+        // Push a persistent toast notification. Thread-safe.
+        // Toasts are rendered top-right and remain until the user dismisses them.
+        void pushToast(LogLevel level, const std::string& message);
+        bool hasPendingToasts() const;
 
         void updateState(OverlayState newState);
 
@@ -163,6 +182,7 @@ namespace VKIntox
         void renderAdvancedView();  // Depth buffer switching (Advanced tab)
         void gatherDepthInfo();     // Snapshot LogicalDevice depth state under globalLock
         void applyDepthPinRequests();  // Flush UI depth-pin/clear requests to LogicalDevice
+        void renderToasts();       // Persistent top-right notifications
 
         LogicalDevice* pLogicalDevice;
         OverlayPersistentState* pPersistentState;
@@ -184,7 +204,6 @@ namespace VKIntox
         int insertPosition = -1;  // Position to insert effects (-1 = append to end)
         char addEffectsSearch[64] = "";  // Search filter for add effects view
         bool inConfigManageMode = false;
-        int currentTab = 0;  // 0=Effects, 1=Shaders, 2=Settings, 3=Diagnostics
         std::vector<std::string> configList;
 
         // Shader Manager state
@@ -208,7 +227,12 @@ namespace VKIntox
         int listeningForKey = 0;  // 0=none, 1=toggle, 2=reload, 3=overlay
         bool settingsSaved = false;  // True when settings saved, cleared by vkintox.cpp
         bool shaderPathsChanged = false;  // True when shader manager saved, cleared by vkintox.cpp
-        size_t maxEffects = 10;  // Cached from settingsManager for VRAM estimates
+
+        // Persistent toast notifications (top-right corner, dismissable by user).
+        // Toasts survive overlay hide/show cycles and are rendered even when the
+        // main overlay window is hidden, so fatal errors stay visible.
+        mutable std::mutex toastsMutex;
+        std::vector<ToastNotification> toasts;
 
         // UI state for Advanced (depth buffer) view
         DepthInfo depthInfo;  // Refreshed each frame before rendering

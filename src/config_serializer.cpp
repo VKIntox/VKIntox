@@ -434,7 +434,11 @@ namespace VKIntox
         return true;
     }
 
-    // Scan a directory recursively for Shaders/ and Textures/ subdirectories
+    // Scan a directory recursively for Shaders/ and Textures/ subdirectories.
+    // For each Shaders/ folder we also add its parent, so shaders that live in
+    // a subfolder and `#include "ReShade.fxh"` (with the .fxh sitting next to
+    // the Shaders/ directory) resolve correctly. Without the parent entry the
+    // preprocessor only knows about the Shaders/ subfolder itself.
     static void scanDirectoryForShaders(
         const std::string& dir,
         std::vector<std::string>& shaderPaths,
@@ -450,9 +454,19 @@ namespace VKIntox
 
                 std::string dirName = entry.path().filename().string();
                 if (equalsIgnoreCaseLocal(dirName, "Shaders"))
+                {
                     shaderPaths.push_back(entry.path().string());
+                    // Add the parent directory too — this is where shared
+                    // headers like ReShade.fxh typically live. De-duplicated
+                    // below so we don't accumulate duplicates across packages.
+                    std::string parent = entry.path().parent_path().string();
+                    if (std::find(shaderPaths.begin(), shaderPaths.end(), parent) == shaderPaths.end())
+                        shaderPaths.push_back(parent);
+                }
                 else if (equalsIgnoreCaseLocal(dirName, "Textures"))
+                {
                     texturePaths.push_back(entry.path().string());
+                }
             }
         }
         catch (const std::filesystem::filesystem_error& e)

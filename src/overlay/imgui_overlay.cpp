@@ -310,6 +310,126 @@ namespace VKIntox
         saveToPersistentState();
     }
 
+    void ImGuiOverlay::pushToast(LogLevel level, const std::string& message)
+    {
+        std::lock_guard<std::mutex> lock(toastsMutex);
+        // Avoid stacking identical messages — refresh timestamp instead.
+        for (auto& t : toasts)
+        {
+            if (t.message == message && t.level == level)
+            {
+                t.createdAt = std::chrono::steady_clock::now();
+                return;
+            }
+        }
+        toasts.push_back({message, level, std::chrono::steady_clock::now()});
+        // Hard cap so a runaway panic loop can't exhaust memory.
+        if (toasts.size() > 8)
+            toasts.erase(toasts.begin(), toasts.end() - 8);
+    }
+
+    bool ImGuiOverlay::hasPendingToasts() const
+    {
+        std::lock_guard<std::mutex> lock(toastsMutex);
+        return !toasts.empty();
+    }
+
+    void ImGuiOverlay::renderToasts()
+    {
+        // Snapshot under the lock so we can render without holding it.
+        std::vector<ToastNotification> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(toastsMutex);
+            snapshot = toasts;
+        }
+        if (snapshot.empty())
+            return;
+
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const float margin = 12.0f;
+        const float width = 380.0f;
+        const float rowHeight = 72.0f;
+        const float gap = 8.0f;
+
+        ImVec2 startPos(viewport->WorkPos.x + viewport->WorkSize.x - width - margin,
+                        viewport->WorkPos.y + margin);
+
+        std::vector<size_t> dismissed;
+        for (size_t i = 0; i < snapshot.size(); ++i)
+        {
+            const auto& t = snapshot[i];
+            ImVec2 pos(startPos.x, startPos.y + static_cast<float>(i) * (rowHeight + gap));
+            ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(width, rowHeight), ImGuiCond_Always);
+
+            const ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoTitleBar;
+
+            // Color by level: red for errors, amber for warnings, blue for info.
+            ImVec4 headerColor;
+            const char* tag = "INFO";
+            switch (t.level)
+            {
+                case LogLevel::Error: headerColor = ImVec4(0.78f, 0.20f, 0.20f, 1.0f); tag = "ERROR"; break;
+                case LogLevel::Warn:  headerColor = ImVec4(0.82f, 0.55f, 0.18f, 1.0f); tag = "WARN";  break;
+                default:              headerColor = ImVec4(0.22f, 0.45f, 0.78f, 1.0f); tag = "INFO";  break;
+            }
+
+            char label[32];
+            snprintf(label, sizeof(label), "##VKIntoxToast%zu", i);
+
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.12f, 0.94f));
+            ImGui::PushStyleColor(ImGuiCol_Border, headerColor);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+
+            bool open = ImGui::Begin(label, nullptr, flags);
+
+            ImGui::PopStyleVar(3);
+            ImGui::PopStyleColor(2);
+
+            if (open)
+            {
+                // Header row: colored tag on the left, dismiss button on the right.
+                ImGui::PushStyleColor(ImGuiCol_Text, headerColor);
+                ImGui::TextUnformatted("VKIntox");
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                ImGui::TextDisabled("(%s)", tag);
+                ImGui::SameLine();
+
+                const float btnWidth = 22.0f;
+                ImGui::SetCursorPosX(ImGui::GetWindowWidth() - btnWidth - 12.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.32f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.20f, 0.20f, 1.0f));
+                if (ImGui::Button("x", ImVec2(btnWidth, 0)))
+                    dismissed.push_back(i);
+                ImGui::PopStyleColor(2);
+
+                ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 12.0f);
+                ImGui::TextUnformatted(t.message.c_str());
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::End();
+        }
+
+        if (!dismissed.empty())
+        {
+            std::lock_guard<std::mutex> lock(toastsMutex);
+            // Erase in reverse so indices stay valid.
+            for (auto it = dismissed.rbegin(); it != dismissed.rend(); ++it)
+            {
+                if (*it < toasts.size())
+                    toasts.erase(toasts.begin() + *it);
+            }
+        }
+    }
+
     void ImGuiOverlay::saveToPersistentState()
     {
         if (!pPersistentState)
@@ -681,7 +801,10 @@ namespace VKIntox
 
     VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImageView imageView, uint32_t width, uint32_t height)
     {
-        if (!backendInitialized || !visible)
+        // Render even when the main overlay is hidden if there are pending
+        // toast notifications — fatal errors must stay visible to the user.
+        const bool hasToasts = hasPendingToasts();
+        if (!backendInitialized || (!visible && !hasToasts))
             return VK_NULL_HANDLE;
 
         const bool blockOverlayInput = visible && settingsManager.getOverlayBlockInput();
@@ -800,10 +923,6 @@ namespace VKIntox
         io.MouseDown[1] = mouse.rightButton;
         io.MouseDown[2] = mouse.middleButton;
         io.MouseWheel = mouse.scrollDelta;
-        // Do NOT draw a software cursor — it trails behind the real cursor and
-        // leaves ghost artefacts on frames where the overlay is active.
-        // The OS cursor (or compositor cursor on Wayland) is always visible
-        // because VKIntox sets inputBlocked=false when the overlay is hidden.
         io.MouseDrawCursor = true;
 
         // Keyboard input for text fields
@@ -822,6 +941,36 @@ namespace VKIntox
         // ImGui frame
         ImGui_ImplVulkan_NewFrame();
         ImGui::NewFrame();
+
+        // Toast notifications render even when the main overlay window is hidden,
+        // so fatal errors stay visible until the user dismisses them.
+        renderToasts();
+
+        // When the overlay is hidden but toasts are showing, skip the main
+        // window — toasts are standalone floating windows.
+        if (!visible)
+        {
+            ImGui::Render();
+
+            VkRenderPassBeginInfo rpBegin = {};
+            rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rpBegin.renderPass = renderPass;
+            rpBegin.framebuffer = framebuffer;
+            rpBegin.renderArea.extent.width = width;
+            rpBegin.renderArea.extent.height = height;
+
+            pLogicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+            pLogicalDevice->vkd.CmdEndRenderPass(cmd);
+
+            VkResult endRes = pLogicalDevice->vkd.EndCommandBuffer(cmd);
+            if (endRes != VK_SUCCESS)
+            {
+                Logger::err("Failed to end ImGui command buffer (toast-only): " + std::to_string(endRes));
+                return VK_NULL_HANDLE;
+            }
+            return cmd;
+        }
 
         // Clamp overlay window to screen bounds so it can never go offscreen
         ImGuiViewport* viewport = ImGui::GetMainViewport();

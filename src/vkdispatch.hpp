@@ -25,5 +25,3 @@ namespace VKIntox
 } // namespace VKIntox
 
 #undef FORVKFUNC
-#undef VK_INSTANCE_FUNCS
-#undef VK_DEVICE_FUNCS

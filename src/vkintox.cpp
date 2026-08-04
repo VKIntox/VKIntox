@@ -101,11 +101,7 @@ namespace VKIntox
     static std::unordered_map<VkRenderPass, VkImageLayout> renderPassDepthFinalLayouts;
 
     std::mutex globalLock;
-#ifdef _GCC_
-    using scoped_lock __attribute__((unused)) = std::lock_guard<std::mutex>;
-#else
     using scoped_lock = std::lock_guard<std::mutex>;
-#endif
 
     template<typename DispatchableType>
     void* GetKey(DispatchableType inst)
@@ -251,6 +247,11 @@ namespace VKIntox
         return pLogicalSwapchain->depthResolveUsesShader ? VK_IMAGE_ASPECT_COLOR_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
     }
 
+#ifdef VKINTOX_DEBUG
+    // Developer-only debug helper: dumps the depth-resolve image to
+    // /tmp/vkintox-depth-copy-<i>.f32 so we can inspect what the layer is
+    // feeding into effects. Compiled out of release builds — it does a
+    // synchronous QueueWaitIdle + MapMemory on the present path.
     static void maybeDumpDepthResolveImage(LogicalDevice* pLogicalDevice, LogicalSwapchain* pLogicalSwapchain, uint32_t imageIndex, VkQueue queue)
     {
         static bool dumped = false;
@@ -429,6 +430,9 @@ namespace VKIntox
         pLogicalDevice->vkd.DestroyBuffer(pLogicalDevice->device, stagingBuffer, nullptr);
         pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, stagingMemory, nullptr);
     }
+#else
+    static inline void maybeDumpDepthResolveImage(LogicalDevice*, LogicalSwapchain*, uint32_t, VkQueue) {}
+#endif
 
     static void logNvQueueCheckpointData(LogicalDevice* pLogicalDevice, VkQueue queue, const char* context)
     {
@@ -551,8 +555,14 @@ namespace VKIntox
         logDeviceFaultInfo(pLogicalDevice, context);
     }
 
-    // Signal-safe crash recovery for SIGFPE/SIGABRT from embedded reshadefx compiler.
-    // These signals cannot be caught by C++ try-catch — they require signal handlers.
+    // Signal-safe crash recovery for SIGFPE/SIGABRT/SIGSEGV from the embedded
+    // reshadefx compiler. C++ try/catch cannot catch these, so we install a
+    // siglongjmp trampoline that the compiler path arms.
+    //
+    // The trampoline is thread-local: only the thread that armed it can be
+    // recovered. Signals delivered to other threads fall through to the
+    // default handler (which terminates the process — that's correct, since
+    // we have no recovery context for them).
     static thread_local sigjmp_buf signalJmpBuf;
     static thread_local volatile sig_atomic_t signalJmpActive = 0;
     static thread_local volatile sig_atomic_t caughtSignal = 0;
@@ -564,30 +574,58 @@ namespace VKIntox
             caughtSignal = sig;
             siglongjmp(signalJmpBuf, 1);
         }
-        // Print backtrace before crashing so we can find the source
-        const char* sigName = (sig == SIGFPE) ? "SIGFPE" : (sig == SIGABRT) ? "SIGABRT" : "SIGNAL";
-        fprintf(stderr, "\nVKIntox: caught %s — backtrace:\n", sigName);
-        void* frames[64];
-        int count = backtrace(frames, 64);
-        backtrace_symbols_fd(frames, count, 2);  // fd 2 = stderr
-        fprintf(stderr, "\n");
-        // Restore default handler and re-raise
-        signal(sig, SIG_DFL);
+        // Async-signal-safe backtrace dump, then default disposition.
+        const char* sigName = (sig == SIGFPE) ? "SIGFPE"
+                            : (sig == SIGABRT) ? "SIGABRT"
+                            : (sig == SIGSEGV) ? "SIGSEGV" : "SIGNAL";
+        constexpr const char* prefix = "\nVKIntox: caught ";
+        (void)write(2, prefix, strlen(prefix));
+        (void)write(2, sigName, strlen(sigName));
+        constexpr const char* mid = " — backtrace:\n";
+        (void)write(2, mid, strlen(mid));
+        void* frames[32];
+        int count = backtrace(frames, 32);
+        backtrace_symbols_fd(frames, count, 2);
+        (void)write(2, "\n", 1);
+        // Restore default handler and re-raise so the process dies cleanly
+        // (and produces a core dump if the user has cores enabled).
+        struct sigaction sa = {};
+        sa.sa_handler = SIG_DFL;
+        sigemptyset(&sa.sa_mask);
+        sigaction(sig, &sa, nullptr);
         raise(sig);
     }
 
+    static std::once_flag g_crashHandlerOnce;
     static void installCrashHandlers()
     {
-        static bool installed = false;
-        if (installed)
-            return;
-        struct sigaction sa = {};
-        sa.sa_handler = crashSignalHandler;
-        sa.sa_flags = 0;
-        sigemptyset(&sa.sa_mask);
-        sigaction(SIGFPE, &sa, nullptr);
-        sigaction(SIGABRT, &sa, nullptr);
-        installed = true;
+        std::call_once(g_crashHandlerOnce, []() {
+            struct sigaction sa = {};
+            sa.sa_handler = crashSignalHandler;
+            sa.sa_flags = SA_RESETHAND;  // Auto-reset on delivery so a second
+                                          // signal terminates the process.
+            sigemptyset(&sa.sa_mask);
+            sigaction(SIGFPE, &sa, nullptr);
+            sigaction(SIGABRT, &sa, nullptr);
+            sigaction(SIGSEGV, &sa, nullptr);
+        });
+    }
+
+    // Push a fatal-error toast onto the device's overlay and switch the layer
+    // into pass-through mode. The game keeps rendering; effects are disabled
+    // until the device is destroyed (i.e. until the user restarts the game).
+    static void panicLayer(LogicalDevice* pLogicalDevice, const std::string& reason)
+    {
+        Logger::err("VKIntox panic: " + reason);
+        if (pLogicalDevice)
+        {
+            pLogicalDevice->softDisabled.store(true, std::memory_order_release);
+            if (pLogicalDevice->imguiOverlay)
+                pLogicalDevice->imguiOverlay->pushToast(
+                    LogLevel::Error,
+                    "VKIntox disabled itself to keep the game alive.\nReason: " + reason +
+                    "\nEffects are off until you restart the game.\nClick [x] to dismiss.");
+        }
     }
 
     // Helper for key press with debounce - returns true on key-down edge
@@ -1005,7 +1043,13 @@ namespace VKIntox
 
     void countTrackedDepthDraw(LogicalDevice* pLogicalDevice, VkCommandBuffer commandBuffer, uint32_t drawCount = 1)
     {
-        pLogicalDevice->commandBufferRecordedDrawCounts[commandBuffer] += drawCount;
+        // Single hash lookup via try_emplace — returns an iterator to the
+        // existing entry (with the inserted flag set to false) or to a freshly
+        // inserted entry (zero-initialized). The previous code did operator[]
+        // (which inserts) followed by a separate find on
+        // commandBufferDepthStates — two hash ops per draw call.
+        auto emplaceResult = pLogicalDevice->commandBufferRecordedDrawCounts.try_emplace(commandBuffer, 0);
+        emplaceResult.first->second += drawCount;
 
         auto scopeIt = pLogicalDevice->commandBufferDepthStates.find(commandBuffer);
         if (scopeIt == pLogicalDevice->commandBufferDepthStates.end() || !scopeIt->second.inRenderScope)
@@ -1172,12 +1216,14 @@ namespace VKIntox
         scopeState.snapshotTarget = snapshotTarget;
         pLogicalDevice->pendingTransferLinkedDepthScopes.erase(pendingIt);
 
-        Logger::debug("depth candidate transfer-linked from " + std::string(reason)
-                      + ": draws=" + std::to_string(scopeState.drawCount)
-                      + " swapchain=" + convertToString(snapshotTarget.swapchain)
-                      + " imageIndex=" + std::to_string(snapshotTarget.imageIndex)
-                      + " depthImage=" + convertToString(scopeState.depthState.image)
-                      + " depthView=" + convertToString(scopeState.depthState.imageView));
+        VKINTOX_LOG_DEBUG([&](std::string& s) {
+            s = "depth candidate transfer-linked from " + std::string(reason)
+              + ": draws=" + std::to_string(scopeState.drawCount)
+              + " swapchain=" + convertToString(snapshotTarget.swapchain)
+              + " imageIndex=" + std::to_string(snapshotTarget.imageIndex)
+              + " depthImage=" + convertToString(scopeState.depthState.image)
+              + " depthView=" + convertToString(scopeState.depthState.imageView);
+        });
 
         pLogicalDevice->bestDepthCandidate.valid = true;
         pLogicalDevice->bestDepthCandidate.depthState = scopeState.depthState;
@@ -1190,6 +1236,9 @@ namespace VKIntox
         recordDepthResolveSnapshotForCommandBuffer(pLogicalDevice, commandBuffer, scopeState.depthState, &snapshotTarget);
     }
 
+    // Caller MUST hold globalLock. Acquiring it here would deadlock because
+    // both callers (tryActivatePendingTransferLinkedDepthScope and
+    // VKIntox_CmdClearAttachments) already hold it when invoking us.
     void recordDepthResolveSnapshotForCommandBuffer(LogicalDevice* pLogicalDevice,
                                                     VkCommandBuffer commandBuffer,
                                                     const DepthState& depthState,
@@ -1209,8 +1258,6 @@ namespace VKIntox
                           + convertToString(depthState.image) + ")");
             return;
         }
-
-        scoped_lock l(globalLock);
 
         if (pSnapshotTarget == nullptr || pSnapshotTarget->swapchain == VK_NULL_HANDLE)
         {
@@ -1232,16 +1279,10 @@ namespace VKIntox
         }
         target.pLogicalSwapchain = swapIt->second.get();
 
-        Logger::debug("record depth resolve snapshot: commandBuffer=" + convertToString(commandBuffer)
-                      + " swapchain=" + convertToString(target.swapchain)
-                      + " imageIndex=" + std::to_string(target.imageIndex)
-                      + " depthImage=" + convertToString(depthState.image)
-                      + " depthView=" + convertToString(depthState.imageView)
-                      + " format=" + convertToString(depthState.format));
-
         recordDepthResolveSnapshot(pLogicalDevice, target.pLogicalSwapchain, commandBuffer, target.imageIndex, depthState);
     }
 
+    // Caller MUST hold globalLock (same rationale as above).
     void recordDepthResolveSnapshotForAllSwapchains(LogicalDevice* pLogicalDevice,
                                                     VkCommandBuffer commandBuffer,
                                                     const DepthState& depthState)
@@ -1257,8 +1298,6 @@ namespace VKIntox
             return;
         }
 
-        scoped_lock l(globalLock);
-
         for (auto& [swapchainHandle, pLogicalSwapchain] : swapchainMap)
         {
             if (!pLogicalSwapchain || pLogicalSwapchain->pLogicalDevice != pLogicalDevice)
@@ -1266,13 +1305,6 @@ namespace VKIntox
 
             for (uint32_t imageIndex = 0; imageIndex < pLogicalSwapchain->imageCount; ++imageIndex)
             {
-                Logger::debug("record depth resolve snapshot for all swapchain images: commandBuffer="
-                              + convertToString(commandBuffer)
-                              + " swapchain=" + convertToString(swapchainHandle)
-                              + " imageIndex=" + std::to_string(imageIndex)
-                              + " depthImage=" + convertToString(depthState.image)
-                              + " depthView=" + convertToString(depthState.imageView)
-                              + " format=" + convertToString(depthState.format));
                 recordDepthResolveSnapshot(pLogicalDevice, pLogicalSwapchain.get(), commandBuffer, imageIndex, depthState);
             }
         }
@@ -1932,18 +1964,6 @@ namespace VKIntox
                             depth);
     }
 
-    // Apply modified parameters from overlay to config
-    void applyOverlayParams(LogicalDevice* pLogicalDevice)
-    {
-        // Parameters are already in EffectRegistry (the single source of truth)
-        // Effects read directly from the registry when recreated
-        // This function just logs for debugging
-        if (!pLogicalDevice->imguiOverlay)
-            return;
-
-        Logger::info("Applying parameters from overlay - effects will read from EffectRegistry");
-    }
-
     // Detected game info (set once at init, used by overlay for profiles)
     static std::string detectedGameName;
     static std::string activeProfileName;
@@ -2344,14 +2364,25 @@ namespace VKIntox
                 bool signalCrash = false;
                 if (sigsetjmp(signalJmpBuf, 1) != 0)
                 {
-                    // Returned here from signal handler (SIGFPE/SIGABRT)
+                    // Returned here from signal handler (SIGFPE/SIGABRT/SIGSEGV).
+                    // The C++ stack was unwound by siglongjmp, so any RAII
+                    // guards above us in the createEffectsForSwapchain frame
+                    // (including the scoped_lock on globalLock) were NOT
+                    // destroyed. We must NOT touch globalLock-protected state
+                    // from here — just push a passthrough effect and continue.
                     signalJmpActive = 0;
                     signalCrash = true;
-                    std::string sigName = (caughtSignal == SIGFPE) ? "SIGFPE" : "SIGABRT";
+                    std::string sigName = (caughtSignal == SIGFPE) ? "SIGFPE"
+                                        : (caughtSignal == SIGABRT) ? "SIGABRT"
+                                        : (caughtSignal == SIGSEGV) ? "SIGSEGV" : "SIGNAL";
                     Logger::err("Caught " + sigName + " creating ReshadeEffect " + effectStrings[i]);
                     effectRegistry.setEffectError(effectStrings[i], sigName + " during shader compilation");
                     pLogicalSwapchain->effects.push_back(std::shared_ptr<Effect>(
                         new TransferEffect(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent, firstImages, secondImages, pConfig)));
+                    // Soft-disable: reshadefx native crash means we can't
+                    // trust the compiler. Don't risk another one.
+                    panicLayer(pLogicalDevice, std::string("reshadefx native crash (") + sigName
+                               + ") while compiling " + effectStrings[i]);
                 }
 
                 if (!signalCrash)
@@ -3371,6 +3402,7 @@ namespace VKIntox
         const int method = settingsManager.getDepthCaptureMethod();
         if (!pLogicalDevice || method < 1 || method > 2
             || !settingsManager.getDepthCapture()
+            || pLogicalDevice->softDisabled.load(std::memory_order_acquire)
             || !pLogicalDevice->pendingDepthCopy.pending
             || submitCount == 0 || !pSubmits)
         {
@@ -3440,15 +3472,30 @@ namespace VKIntox
         // is still executing it, WaitForFences blocks here — annoying but safe.
         // Skipping this wait causes VK_ERROR_DEVICE_LOST because we'd be resetting
         // a CB that's still in-flight.
+        //
+        // Bounded timeout: with a ring of 4 slots and a healthy GPU, this fence
+        // was signaled 4 frames ago and is almost always already complete. If we
+        // hit the timeout, the GPU is wedged — better to drop this depth copy
+        // than to freeze the present thread (which would freeze the whole game).
         if (slotIndex < pLogicalDevice->depthCopyRingFences.size() && pLogicalDevice->depthCopyRingFences[slotIndex] != VK_NULL_HANDLE)
         {
+            constexpr uint64_t RING_FENCE_TIMEOUT_NS = 2'000'000'000ULL;  // 2 seconds
             VkResult waitResult = pLogicalDevice->vkd.WaitForFences(
                 pLogicalDevice->device, 1, &pLogicalDevice->depthCopyRingFences[slotIndex],
-                VK_TRUE, UINT64_MAX);  // Infinite timeout — correctness over latency
+                VK_TRUE, RING_FENCE_TIMEOUT_NS);
             if (waitResult == VK_ERROR_DEVICE_LOST)
             {
                 Logger::err("QueueSubmit v3: WaitForFences returned DEVICE_LOST for depth copy slot " + std::to_string(slotIndex));
-                // Continue anyway — we're about to lose the device regardless
+                panicLayer(pLogicalDevice, "Device lost during depth-copy ring fence wait");
+                return pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            }
+            if (waitResult == VK_TIMEOUT)
+            {
+                Logger::warn("QueueSubmit v3: depth copy ring fence timed out for slot "
+                             + std::to_string(slotIndex) + " — skipping depth copy this submit");
+                // Skip the copy: pass through unmodified.
+                pLogicalDevice->pendingDepthCopy.pending = false;
+                return pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
             }
             pLogicalDevice->vkd.ResetFences(pLogicalDevice->device, 1, &pLogicalDevice->depthCopyRingFences[slotIndex]);
         }
@@ -3586,6 +3633,100 @@ namespace VKIntox
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo)
     {
+        // Soft-disable fast path: panicLayer() has flipped this bit. The layer
+        // is no longer trusted to touch the GPU, so we pass straight through
+        // to the driver — except we still submit an overlay-only frame so any
+        // pending toast notification stays visible. The overlay's render pass
+        // only writes to the swapchain image, so the present must wait on the
+        // overlay's signal semaphore.
+        {
+            std::shared_ptr<LogicalDevice> passThroughDevice;
+            bool softDisabled = false;
+            bool hasToasts = false;
+            {
+                scoped_lock l(globalLock);
+                auto devIt = deviceMap.find(GetKey(queue));
+                if (devIt == deviceMap.end() || !devIt->second)
+                    return VK_ERROR_DEVICE_LOST;
+                passThroughDevice = devIt->second;
+                softDisabled = passThroughDevice->softDisabled.load(std::memory_order_acquire);
+                if (softDisabled && passThroughDevice->imguiOverlay)
+                    hasToasts = passThroughDevice->imguiOverlay->hasPendingToasts();
+            }
+
+            if (softDisabled)
+            {
+                if (!hasToasts || !passThroughDevice->imguiOverlay || pPresentInfo->swapchainCount == 0)
+                    return passThroughDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+
+                // Submit an overlay-only frame for each swapchain, chained onto
+                // the original wait semaphores so the present stays ordered.
+                static thread_local std::vector<VkSemaphore> presentWaitSems;
+                presentWaitSems.clear();
+                presentWaitSems.reserve(pPresentInfo->swapchainCount);
+
+                VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                for (unsigned int i = 0; i < pPresentInfo->swapchainCount; i++)
+                {
+                    auto swapIt = swapchainMap.find(pPresentInfo->pSwapchains[i]);
+                    if (swapIt == swapchainMap.end() || !swapIt->second)
+                    {
+                        presentWaitSems.push_back(
+                            i < pPresentInfo->waitSemaphoreCount ? pPresentInfo->pWaitSemaphores[i] : VK_NULL_HANDLE);
+                        continue;
+                    }
+                    LogicalSwapchain* pSwap = swapIt->second.get();
+                    uint32_t index = pPresentInfo->pImageIndices[i];
+                    if (index >= pSwap->imageCount || index >= pSwap->overlaySemaphores.size())
+                    {
+                        presentWaitSems.push_back(VK_NULL_HANDLE);
+                        continue;
+                    }
+
+                    VkCommandBuffer overlayCmd = passThroughDevice->imguiOverlay->recordFrame(
+                        index, pSwap->imageViews[index],
+                        pSwap->imageExtent.width, pSwap->imageExtent.height);
+
+                    if (overlayCmd == VK_NULL_HANDLE)
+                    {
+                        // No overlay work this frame — fall back to waiting on the
+                        // original semaphore (or none if there isn't one).
+                        presentWaitSems.push_back(
+                            i < pPresentInfo->waitSemaphoreCount ? pPresentInfo->pWaitSemaphores[i] : VK_NULL_HANDLE);
+                        continue;
+                    }
+
+                    VkSubmitInfo oi = {};
+                    oi.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                    oi.pWaitDstStageMask = &waitStage;
+                    if (i < pPresentInfo->waitSemaphoreCount && pPresentInfo->pWaitSemaphores[i] != VK_NULL_HANDLE)
+                    {
+                        oi.waitSemaphoreCount = 1;
+                        oi.pWaitSemaphores = &pPresentInfo->pWaitSemaphores[i];
+                    }
+                    oi.commandBufferCount = 1;
+                    oi.pCommandBuffers = &overlayCmd;
+                    oi.signalSemaphoreCount = 1;
+                    oi.pSignalSemaphores = &pSwap->overlaySemaphores[index];
+
+                    VkFence overlayFence = passThroughDevice->imguiOverlay->getCommandBufferFence(index);
+                    VkResult vr = passThroughDevice->vkd.QueueSubmit(
+                        passThroughDevice->queue, 1, &oi, overlayFence);
+                    if (vr != VK_SUCCESS)
+                    {
+                        Logger::err("Toast-only overlay submit failed: " + std::to_string(vr));
+                        return passThroughDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+                    }
+                    presentWaitSems.push_back(pSwap->overlaySemaphores[index]);
+                }
+
+                VkPresentInfoKHR pi = *pPresentInfo;
+                pi.waitSemaphoreCount = static_cast<uint32_t>(presentWaitSems.size());
+                pi.pWaitSemaphores = presentWaitSems.data();
+                return passThroughDevice->vkd.QueuePresentKHR(queue, &pi);
+            }
+        }
+
         if (isNonWaylandSurface())
         {
             std::shared_ptr<LogicalDevice> passThroughDevice;
@@ -3624,6 +3765,12 @@ namespace VKIntox
         bool presentEffectSnapshot = false;
         std::vector<std::shared_ptr<LogicalSwapchain>> presentSwapchains;
         std::vector<uint32_t> presentIndices;
+
+        // Declared outside the lock scope so we can use them after releasing
+        // the lock for the QueueWaitIdle call (R2 fix).
+        bool needDepthRealloc = false;
+        LogicalDevice* rawDeviceForRealloc = nullptr;
+        VkQueue queueForRealloc = VK_NULL_HANDLE;
 
         {
             scoped_lock l(globalLock);
@@ -3771,10 +3918,9 @@ namespace VKIntox
 
             if (pLogicalDevice->imguiOverlay && pLogicalDevice->imguiOverlay->hasModifiedParams())
             {
-                // If we're loading a new config, don't apply old params - just trigger reload
-                if (!pLogicalDevice->imguiOverlay->hasPendingConfig())
-                    applyOverlayParams(pLogicalDevice);
-
+                // Modified parameters live in EffectRegistry — effects pick
+                // them up at reload time, so all we need to do here is clear
+                // the request and trigger a reload.
                 pLogicalDevice->imguiOverlay->clearApplyRequest();
                 shouldReload = true;
             }
@@ -3842,19 +3988,14 @@ namespace VKIntox
             presentEffectSnapshot = presentEffect;
             pLogicalDeviceShared = devIt->second;
 
-            // --- Deferred depth reallocation (GPU-safe) ---
-            // When a depth candidate is promoted during CmdEndRenderPass (or
-            // DestroyImage/DestroyImageView), the old effect command buffers may
-            // still be in-flight on the GPU.  We set depthReallocPending=true
-            // instead of freeing them immediately.  Now, before we select and
-            // submit command buffers for this frame, idle the GPU and reallocate.
-            // (Same pattern as reloadEffectsForSwapchain which also calls
-            // QueueWaitIdle under globalLock.)
-            if (pLogicalDevice->depthReallocPending)
-            {
-                pLogicalDevice->vkd.QueueWaitIdle(pLogicalDevice->queue);
-                performDeferredDepthRealloc(pLogicalDevice);
-            }
+            // Snapshot the depth-realloc flag under the lock, then drop the
+            // lock before calling QueueWaitIdle. Holding globalLock across
+            // QueueWaitIdle deadlocks every other Vulkan entry point if the
+            // GPU is stalled (the classic "0 fps freezes the whole process"
+            // symptom).
+            needDepthRealloc = pLogicalDevice->depthReallocPending;
+            rawDeviceForRealloc = pLogicalDevice;
+            queueForRealloc = pLogicalDevice->queue;
 
             presentSwapchains.reserve(pPresentInfo->swapchainCount);
             presentIndices.reserve(pPresentInfo->swapchainCount);
@@ -3896,6 +4037,25 @@ namespace VKIntox
         if (!pLogicalDevice)
             return VK_ERROR_DEVICE_LOST;
 
+        // Deferred depth reallocation — done OUTSIDE the global lock so other
+        // threads can keep making Vulkan calls while we wait for the GPU to
+        // idle. The actual reallocation re-acquires the lock to mutate state.
+        if (needDepthRealloc)
+        {
+            VkResult idleRes = pLogicalDevice->vkd.QueueWaitIdle(queueForRealloc);
+            if (idleRes != VK_SUCCESS)
+            {
+                reportDeviceLostDiagnostics(rawDeviceForRealloc, queueForRealloc,
+                                            "QueueWaitIdle(deferred depth realloc)", idleRes);
+                panicLayer(pLogicalDevice,
+                    "GPU stalled during deferred depth realloc (QueueWaitIdle returned "
+                    + std::to_string(idleRes) + ")");
+                return pLogicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+            }
+            scoped_lock reallocLock(globalLock);
+            performDeferredDepthRealloc(pLogicalDevice);
+        }
+
         // Reuse static buffers to avoid per-frame heap allocations
         static thread_local std::vector<VkSemaphore> presentSemaphores;
         static thread_local std::vector<VkPipelineStageFlags> waitStages;
@@ -3908,22 +4068,33 @@ namespace VKIntox
             LogicalSwapchain* pLogicalSwapchain = presentSwapchains[i].get();
             uint32_t index = presentIndices[i];
 
-            // Update effect uniforms only when effects are active (saves CPU+GPU when off)
+            // Update effect uniforms only when effects are active (saves CPU+GPU when off).
+            // Wrapped in try/catch so a misbehaving effect's per-frame update can
+            // never escape into vkQueuePresentKHR (which is noexcept from the
+            // app's perspective).
             if (presentEffectSnapshot)
             {
-                for (auto& effect : pLogicalSwapchain->effects)
-                    effect->updateEffect();
+                try
+                {
+                    for (auto& effect : pLogicalSwapchain->effects)
+                        effect->updateEffect();
+                }
+                catch (const std::exception& e)
+                {
+                    panicLayer(pLogicalDevice,
+                        std::string("Effect update threw: ") + e.what());
+                    return pLogicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+                }
+                catch (...)
+                {
+                    panicLayer(pLogicalDevice, "Effect update threw unknown exception");
+                    return pLogicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+                }
             }
 
             const auto& commandBuffers = presentEffectSnapshot
                 ? pLogicalSwapchain->commandBuffersEffect
                 : pLogicalSwapchain->commandBuffersNoEffect;
-
-            Logger::debug("present path: effects="
-                          + std::string(presentEffectSnapshot ? "on" : "off")
-                          + " swapchain=" + convertToString(pPresentInfo->pSwapchains[i])
-                          + " imageIndex=" + std::to_string(index)
-                          + " commandBuffer=" + convertToString(commandBuffers[index]));
 
             // Submit effect command buffer
             VkSubmitInfo submitInfo = {};
@@ -3950,7 +4121,20 @@ namespace VKIntox
             maybeDumpDepthResolveImage(pLogicalDevice, pLogicalSwapchain, index, pLogicalDevice->queue);
 
             VkSemaphore finalSemaphore;
-            vr = submitOverlayFrame(pLogicalDevice, pLogicalSwapchain, index, finalSemaphore);
+            try
+            {
+                vr = submitOverlayFrame(pLogicalDevice, pLogicalSwapchain, index, finalSemaphore);
+            }
+            catch (const std::exception& e)
+            {
+                panicLayer(pLogicalDevice, std::string("Overlay submit threw: ") + e.what());
+                return pLogicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+            }
+            catch (...)
+            {
+                panicLayer(pLogicalDevice, "Overlay submit threw unknown exception");
+                return pLogicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+            }
             if (vr != VK_SUCCESS)
             {
                 reportDeviceLostDiagnostics(pLogicalDevice, pLogicalDevice->queue, "submitOverlayFrame", vr);
@@ -4299,13 +4483,10 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
-        VkResult result = pLogicalDevice->vkd.BindImageMemory(device, image, memory, memoryOffset);
-
-        auto it = std::find(pLogicalDevice->depthImages.begin(), pLogicalDevice->depthImages.end(), image);
-        if (it == pLogicalDevice->depthImages.end())
-            return result;
-
-        return result;
+        // No layer bookkeeping needed here — depth image metadata is populated
+        // at CreateImage time and used at CmdBeginRenderPass time. The previous
+        // implementation did a std::find and then returned `result` either way.
+        return pLogicalDevice->vkd.BindImageMemory(device, image, memory, memoryOffset);
     }
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_CreateImageView(VkDevice device,

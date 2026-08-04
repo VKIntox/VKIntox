@@ -1,10 +1,6 @@
 #ifndef LOGICAL_SWAPCHAIN_HPP_INCLUDED
 #define LOGICAL_SWAPCHAIN_HPP_INCLUDED
 #include <vector>
-#include <fstream>
-#include <string>
-#include <iostream>
-#include <vector>
 #include <memory>
 
 #include "effects/effect.hpp"

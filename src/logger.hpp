@@ -50,6 +50,15 @@ namespace VKIntox
             return s_instance.m_minLevel;
         }
 
+        // Cheap level check for lazy logging macros. Reads the const min level
+        // without taking the mutex. Use VKINTOX_LOG_DEBUG / VKINTOX_LOG_TRACE
+        // macros (defined below) to avoid constructing the message string when
+        // the level is filtered out.
+        static bool isLevelEnabled(LogLevel level)
+        {
+            return level >= s_instance.m_minLevel || s_instance.m_historyEnabled;
+        }
+
         // Get log history (thread-safe copy)
         static std::vector<LogEntry> getHistory();
 
@@ -84,5 +93,25 @@ namespace VKIntox
     };
 
 } // namespace VKIntox
+
+// Lazy-evaluated logging macros. Use these on hot paths (per-frame, per-draw)
+// to avoid paying for std::string concatenation when the corresponding log
+// level is filtered out. The condition is checked once; the message stream
+// is only built if the level is enabled.
+//
+//   VKINTOX_LOG_DEBUG([&](std::string& s) { s = "foo=" + std::to_string(x); });
+//
+#define VKINTOX_LOG_TRACE(msg_fn) \
+    do { if (::VKIntox::Logger::isLevelEnabled(::VKIntox::LogLevel::Trace)) { \
+        std::string _m; msg_fn(_m); ::VKIntox::Logger::trace(_m); } } while (false)
+#define VKINTOX_LOG_DEBUG(msg_fn) \
+    do { if (::VKIntox::Logger::isLevelEnabled(::VKIntox::LogLevel::Debug)) { \
+        std::string _m; msg_fn(_m); ::VKIntox::Logger::debug(_m); } } while (false)
+#define VKINTOX_LOG_INFO(msg_fn) \
+    do { if (::VKIntox::Logger::isLevelEnabled(::VKIntox::LogLevel::Info)) { \
+        std::string _m; msg_fn(_m); ::VKIntox::Logger::info(_m); } } while (false)
+#define VKINTOX_LOG_WARN(msg_fn) \
+    do { if (::VKIntox::Logger::isLevelEnabled(::VKIntox::LogLevel::Warn)) { \
+        std::string _m; msg_fn(_m); ::VKIntox::Logger::warn(_m); } } while (false)
 
 #endif // LOGGER_HPP_INCLUDED
