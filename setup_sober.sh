@@ -49,7 +49,7 @@ flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/25.08 || di
 
 # --- 3. build the layer -------------------------------------------------------
 step "Building VKIntox (just flatpak-build)"
-# just flatpak-build || die "Build failed — see output above."
+just flatpak-build || die "Build failed — see output above."
 
 # --- 4. directory setup -------------------------------------------------------
 step "Setting up configuration directory"
