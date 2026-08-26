@@ -1,57 +1,65 @@
-# VKIntox
+<div align="center">
 
-[![License](https://img.shields.io/badge/license-zlib-green)](./LICENSE)
-[![NixOS](https://img.shields.io/badge/NixOS-unstable-78C0E8?logo=nixos&logoColor=white)](https://nixos.org)
+# vkintox
 
-An independent fork of vkShade, which fixes the issues with depth buffers that vkBasalt, and inherently, vkShade have.
+vulkan post-processing layer with advanced depth buffer resolve for linux.
 
-### As shown here:
+[![License](https://img.shields.io/badge/license-zlib-green?style=flat-square)](./LICENSE)
 
-![An image showcasing VKIntox in action](assets/showcase_screenshot1.png)
-![An image showcasing VKIntox's UI](assets/showcase_screenshot2.png)
-![An image showcasing VKIntox's depth resolve modes](assets/showcase_screenshot3.png)
+</div>
 
-To set it up for Sober, run `./setup_sober.sh`
+---
 
-## Features
+an independent fork of **vkShade** that fixes the depth buffer issues inherent to vkBasalt. it provides a robust, reshade-like experience for native linux games and flatpak runtimes like [Sober](https://vinegarhq.org/Home/index.html).
 
-The base project, vkBasalt required editing config files and restarting. vkShade, inheriting vkBasalt, didn't have depth resolve modes. VKIntox added:
+### as shown here:
 
-- **A nicer in-game overlay** (activated via HOME by default)
-- **Multiple depth buffer resolve modes** and automatic picking
-- **A specialized setup for [Sober](https://vinegarhq.org/Home/index.html)**, an Android runtime that allows running Roblox on Linux
+<div align="center">
 
-These help form a post effects processing experience just like ReShade, but accessible to Linux.
+<img src="assets/showcase_screenshot1.png" width="45%" alt="VKIntox in action"> <img src="assets/showcase_screenshot2.png" width="45%" alt="VKIntox UI">
 
-### Depth Buffer
+<img src="assets/showcase_screenshot3.png" width="90%" alt="Depth resolve modes">
 
-The layer automatically picks a depth buffer that fits the game window, which in almost all cases works perfectly.
-If misconfigured, for Roblox, the depth resolve mode should be Reverse-Z and inversion should be ON.
+</div>
 
-### ReShade Shader Support
+## features
 
-This project, thanks to vkBasalt, supports ReShade .fx files with compilation into Spir-V. However, you must note that some shaders may fail to work.
-## Usage
+*   **advanced depth resolve:** automatically picks the correct depth buffer or allows manual selection (Reverse-Z, etc).
+*   **in-game overlay:** a native gui toggled via `HOME` to manage effects on the fly.
+*   **reshade compatibility:** supports `.fx` files by compiling them to spir-v at runtime.
+*   **sober integration:** a dedicated setup script for running roblox with full post-processing support.
 
-### Prerequisites:
-- **A game that uses Vulkan**, and doesn't refuse Vulkan layers (rare, but is possible. DXVK or vkd3d might break VKIntox.)
-- **When running `setup_sober.sh`**, you'll need: `python3`, `curl`, `unzip` (all checked by the setup script).
+## how it works
 
-The `setup_sober.sh` script:
-- Fetches org.gnome.Sdk if necessary
-- Compiles the project locally
-- Installs it as a local Flatpak repo and Vulkan Layer extension
-- Enables it via ENABLE_VKINTOX=1 env variable
-- Deploys shader manager configurations and all ReShade shaders
+vkintox operates as a vulkan layer that sits between the game and the driver.
 
-To install for other Flatpak games:
-- Run `just flatpak-build`
-- Add environment variable `ENABLE_VKINTOX=1` for the game you want VKIntox on
-- Optionally, copy shaders that `setup_sober.sh` fetches
+1.  **interception:** it captures vulkan swapchain calls.
+2.  **depth management:** unlike standard implementations, it actively resolves depth buffers to prevent z-fighting in effects like ambient occlusion.
+3.  **shader injection:** it compiles reshade shaders locally and injects them into the render pipeline without requiring game restarts for config changes.
 
-To install for native games:
-- Install: GCC with versions above 9; Meson, Ninja; Vulkan headers; SPIR-V headers; glslangValidator; X11 + Xi development files; wayland-client, wayland-protocols, wayland-scanner; libxkbcommon.
-- Run this to fetch, compile and install:
+## requirements
+
+*   **gpu:** vulkan-capable hardware with recent drivers.
+*   **sober setup:** python3, curl, unzip.
+*   **native build:** gcc 9+, meson, ninja, glslangValidator, wayland/x11 development libraries.
+
+> [!IMPORTANT]
+> some anti-cheat systems or games using dxvk/vkd3d may conflict with vulkan layers. if you experience crashes, try disabling `ENABLE_VKINTOX=1` for that specific title.
+
+## installation
+
+### for sober (flatpak)
+this script fetches the gnome sdk, compiles vkintox, and installs it as a flatpak extension.
+
+```bash
+git clone https://github.com/buwryme/VKIntox.git
+cd VKIntox
+chmod +x setup_sober.sh; ./setup_sober.sh
+```
+
+### for native games
+build and install system-wide.
+
 ```bash
 git clone https://github.com/buwryme/VKIntox.git
 cd VKIntox
@@ -60,33 +68,40 @@ ninja -C build-release
 sudo ninja -C build-release install
 ```
 
-### Key Bindings
+to enable for a specific game, launch it with:
+```bash
+ENABLE_VKINTOX=1 your_game_command
+```
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| Toggle Effects | `End` | Enable/disable all effects |
-| Reload Config | `F10` | Reload configuration and recompile shaders |
-| Toggle Overlay | `Home` | Show/hide the overlay GUI |
+## usage & keybinds
 
-### Known Issues/Info
+| key | action |
+| :--- | :--- |
+| `Home` | toggle the overlay gui |
+| `End` | enable/disable all active effects |
+| `F10` | reload configuration and recompile shaders |
 
-- Initial restart after first launch with VKIntox is required for depth buffer to work
-- Effects, outside the ones already installed, might fail
-- Startup may sometimes take long due to deferred reboot workaround
-- Having graphics settings set to Automatic or switching between graphics qualities could cause crashes
+### configuring depth
+if depth-dependent effects (like DOF) look incorrect:
+1.  open the **Advanced** tab in the overlay.
+2.  try different **Depth Resolve Modes**.
+3.  press `F10` to apply changes.
+4.  for **roblox**, use **Reverse-Z** with inversion **ON**.
 
-**If depth-dependent effects look wrong, please open the Advanced tab and try changing between depth resolve modes, which after each one, you press F10 (or your set keybind) to reload. Also try pressing Force re-detect when changing depth buffer settings.
+## known issues
 
-### Disclaimer
+*   **initial startup:** a restart may be required after the first launch for depth detection to stabilize.
+*   **graphics switching:** changing quality settings in-game can lead to crashes or the depth buffer "freezing".
+*   **performance:** shader compilation on first load may cause a brief stutter.
 
-**Use at your own risk**: 
-- Unstable shaders or extreme GPU load can crash or freeze games;
-- VKIntox is driver-level but can still get you moderated;
-- This is a very experimental project that has yet to improve.
+---
 
-#### ⚠️ Please open an issue if **anything** goes wrong, as long as it is indefinitely VKIntox's fault.
+> experimental software. use at your own risk.
 
-### Special Thanks To
-slobodaapl, for making **vkShade** which is the direct source code reprise of this project
+special thanks to **slobodaapl** (vkShade) and **DadSchoorse** (vkBasalt).
 
-DadSchoorse, for making vkBasalt, which the original **vkShade** is based on
+<div align="center">
+
+**maintained by [buwryme](https://github.com/buwryme)**
+
+</div>
