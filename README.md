@@ -93,6 +93,7 @@ if depth-dependent effects (like DOF) look incorrect:
 *   **initial startup:** a restart may be required after the first launch for depth detection to stabilize.
 *   **graphics switching:** changing quality settings in-game can lead to crashes or the depth buffer "freezing".
 *   **performance:** shader compilation on first load may cause a brief stutter.
+*   **stability:** stability in the home screen is *very* poor. it's best to join games via your browser instead
 
 ---
 
