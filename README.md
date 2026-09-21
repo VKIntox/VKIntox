@@ -95,6 +95,20 @@ if depth-dependent effects (like DOF) look incorrect:
 *   **performance:** shader compilation on first load may cause a brief stutter.
 *   **stability:** stability in the home screen is *very* poor. it's best to join games via your browser instead
 
+## troubleshooting
+
+*   **sober stopped launching:** try running `setup_sober.sh` again, and run:
+
+```bash
+flatpak override --user --env=VK_LOADER_DRIVERS_DISABLE=lvp_icd.x86_64.json --env=__NV_PRIME_RENDER_OFFLOAD=1 --env=__GLX_VENDOR_LIBRARY_NAME=nvidia --env=VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json org.sober.Sober
+```
+
+and also make sure Sober, and your flatpak driver runtimes are up to date:
+
+```bash
+flatpak upgrade org.vinegarhq.Sober
+```
+
 ---
 
 > experimental software. use at your own risk.
