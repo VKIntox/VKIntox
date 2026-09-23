@@ -128,7 +128,7 @@ namespace VKIntox
             // Load per-profile settings
             if (!profilePath.empty())
             {
-                ProfileSettings ps = ConfigSerializer::loadProfileSettings(profilePath);
+                ConfigSerializer::loadProfileSettings(profilePath);
                 // Profile settings loaded (safeAntiCheat removed)
             }
         }
@@ -162,6 +162,9 @@ namespace VKIntox
         {
             return (imageIndex < commandBufferFences.size()) ? commandBufferFences[imageIndex] : VK_NULL_HANDLE;
         }
+
+        // Collect all in-flight command buffer fences (for drain before depth image destroy)
+        void collectCommandFences(std::vector<VkFence>& out) const;
 
     private:
         void initVulkanBackend(VkFormat swapchainFormat, uint32_t imageCount);

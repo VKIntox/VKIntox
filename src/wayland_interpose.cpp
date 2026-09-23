@@ -215,16 +215,6 @@ static void wp_axis_value120(void* data, wl_pointer* p, uint32_t axis, int32_t v
         it->second.original.axis_value120(it->second.userData, p, axis, value120);
 }
 
-static void wp_axis_relative_direction(void* data, wl_pointer* p, uint32_t axis, uint32_t direction)
-{
-    if (VKIntox::isInputBlocked())
-        return;
-    std::lock_guard<std::mutex> lock(gameDataMutex);
-    auto it = gamePointers.find(p);
-    if (it != gamePointers.end() && it->second.original.axis_relative_direction)
-        it->second.original.axis_relative_direction(it->second.userData, p, axis, direction);
-}
-
 static const wl_pointer_listener wrapperPointerListener = {
     .enter = wp_enter,
     .leave = wp_leave,
@@ -236,7 +226,7 @@ static const wl_pointer_listener wrapperPointerListener = {
     .axis_stop = wp_axis_stop,
     .axis_discrete = wp_axis_discrete,
     .axis_value120 = wp_axis_value120,
-    .axis_relative_direction = wp_axis_relative_direction,
+    // .axis_relative_direction removed in newer wayland-protocols
 };
 
 // ── Wrapper keyboard listener ────────────────────────────────────────────────

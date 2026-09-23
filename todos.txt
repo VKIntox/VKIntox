@@ -1,0 +1,39 @@
+vkintox TODO
+
+Current version: v0.1.0
+
+================================================
+TODOS for v0.1.1
+================================================
+
+0. WIP: stability changes (Partially done)
+
+1. Fix warning errors when compiling
+
+2. Overlay:
+
+* Fix clicks passing through to game when overlay is open (Wayland support)
+* Add tick button for the overlay to close it instead of hotkey
+* Maybe a constant circle which the user can click to expand it
+* Consecutively, make the overlay opaque
+
+3. Add native .INI support for profiles/presets
+
+* Maybe even switch to it fully
+
+4. Switch the compiler from G++ to Clang++; PROPERLY utilise ccache (especially for flatpak builds, PLEASE!!!)
+
+5. Improve setup script:
+
+* Make removing the layer when already installed not need user confirmation. (maybe yes > flatpak remove ...)
+* Stop re-installing effect packages when already installed & up to date (copy EffectPackages.ini sha256hash as .vkintox_effects_hash to installation dir and verify it matches on run)
+* Improve output styling, make the script more pleasing to the eye, and use more commonly used decorations?
+* Move dynamic paths from setup script to C++ effect loading logic. Make path verbosity stay inside logs, but not clutter the UI
+
+================================================
+TODOS for v0.2.0
+================================================
+
+1. Overhaul UI to use Flutter/Dart instead of ImGui with Vulkan frame buffer casts & proper input passthrough (for V2, not any soon, probably not even for this year lol)
+2. Ensure stability, yet again
+3. Try to improve performance?

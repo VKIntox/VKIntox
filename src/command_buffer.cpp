@@ -128,33 +128,30 @@ namespace VKIntox
             || imageIndex >= pLogicalSwapchain->depthResolveFramebuffers.size())
             return;
 
-        // CRITICAL: Wait for this imageIndex's previous effect CB to finish
-        // BEFORE updating its descriptor set.  The descriptor set is still
-        // "in use" by the GPU until the CB that sampled from it completes.
-        // Without this fence wait, UpdateDescriptorSets modifies memory that
-        // the GPU may be reading → undefined behavior → VK_ERROR_DEVICE_LOST.
-        //
-        // Bounded timeout: if the GPU is wedged (the classic "0 fps" symptom),
-        // an unbounded wait would freeze every thread that touches globalLock.
-        // We skip the descriptor update on timeout — the previous frame's
-        // descriptor stays valid, so the worst case is one stale frame.
+        // CRITICAL: Zero-trust resource management - verify depth state is still valid
+        // before attempting any descriptor updates or command recording.
+        auto extentIt = pLogicalDevice->depthImageExtents.find(depthState.image);
+        if (extentIt == pLogicalDevice->depthImageExtents.end())
+        {
+            Logger::debug("recordDepthResolveSnapshotViaShader: depth image no longer tracked, skipping");
+            return;
+        }
+        const VkExtent3D& tracked = extentIt->second;
+        if (tracked.width != depthState.extent.width || tracked.height != depthState.extent.height || tracked.depth != depthState.extent.depth)
+        {
+            Logger::debug("recordDepthResolveSnapshotViaShader: depth handle recycled, skipping");
+            return;
+        }
+
+        // Non-blocking fence check - skip descriptor update if previous CB still running
         if (imageIndex < pLogicalSwapchain->effectSubmitFences.size()
             && pLogicalSwapchain->effectSubmitFences[imageIndex] != VK_NULL_HANDLE)
         {
-            constexpr uint64_t FENCE_TIMEOUT_NS = 2'000'000'000ULL;  // 2 seconds
-            VkResult waitResult = pLogicalDevice->vkd.WaitForFences(
-                pLogicalDevice->device, 1, &pLogicalSwapchain->effectSubmitFences[imageIndex],
-                VK_TRUE, FENCE_TIMEOUT_NS);
-            if (waitResult == VK_ERROR_DEVICE_LOST)
+            VkResult status = pLogicalDevice->vkd.WaitForFences(
+                pLogicalDevice->device, 1, &pLogicalSwapchain->effectSubmitFences[imageIndex], VK_TRUE, 0);
+            if (status == VK_TIMEOUT || status == VK_ERROR_DEVICE_LOST)
             {
-                Logger::err("recordDepthResolveSnapshotViaShader: WaitForFences returned DEVICE_LOST for image "
-                            + std::to_string(imageIndex) + " — descriptor set update skipped");
-                return;  // Don't record anything if device is lost
-            }
-            if (waitResult == VK_TIMEOUT)
-            {
-                Logger::warn("recordDepthResolveSnapshotViaShader: fence wait timed out for image "
-                             + std::to_string(imageIndex) + " — descriptor set update skipped this frame");
+                Logger::debug("recordDepthResolveSnapshotViaShader: fence not ready, skipping snapshot");
                 return;
             }
             pLogicalDevice->vkd.ResetFences(pLogicalDevice->device, 1, &pLogicalSwapchain->effectSubmitFences[imageIndex]);

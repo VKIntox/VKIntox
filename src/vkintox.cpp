@@ -6,6 +6,7 @@
 #include <chrono>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <iostream>
 #include <string>
 #include <memory>
@@ -103,6 +104,40 @@ namespace VKIntox
     std::mutex globalLock;
     using scoped_lock = std::lock_guard<std::mutex>;
 
+    // depth recovery
+    struct DepthRetryState
+    {
+        bool disabled = false;
+        bool retryPending = false;
+        std::chrono::steady_clock::time_point retryAt{};
+        VkExtent2D blockedExtent{0, 0};
+    };
+
+    static std::unordered_map<LogicalDevice*, DepthRetryState> depthRetryStates;
+
+    // One-shot startup depth reinitialisation.  This replaces the old
+    // "fake F10" startup reload with a much narrower depth-only refresh.
+    // We let the renderer settle for a few presents, rediscover a valid
+    // swapchain-sized depth image, then rebuild our own command buffers at a
+    // non-blocking safe point.
+    struct StartupDepthReinitState
+    {
+        uint32_t presentCount = 0;
+        std::chrono::steady_clock::time_point firstPresentAt{};
+        std::chrono::steady_clock::time_point nextAttemptAt{};
+        bool completed = false;
+    };
+
+    static std::unordered_map<LogicalDevice*, StartupDepthReinitState> startupDepthReinitStates;
+    static constexpr uint32_t STARTUP_DEPTH_STABLE_PRESENTS = 8;
+    static constexpr auto STARTUP_DEPTH_MIN_SETTLE_TIME = std::chrono::milliseconds(500);
+    static constexpr auto STARTUP_DEPTH_RETRY_DELAY = std::chrono::milliseconds(500);
+
+    static std::mutex deviceLossLock;
+    static std::unordered_set<LogicalDevice*> deviceLostDevices;
+    static constexpr auto DEPTH_RETRY_DELAY = std::chrono::seconds(5);
+    static constexpr auto DEPTH_REBUILD_POLL_DELAY = std::chrono::milliseconds(100);
+
     template<typename DispatchableType>
     void* GetKey(DispatchableType inst)
     {
@@ -158,22 +193,12 @@ namespace VKIntox
     ResizeDebounceState resizeDebounce;
     constexpr int64_t RESIZE_DEBOUNCE_MS = 200;
 
-    // Deferred startup reload: on first launch, shader_manager.conf and
-    // discovered shader paths may not be fully populated yet (especially
-    // when per-game profiles are auto-created).  We schedule a single
-    // config + effect reload a few seconds after the first present call
-    // so that .fx discovery and effect chain creation have a chance to
-    // succeed with the finalised filesystem state.
-    //
-    // Weird workaround
+    // deferred startup REMOVED, caused race conditions :<
     struct DeferredStartupReload
     {
-        std::chrono::steady_clock::time_point firstPresentTime;
-        bool   armed      = false;   // set on first present
-        bool   fired      = false;   // set once the reload has fired
+        bool   fired      = true;   // Always fired (disabled)
     };
     DeferredStartupReload deferredStartupReload;
-    constexpr int64_t DEFERRED_STARTUP_RELOAD_MS = 3000;
 
     static bool parseBoolEnvValue(const std::string& value, bool defaultValue)
     {
@@ -217,10 +242,14 @@ namespace VKIntox
 
     static bool isDepthCopyDumpEnabled()
     {
+#ifdef VKINTOX_DEBUG
         const char* value = std::getenv("VKINTOX_DEBUG_DUMP_DEPTH_COPY");
         if (value == nullptr)
             return false;
         return parseBoolEnvValue(value, false);
+#else
+        return false;
+#endif
     }
 
     static VkImageLayout getInternalDepthReadOnlyLayoutForDebug(VkFormat format)
@@ -619,6 +648,14 @@ namespace VKIntox
         Logger::err("VKIntox panic: " + reason);
         if (pLogicalDevice)
         {
+            if (reason.find("Device lost") != std::string::npos
+                || reason.find("device lost") != std::string::npos
+                || reason.find("VK_ERROR_DEVICE_LOST") != std::string::npos)
+            {
+                std::lock_guard<std::mutex> lossLock(deviceLossLock);
+                deviceLostDevices.insert(pLogicalDevice);
+            }
+
             pLogicalDevice->softDisabled.store(true, std::memory_order_release);
             if (pLogicalDevice->imguiOverlay)
                 pLogicalDevice->imguiOverlay->pushToast(
@@ -745,6 +782,31 @@ namespace VKIntox
             && depth.extent.height == target.pLogicalSwapchain->imageExtent.height;
     }
 
+    // A depth candidate must never be one of the application's real swapchain
+    // images or one of VKIntox's fake colour images.  Size alone is not enough
+    // to distinguish a 1920x1080 depth buffer from a 1920x1080 backbuffer.
+    static bool isSwapchainImage(LogicalDevice* pLogicalDevice, VkImage image)
+    {
+        if (!pLogicalDevice || image == VK_NULL_HANDLE)
+            return false;
+
+        for (auto& [_, pLogicalSwapchain] : swapchainMap)
+        {
+            if (!pLogicalSwapchain || pLogicalSwapchain->pLogicalDevice != pLogicalDevice)
+                continue;
+
+            if (std::find(pLogicalSwapchain->images.begin(),
+                          pLogicalSwapchain->images.end(), image) != pLogicalSwapchain->images.end())
+                return true;
+
+            if (std::find(pLogicalSwapchain->fakeImages.begin(),
+                          pLogicalSwapchain->fakeImages.end(), image) != pLogicalSwapchain->fakeImages.end())
+                return true;
+        }
+
+        return false;
+    }
+
     static bool matchesAnySwapchainExtent(LogicalDevice* pLogicalDevice, const DepthState& depth)
     {
         if (!hasDepthState(depth))
@@ -766,19 +828,111 @@ namespace VKIntox
     static bool isQualifiedDepthCandidate(LogicalDevice* pLogicalDevice,
                                           const LogicalDevice::DepthScopeTrackingState& scopeState)
     {
-        if (!hasDepthState(scopeState.depthState) || scopeState.drawCount == 0)
+        const DepthState& depth = scopeState.depthState;
+        if (!pLogicalDevice || !hasDepthState(depth) || scopeState.drawCount == 0)
             return false;
 
-        // INSTANT QUALIFICATION: If it exactly matches the game window size,
-        // we want it immediately, regardless of draw count or presentable linkage.
-        if (matchesAnySwapchainExtent(pLogicalDevice, scopeState.depthState))
+        // Never accept a colour/backbuffer image as depth, even when its
+        // dimensions happen to be identical to the swapchain extent.
+        if (isSwapchainImage(pLogicalDevice, depth.image))
         {
+            Logger::debug("rejecting depth candidate: image belongs to a swapchain/fake colour image (image="
+                          + convertToString(depth.image) + ")");
+            return false;
+        }
+
+        // The state must actually describe a depth/stencil format.
+        if (!isDepthStencilAttachmentFormat(depth.format))
+        {
+            Logger::debug("rejecting depth candidate: non-depth format (image="
+                          + convertToString(depth.image) + " format="
+                          + convertToString(depth.format) + ")");
+            return false;
+        }
+
+        // Exact swapchain extent is required.  Matching the window size is the
+        // only automatic qualification rule; shadow maps and other depth
+        // attachments remain candidates for bookkeeping but are never made
+        // active depth state.
+        return matchesAnySwapchainExtent(pLogicalDevice, depth);
+    }
+
+    static bool isQualifiedDepthStateForSwapchain(LogicalDevice* pLogicalDevice,
+                                                   const DepthState& depth,
+                                                   const LogicalSwapchain* pLogicalSwapchain)
+    {
+        if (!pLogicalDevice || !pLogicalSwapchain || !hasDepthState(depth))
+            return false;
+
+        if (isSwapchainImage(pLogicalDevice, depth.image))
+            return false;
+
+        if (!isDepthStencilAttachmentFormat(depth.format))
+            return false;
+
+        if (depth.extent.width != pLogicalSwapchain->imageExtent.width
+            || depth.extent.height != pLogicalSwapchain->imageExtent.height)
+            return false;
+
+        return validateDepthStateForResolve(pLogicalDevice, depth);
+    }
+
+    // Re-discover depth after the renderer has settled.  The old startup
+    // workaround reloaded the entire config/effect stack (equivalent to F10).
+    // That worked because it happened late enough for Roblox's real depth
+    // image to exist, but it also rebuilt unrelated state.  This keeps the
+    // useful part: throw away the startup depth choice and select a currently
+    // tracked, swapchain-sized depth image.
+    static bool selectStartupDepthCandidateLocked(LogicalDevice* pLogicalDevice,
+                                                   const LogicalSwapchain* pLogicalSwapchain,
+                                                   DepthState& candidate)
+    {
+        if (!pLogicalDevice || !pLogicalSwapchain)
+            return false;
+
+        // Prefer the depth candidate observed from an actual render scope.
+        // Unlike a raw image-view scan, this preserves the semantic signal
+        // gathered while recording the game's main render pass.
+        if (pLogicalDevice->bestDepthCandidate.valid
+            && isQualifiedDepthStateForSwapchain(pLogicalDevice,
+                                                  pLogicalDevice->bestDepthCandidate.depthState,
+                                                  pLogicalSwapchain))
+        {
+            candidate = pLogicalDevice->bestDepthCandidate.depthState;
             return true;
         }
 
-        // FALLBACK QUALIFICATION: Original logic for weird resolutions/shadow maps
-        return hasPresentableSnapshotTarget(scopeState.snapshotTarget)
-            || (scopeState.drawCount >= 64 && matchesAnySwapchainExtent(pLogicalDevice, scopeState.depthState));
+        // If the candidate cache is stale or was populated before the current
+        // swapchain existed, inspect the live depth views directly.
+        for (const auto& [_, depth] : pLogicalDevice->depthViewStates)
+        {
+            if (!isQualifiedDepthStateForSwapchain(pLogicalDevice, depth, pLogicalSwapchain))
+                continue;
+
+            candidate = depth;
+            return true;
+        }
+
+        return false;
+    }
+
+    static bool prepareStartupDepthReinitializationLocked(LogicalDevice* pLogicalDevice,
+                                                           const LogicalSwapchain* pLogicalSwapchain,
+                                                           DepthState& candidate)
+    {
+        if (!selectStartupDepthCandidateLocked(pLogicalDevice, pLogicalSwapchain, candidate))
+        {
+            Logger::debug("startup depth reinitialization: no valid swapchain-sized depth candidate yet");
+            return false;
+        }
+
+        Logger::info(std::string("startup depth reinitialization: selected depth image=")
+                     + convertToString(candidate.image)
+                     + " view=" + convertToString(candidate.imageView)
+                     + " format=" + convertToString(candidate.format)
+                     + " extent=" + std::to_string(candidate.extent.width) + "x"
+                     + std::to_string(candidate.extent.height));
+        return true;
     }
 
     template <typename Predicate>
@@ -1225,6 +1379,19 @@ namespace VKIntox
               + " depthView=" + convertToString(scopeState.depthState.imageView);
         });
 
+        // Transfer-linked scopes used to bypass the normal qualification gate
+        // here.  That meant a presentable colour target could cause an arbitrary
+        // depth-sized image to become active depth state.  Apply the exact same
+        // candidate checks as the normal render-scope path.
+        if (!isQualifiedDepthCandidate(pLogicalDevice, scopeState))
+        {
+            Logger::debug("rejecting transfer-linked depth candidate: image="
+                          + convertToString(scopeState.depthState.image)
+                          + " extent=" + std::to_string(scopeState.depthState.extent.width)
+                          + "x" + std::to_string(scopeState.depthState.extent.height));
+            return;
+        }
+
         pLogicalDevice->bestDepthCandidate.valid = true;
         pLogicalDevice->bestDepthCandidate.depthState = scopeState.depthState;
         pLogicalDevice->bestDepthCandidate.hasPresentableSnapshotTarget = true;
@@ -1551,11 +1718,7 @@ namespace VKIntox
         VkShaderModule fragmentModule = VK_NULL_HANDLE;
         createShaderModule(pLogicalDevice, full_screen_triangle_vert, &vertexModule);
 
-        // Select shader based on depth source channel setting
-        const int depthChannel = settingsManager.getDepthSourceChannel();
-
-        // Use universal shader for all modes (handles everything via push constants)
-        // This provides comprehensive support for deferred rendering depth encodings
+        // Universal shader handles all depth channel modes via push constants
         createShaderModule(pLogicalDevice, depth_resolve_universal_frag, &fragmentModule);
 
         VkExtent2D resolveExtent2D = {pLogicalSwapchain->depthResolveExtent.width, pLogicalSwapchain->depthResolveExtent.height};
@@ -1575,8 +1738,6 @@ namespace VKIntox
         pLogicalSwapchain->depthResolveFramebuffers = createFramebuffers(
             pLogicalDevice, pLogicalSwapchain->depthResolveRenderPass, resolveExtent2D, {collectDepthResolveImageViews(pLogicalSwapchain)});
     }
-
-
     // Validate that a DepthState is safe to use for resolve/copy. Returns false
     // if any required field is missing, the underlying image is no longer
     // tracked, or the image lacks the usage flags the layer needs.
@@ -1594,6 +1755,32 @@ namespace VKIntox
             return false;
         if (depth.extent.width == 0 || depth.extent.height == 0)
             return false;
+        if (!isDepthStencilAttachmentFormat(depth.format))
+            return false;
+        if (isSwapchainImage(pLogicalDevice, depth.image))
+        {
+            Logger::debug("validateDepthStateForResolve: refusing swapchain/fake colour image as depth (image="
+                          + convertToString(depth.image) + ")");
+            return false;
+        }
+
+        // check if image is still tracked before proceeding
+        auto extentIt = pLogicalDevice->depthImageExtents.find(depth.image);
+        if (extentIt == pLogicalDevice->depthImageExtents.end())
+        {
+            Logger::debug("validateDepthStateForResolve: image handle not tracked (image="
+                         + convertToString(depth.image) + "), likely destroyed by app");
+            return false;
+        }
+        const VkExtent3D& tracked = extentIt->second;
+        if (tracked.width != depth.extent.width || tracked.height != depth.extent.height || tracked.depth != depth.extent.depth)
+        {
+            Logger::debug("validateDepthStateForResolve: extent mismatch (tracked "
+                         + std::to_string(tracked.width) + "x" + std::to_string(tracked.height)
+                         + " vs depth " + std::to_string(depth.extent.width) + "x" + std::to_string(depth.extent.height)
+                         + "), recycled handle detected");
+            return false;
+        }
 
         // Underlying image must still be tracked, UNLESS it's our persistent
         // storage (which is tracked separately via persistentStorageTracked).
@@ -1825,6 +2012,85 @@ namespace VKIntox
         initializeDepthResolveLayout(pLogicalSwapchain, depth);
     }
 
+    static bool depthMatchesSwapchainExtent(const DepthState& depth, const LogicalSwapchain* sc)
+    {
+        return sc != nullptr
+            && hasDepthState(depth)
+            && depth.extent.width == sc->imageExtent.width
+            && depth.extent.height == sc->imageExtent.height;
+    }
+
+    static void armDepthRetryLocked(LogicalDevice* pLogicalDevice, const LogicalSwapchain* sc, const char* reason)
+    {
+        if (!pLogicalDevice)
+            return;
+
+        auto& retry = depthRetryStates[pLogicalDevice];
+        retry.disabled = true;
+        retry.retryPending = true;
+        retry.retryAt = std::chrono::steady_clock::now() + DEPTH_RETRY_DELAY;
+        retry.blockedExtent = sc ? sc->imageExtent : VkExtent2D{0, 0};
+
+        pLogicalDevice->activeDepthState = {};
+        pLogicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+        pLogicalDevice->depthReallocPending = false;
+
+        Logger::info(std::string("depth injection temporarily disabled: ") + reason
+                     + "; retrying in ~5s at swapchain extent "
+                     + std::to_string(retry.blockedExtent.width) + "x"
+                     + std::to_string(retry.blockedExtent.height));
+    }
+
+    static bool depthRetryDueLocked(LogicalDevice* pLogicalDevice)
+    {
+        auto it = depthRetryStates.find(pLogicalDevice);
+        if (it == depthRetryStates.end() || !it->second.retryPending)
+            return false;
+        return std::chrono::steady_clock::now() >= it->second.retryAt;
+    }
+
+    static void scheduleDepthRetryLocked(LogicalDevice* pLogicalDevice, bool fastPoll = false)
+    {
+        auto& retry = depthRetryStates[pLogicalDevice];
+        retry.disabled = true;
+        retry.retryPending = true;
+        retry.retryAt = std::chrono::steady_clock::now()
+                      + (fastPoll ? DEPTH_REBUILD_POLL_DELAY : DEPTH_RETRY_DELAY);
+    }
+
+    static bool depthRebuildFencesReady(LogicalDevice* pLogicalDevice, const LogicalSwapchain* sc)
+    {
+        if (!pLogicalDevice || !sc)
+            return false;
+
+        // Non-blocking safety check.  Never WaitForFences/QueueWaitIdle here.
+        // If any effect command buffer is still in flight, simply try again on
+        // a later present.
+        for (VkFence fence : sc->effectSubmitFences)
+        {
+            if (fence == VK_NULL_HANDLE)
+                continue;
+
+            VkResult vr = reinterpret_cast<PFN_vkGetFenceStatus>(pLogicalDevice->vkd.GetDeviceProcAddr(pLogicalDevice->device, "vkGetFenceStatus"))(pLogicalDevice->device, fence);
+            if (vr == VK_NOT_READY)
+                return false;
+            if (vr == VK_ERROR_DEVICE_LOST)
+            {
+                reportDeviceLostDiagnostics(pLogicalDevice, pLogicalDevice->queue,
+                                            "depth rebuild fence status", vr);
+                panicLayer(pLogicalDevice, "Device lost while checking depth rebuild fences");
+                return false;
+            }
+            if (vr != VK_SUCCESS)
+            {
+                Logger::warn("depth rebuild fence status returned " + std::to_string(vr));
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     // Get depth state from logical device (returns null handles if no depth images)
     DepthState getDepthState(LogicalDevice* pLogicalDevice)
     {
@@ -1840,14 +2106,17 @@ namespace VKIntox
                         != pLogicalDevice->depthImages.end();
                 if (imageStillTracked)
                     return pinned;
-                // Image was destroyed but view entry wasn't cleaned up — clear pin
-                Logger::debug("getDepthState: pinned view's image no longer tracked; clearing pin");
+                // Image was destroyed but view entry wasn't cleaned up.  Do not
+                // silently fall back to the previous active image: that can point
+                // at a different extent and rebuild stale resolve resources.
+                Logger::debug("getDepthState: pinned view's image no longer tracked; disabling depth");
             }
             else
             {
-                Logger::debug("pinned depth view no longer tracked; clearing pin");
+                Logger::debug("getDepthState: pinned depth view no longer tracked; disabling depth");
             }
             pLogicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+            return {};
         }
         return pLogicalDevice->activeDepthState;
     }
@@ -1857,6 +2126,17 @@ namespace VKIntox
     // GPU has been idle'd first, to avoid freeing in-flight command buffers.
     void performDeferredDepthRealloc(LogicalDevice* pLogicalDevice)
     {
+        // clear ALL swapchain resolve views FIRST, before any validation
+        for (auto& [handle, sc] : swapchainMap)
+        {
+            if (sc && sc->pLogicalDevice == pLogicalDevice)
+            {
+                sc->depthResolveSourceView = VK_NULL_HANDLE;
+                for (auto& img : sc->depthResolvePerImage)
+                    img.image = VK_NULL_HANDLE;
+            }
+        }
+
         DepthState effectiveDepth = getDepthState(pLogicalDevice);
 
         // VALIDATE before rebuilding resolve resources. If the depth state is
@@ -1914,12 +2194,8 @@ namespace VKIntox
                           + " transient=" + std::string((metadataIt->second.usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT) != 0 ? "true" : "false"));
         }
 
-        // DEFER reallocation to QueuePresentKHR.  We are likely inside
-        // CmdEndRenderPass (or DestroyImage/DestroyImageView) right now,
-        // and the GPU may still be executing the old effect command buffers
-        // from the previous frame.  Freeing them here is a use-after-free.
-        // QueuePresentKHR checks depthReallocPending and calls
-        // performDeferredDepthRealloc after QueueWaitIdle.
+        // Defer command-buffer rebuild to a non-blocking safe point in
+        // QueuePresentKHR.  No QueueWaitIdle is performed by the depth path.
         pLogicalDevice->depthReallocPending = true;
     }
 
@@ -3031,6 +3307,12 @@ namespace VKIntox
 
         pLogicalDevice->vkd.DestroyDevice(device, pAllocator);
 
+        depthRetryStates.erase(pLogicalDevice);
+        startupDepthReinitStates.erase(pLogicalDevice);
+        {
+            std::lock_guard<std::mutex> lossLock(deviceLossLock);
+            deviceLostDevices.erase(pLogicalDevice);
+        }
         deviceMap.erase(GetKey(device));
     }
 
@@ -3044,6 +3326,8 @@ namespace VKIntox
         Logger::trace("vkCreateSwapchainKHR");
 
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return VK_ERROR_DEVICE_LOST;
 
         VkSwapchainCreateInfoKHR modifiedCreateInfo = *pCreateInfo;
 
@@ -3109,6 +3393,9 @@ namespace VKIntox
         }
 
         Logger::debug("format " + std::to_string(modifiedCreateInfo.imageFormat));
+        
+        // Recreation (same handle) is detected AFTER vkCreateSwapchainKHR returns,
+        // since *pSwapchain is uninitialized until then.
         std::shared_ptr<LogicalSwapchain> pLogicalSwapchain(new LogicalSwapchain());
         pLogicalSwapchain->pLogicalDevice      = pLogicalDevice;
         pLogicalSwapchain->swapchainCreateInfo = *pCreateInfo;
@@ -3120,9 +3407,53 @@ namespace VKIntox
         VkResult result = pLogicalDevice->vkd.CreateSwapchainKHR(device, &modifiedCreateInfo, pAllocator, pSwapchain);
 
         if (result == VK_SUCCESS && pSwapchain != nullptr && *pSwapchain != VK_NULL_HANDLE)
-            swapchainMap[*pSwapchain] = pLogicalSwapchain;
+        {
+            // NOW check if this handle already existed (recreation scenario)
+            uint64_t handle = (uint64_t)(uintptr_t)*pSwapchain;
+            auto oldIt = swapchainMap.find((VkSwapchainKHR)handle); // Cast back or use proper key type
+            
+            // Since swapchain handles are opaque, we use the map key directly
+            // If an entry with this key exists, we're recreating
+            if (oldIt != swapchainMap.end() && oldIt->second)
+            {
+                Logger::warn("CreateSwapchainKHR: Recreating swapchain, destroying stale resources");
+
+                // CRITICAL: the old entry's command buffers/fences/semaphores/
+                // effects/image views must be properly waited-on and destroyed
+                // before we drop our last reference to it. Previously this just
+                // overwrote the map entry, silently leaking (and racing) every
+                // in-flight GPU resource from the retired swapchain on every
+                // resize — the exact pattern that leads to VK_ERROR_DEVICE_LOST
+                // under the rapid resize/rebuild churn seen on the homescreen.
+                if (oldIt->second.get() != pLogicalSwapchain.get())
+                    oldIt->second->destroy();
+
+                // Replace the old entry
+                swapchainMap[(VkSwapchainKHR)handle] = pLogicalSwapchain;
+            }
+            else
+            {
+                swapchainMap[(VkSwapchainKHR)handle] = pLogicalSwapchain;
+            }
+            
+            // Initialize new swapchain state - CRITICAL: clear all depth state to prevent stale references
+            pLogicalSwapchain->depthResolveSourceView = VK_NULL_HANDLE;
+            
+            pLogicalSwapchain->depthResolvePerImage.resize(modifiedCreateInfo.minImageCount);
+            for (auto& perImg : pLogicalSwapchain->depthResolvePerImage) perImg.image = VK_NULL_HANDLE;
+            
+            // Also clear device-level depth state when swapchain is recreated (Roblox OTA scenario)
+            pLogicalDevice->activeDepthState = {};
+            pLogicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+            pLogicalDevice->depthReallocPending = false;
+            depthRetryStates.erase(pLogicalDevice);
+            startupDepthReinitStates.erase(pLogicalDevice);
+            Logger::debug("CreateSwapchainKHR: cleared device depth state for fresh detection");
+        }
         else
+        {
             Logger::err("vkCreateSwapchainKHR failed: " + std::to_string(result));
+        }
 
         return result;
     }
@@ -3407,7 +3738,13 @@ namespace VKIntox
             || submitCount == 0 || !pSubmits)
         {
             if (pLogicalDevice)
-                return pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            {
+                VkResult passthroughResult = pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+                reportDeviceLostDiagnostics(pLogicalDevice, queue, "vkQueueSubmit(passthrough)", passthroughResult);
+                if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                    panicLayer(pLogicalDevice, "Vulkan device lost during QueueSubmit passthrough");
+                return passthroughResult;
+            }
             return reinterpret_cast<PFN_vkQueueSubmit>(dlsym(RTLD_NEXT, "vkQueueSubmit"))(queue, submitCount, pSubmits, fence);
         }
 
@@ -3419,7 +3756,11 @@ namespace VKIntox
         if (!hasDepthState(captureDepth) || !validateDepthStateForResolve(pLogicalDevice, captureDepth))
         {
             Logger::debug("QueueSubmit v3: skipping invalid/stale depth state");
-            return pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            VkResult passthroughResult = pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            reportDeviceLostDiagnostics(pLogicalDevice, queue, "vkQueueSubmit(passthrough-invalid-depth)", passthroughResult);
+            if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                panicLayer(pLogicalDevice, "Vulkan device lost during invalid-depth passthrough");
+            return passthroughResult;
         }
 
         // Ensure ring buffer is initialized
@@ -3467,35 +3808,43 @@ namespace VKIntox
         VkCommandBuffer copyCB = pLogicalDevice->depthCopyRingBufs[slotIndex];
         pLogicalDevice->depthCopyRingIndex++;
 
-        // CRITICAL: Wait for this slot's fence BEFORE resetting the command buffer.
-        // The fence was signaled when we last submitted this slot's CB.  If the GPU
-        // is still executing it, WaitForFences blocks here — annoying but safe.
-        // Skipping this wait causes VK_ERROR_DEVICE_LOST because we'd be resetting
-        // a CB that's still in-flight.
-        //
-        // Bounded timeout: with a ring of 4 slots and a healthy GPU, this fence
-        // was signaled 4 frames ago and is almost always already complete. If we
-        // hit the timeout, the GPU is wedged — better to drop this depth copy
-        // than to freeze the present thread (which would freeze the whole game).
+        // CRITICAL: do not block waiting for a ring slot.  A fence that is still
+        // unsignaled means the old command buffer is still in flight, so we simply
+        // skip this optional depth copy and let the application's submit proceed.
+        // This keeps the depth path completely non-blocking and avoids turning a
+        // stalled GPU into a 2-second present-thread freeze.
         if (slotIndex < pLogicalDevice->depthCopyRingFences.size() && pLogicalDevice->depthCopyRingFences[slotIndex] != VK_NULL_HANDLE)
         {
-            constexpr uint64_t RING_FENCE_TIMEOUT_NS = 2'000'000'000ULL;  // 2 seconds
-            VkResult waitResult = pLogicalDevice->vkd.WaitForFences(
-                pLogicalDevice->device, 1, &pLogicalDevice->depthCopyRingFences[slotIndex],
-                VK_TRUE, RING_FENCE_TIMEOUT_NS);
-            if (waitResult == VK_ERROR_DEVICE_LOST)
+            VkResult fenceStatus = reinterpret_cast<PFN_vkGetFenceStatus>(pLogicalDevice->vkd.GetDeviceProcAddr(pLogicalDevice->device, "vkGetFenceStatus"))(
+                pLogicalDevice->device, pLogicalDevice->depthCopyRingFences[slotIndex]);
+            if (fenceStatus == VK_NOT_READY)
             {
-                Logger::err("QueueSubmit v3: WaitForFences returned DEVICE_LOST for depth copy slot " + std::to_string(slotIndex));
-                panicLayer(pLogicalDevice, "Device lost during depth-copy ring fence wait");
-                return pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
-            }
-            if (waitResult == VK_TIMEOUT)
-            {
-                Logger::warn("QueueSubmit v3: depth copy ring fence timed out for slot "
-                             + std::to_string(slotIndex) + " — skipping depth copy this submit");
-                // Skip the copy: pass through unmodified.
+                Logger::debug("QueueSubmit v3: depth copy ring slot "
+                              + std::to_string(slotIndex) + " still in flight; skipping optional depth copy");
                 pLogicalDevice->pendingDepthCopy.pending = false;
-                return pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+                VkResult passthroughResult = pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+                reportDeviceLostDiagnostics(pLogicalDevice, queue, "vkQueueSubmit(passthrough-ring-busy)", passthroughResult);
+                if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                    panicLayer(pLogicalDevice, "Vulkan device lost during QueueSubmit passthrough");
+                return passthroughResult;
+            }
+            if (fenceStatus == VK_ERROR_DEVICE_LOST)
+            {
+                reportDeviceLostDiagnostics(pLogicalDevice, queue,
+                                            "QueueSubmit v3 depth-copy fence status", fenceStatus);
+                panicLayer(pLogicalDevice, "Device lost during depth-copy ring fence status");
+                return fenceStatus;
+            }
+            if (fenceStatus != VK_SUCCESS)
+            {
+                Logger::warn("QueueSubmit v3: depth copy ring fence status failed for slot "
+                             + std::to_string(slotIndex) + " (" + std::to_string(fenceStatus) + ")");
+                pLogicalDevice->pendingDepthCopy.pending = false;
+                VkResult passthroughResult = pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+                reportDeviceLostDiagnostics(pLogicalDevice, queue, "vkQueueSubmit(passthrough-ring-status)", passthroughResult);
+                if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                    panicLayer(pLogicalDevice, "Vulkan device lost during QueueSubmit passthrough");
+                return passthroughResult;
             }
             pLogicalDevice->vkd.ResetFences(pLogicalDevice->device, 1, &pLogicalDevice->depthCopyRingFences[slotIndex]);
         }
@@ -3510,7 +3859,13 @@ namespace VKIntox
         ensurePersistentDepthStorage(pLogicalDevice, storageFormat, captureDepth.extent);
         auto& storage = pLogicalDevice->depthCaptureStorage;
         if (storage.image == VK_NULL_HANDLE)
-            return pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+        {
+            VkResult passthroughResult = pLogicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            reportDeviceLostDiagnostics(pLogicalDevice, queue, "vkQueueSubmit(passthrough-no-depth-storage)", passthroughResult);
+            if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                panicLayer(pLogicalDevice, "Vulkan device lost during no-depth-storage passthrough");
+            return passthroughResult;
+        }
 
         const bool isMsaa = captureDepth.samples != VK_SAMPLE_COUNT_1_BIT;
         const VkImageAspectFlags depthAspect = isStencilFormat(captureDepth.format)
@@ -3622,12 +3977,21 @@ namespace VKIntox
             ? pLogicalDevice->depthCopyRingFences[submittedSlot] : VK_NULL_HANDLE;
 
         if (submitCount <= 1)
-            return pLogicalDevice->vkd.QueueSubmit(queue, 1, &modifiedLastSubmit, slotFence);
+        {
+            VkResult vr = pLogicalDevice->vkd.QueueSubmit(queue, 1, &modifiedLastSubmit, slotFence);
+            reportDeviceLostDiagnostics(pLogicalDevice, queue, "vkQueueSubmit(depth-copy)", vr);
+            if (vr == VK_ERROR_DEVICE_LOST)
+                panicLayer(pLogicalDevice, "Vulkan device lost during depth-copy submit");
+            return vr;
+        }
 
-        // Multiple submits: pass through first N-1 unchanged, replace last
+        // Multiple submits: pass through first N-1 unchanged, replace last.
         VkResult vr = pLogicalDevice->vkd.QueueSubmit(queue, submitCount - 1, pSubmits, VK_NULL_HANDLE);
         if (vr == VK_SUCCESS)
             vr = pLogicalDevice->vkd.QueueSubmit(queue, 1, &modifiedLastSubmit, slotFence);
+        reportDeviceLostDiagnostics(pLogicalDevice, queue, "vkQueueSubmit(depth-copy)", vr);
+        if (vr == VK_ERROR_DEVICE_LOST)
+            panicLayer(pLogicalDevice, "Vulkan device lost during depth-copy submit");
         return vr;
     }
 
@@ -3650,14 +4014,27 @@ namespace VKIntox
                     return VK_ERROR_DEVICE_LOST;
                 passThroughDevice = devIt->second;
                 softDisabled = passThroughDevice->softDisabled.load(std::memory_order_acquire);
-                if (softDisabled && passThroughDevice->imguiOverlay)
+                bool deviceLost = false;
+                {
+                    std::lock_guard<std::mutex> lossLock(deviceLossLock);
+                    deviceLost = deviceLostDevices.find(passThroughDevice.get()) != deviceLostDevices.end();
+                }
+                if (softDisabled && deviceLost)
+                    hasToasts = false;
+                if (softDisabled && passThroughDevice->imguiOverlay && !deviceLost)
                     hasToasts = passThroughDevice->imguiOverlay->hasPendingToasts();
             }
 
             if (softDisabled)
             {
                 if (!hasToasts || !passThroughDevice->imguiOverlay || pPresentInfo->swapchainCount == 0)
-                    return passThroughDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+                {
+                    VkResult vr = passThroughDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+                    reportDeviceLostDiagnostics(passThroughDevice.get(), queue, "vkQueuePresentKHR(soft-disabled)", vr);
+                    if (vr == VK_ERROR_DEVICE_LOST)
+                        panicLayer(passThroughDevice.get(), "Vulkan device lost during soft-disabled present");
+                    return vr;
+                }
 
                 // Submit an overlay-only frame for each swapchain, chained onto
                 // the original wait semaphores so the present stays ordered.
@@ -3715,7 +4092,13 @@ namespace VKIntox
                     if (vr != VK_SUCCESS)
                     {
                         Logger::err("Toast-only overlay submit failed: " + std::to_string(vr));
-                        return passThroughDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+                        if (vr == VK_ERROR_DEVICE_LOST)
+                            panicLayer(passThroughDevice.get(), "Vulkan device lost during toast-only overlay submit");
+                        VkResult passthroughResult = passThroughDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+                        reportDeviceLostDiagnostics(passThroughDevice.get(), queue, "vkQueuePresentKHR(toast fallback)", passthroughResult);
+                        if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                            panicLayer(passThroughDevice.get(), "Vulkan device lost during toast fallback present");
+                        return passthroughResult;
                     }
                     presentWaitSems.push_back(pSwap->overlaySemaphores[index]);
                 }
@@ -3723,7 +4106,11 @@ namespace VKIntox
                 VkPresentInfoKHR pi = *pPresentInfo;
                 pi.waitSemaphoreCount = static_cast<uint32_t>(presentWaitSems.size());
                 pi.pWaitSemaphores = presentWaitSems.data();
-                return passThroughDevice->vkd.QueuePresentKHR(queue, &pi);
+                VkResult vr = passThroughDevice->vkd.QueuePresentKHR(queue, &pi);
+                reportDeviceLostDiagnostics(passThroughDevice.get(), queue, "vkQueuePresentKHR(toast overlay)", vr);
+                if (vr == VK_ERROR_DEVICE_LOST)
+                    panicLayer(passThroughDevice.get(), "Vulkan device lost during toast overlay present");
+                return vr;
             }
         }
 
@@ -3738,12 +4125,22 @@ namespace VKIntox
                 if (devIt == deviceMap.end() || !devIt->second)
                     return VK_ERROR_DEVICE_LOST;
                 if (!devIt->second->queue)
-                    return devIt->second->vkd.QueuePresentKHR(queue, pPresentInfo);
+                {
+                    VkResult vr = devIt->second->vkd.QueuePresentKHR(queue, pPresentInfo);
+                    reportDeviceLostDiagnostics(devIt->second.get(), queue, "vkQueuePresentKHR(non-wayland direct)", vr);
+                    if (vr == VK_ERROR_DEVICE_LOST)
+                        panicLayer(devIt->second.get(), "Vulkan device lost during non-wayland direct present");
+                    return vr;
+                }
 
                 passThroughDevice = devIt->second;
             }
 
-            return passThroughDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+            VkResult vr = passThroughDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+            reportDeviceLostDiagnostics(passThroughDevice.get(), queue, "vkQueuePresentKHR(non-wayland passthrough)", vr);
+            if (vr == VK_ERROR_DEVICE_LOST)
+                panicLayer(passThroughDevice.get(), "Vulkan device lost during non-wayland passthrough present");
+            return vr;
         }
 
         // Mark new input frame so dispatch deduplication resets
@@ -3766,11 +4163,7 @@ namespace VKIntox
         std::vector<std::shared_ptr<LogicalSwapchain>> presentSwapchains;
         std::vector<uint32_t> presentIndices;
 
-        // Declared outside the lock scope so we can use them after releasing
-        // the lock for the QueueWaitIdle call (R2 fix).
-        bool needDepthRealloc = false;
-        LogicalDevice* rawDeviceForRealloc = nullptr;
-        VkQueue queueForRealloc = VK_NULL_HANDLE;
+        // REMOVED: No longer need rawDeviceForRealloc/queueForRealloc since we removed QueueWaitIdle
 
         {
             scoped_lock l(globalLock);
@@ -3812,68 +4205,7 @@ namespace VKIntox
                 initLogged = true;
             }
 
-            // --- Deferred startup reload ---
-            // Arm on the first present call so the timer starts counting
-            // from the moment the game actually begins rendering.
-            if (!deferredStartupReload.fired && !deferredStartupReload.armed)
-                deferredStartupReload.armed = true;
-
-            if (deferredStartupReload.armed && !deferredStartupReload.fired)
-            {
-                if (deferredStartupReload.firstPresentTime.time_since_epoch().count() == 0)
-                    deferredStartupReload.firstPresentTime = std::chrono::steady_clock::now();
-
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - deferredStartupReload.firstPresentTime).count();
-
-                if (elapsed >= DEFERRED_STARTUP_RELOAD_MS)
-                {
-                    deferredStartupReload.fired = true;
-                    Logger::info("deferred startup reload: re-reading config "
-                                 "(" + std::to_string(elapsed) + "ms after first present)");
-
-                    // Re-read config (picks up any late-populated shader_manager.conf)
-                    pConfig->reload();
-                    cachedEffects.initialized = false;
-                    cachedParams.dirty = true;
-
-                    // Re-populate selected effects from the refreshed config.
-                    // We do NOT call effectRegistry.initialize() here because
-                    // it calls effects.clear() which wipes the entire parsed
-                    // effect list (parameters, preprocessor defs, compile
-                    // results).  Instead we ensure each selected effect
-                    // exists in the registry — now that shader_manager.conf
-                    // and the filesystem are ready, findEffectPath() will
-                    // succeed where it failed during the first init.
-                    //
-                    // We cannot call initializeSelectedEffectsFromConfig()
-                    // because its once-guard (initializedFromConfig) was
-                    // already tripped during the first swapchain setup, so
-                    // we duplicate the essential work here.
-                    {
-                        std::vector<std::string> cfgEffs   = pConfig->getOption<std::vector<std::string>>("effects", {});
-                        std::vector<std::string> disEffs   = pConfig->getOption<std::vector<std::string>>("disabledEffects", {});
-                        std::set<std::string>      disSet(disEffs.begin(), disEffs.end());
-                        for (const auto& n : cfgEffs)
-                        {
-                            effectRegistry.ensureEffect(n);
-                            effectRegistry.setEffectEnabled(n, disSet.find(n) == disSet.end());
-                        }
-                        effectRegistry.setSelectedEffects(cfgEffs);
-                    }
-
-                    const auto& sel = effectRegistry.getSelectedEffects();
-                    reloadAllSwapchains(pDeviceForSettings, sel);
-                    pDeviceForSettings->depthReallocPending = false;
-
-                    // Update overlay with the refreshed effect list
-                    if (pDeviceForSettings->imguiOverlay)
-                    {
-                        std::vector<std::string> disabledEffs = pConfig->getOption<std::vector<std::string>>("disabledEffects", {});
-                        pDeviceForSettings->imguiOverlay->setSelectedEffects(sel, disabledEffs);
-                    }
-                }
-            }
+            // REMOVED: Deferred startup reload was causing race conditions during graphics quality switches
 
             // Toggle effect on/off (keyboard)
             if (handleKeyPress(keySymbol, pressed))
@@ -3988,15 +4320,6 @@ namespace VKIntox
             presentEffectSnapshot = presentEffect;
             pLogicalDeviceShared = devIt->second;
 
-            // Snapshot the depth-realloc flag under the lock, then drop the
-            // lock before calling QueueWaitIdle. Holding globalLock across
-            // QueueWaitIdle deadlocks every other Vulkan entry point if the
-            // GPU is stalled (the classic "0 fps freezes the whole process"
-            // symptom).
-            needDepthRealloc = pLogicalDevice->depthReallocPending;
-            rawDeviceForRealloc = pLogicalDevice;
-            queueForRealloc = pLogicalDevice->queue;
-
             presentSwapchains.reserve(pPresentInfo->swapchainCount);
             presentIndices.reserve(pPresentInfo->swapchainCount);
             for (unsigned int i = 0; i < pPresentInfo->swapchainCount; i++)
@@ -4037,23 +4360,190 @@ namespace VKIntox
         if (!pLogicalDevice)
             return VK_ERROR_DEVICE_LOST;
 
-        // Deferred depth reallocation — done OUTSIDE the global lock so other
-        // threads can keep making Vulkan calls while we wait for the GPU to
-        // idle. The actual reallocation re-acquires the lock to mutate state.
-        if (needDepthRealloc)
+        // Depth recovery is intentionally non-blocking.  If the currently
+        // selected depth image does not exactly match the present swapchain,
+        // do not submit our existing effect command buffer: it may reference
+        // a depth image that the game has just resized/destroyed.  Pass the
+        // application's present straight through while depth is disabled.
+        bool bypassDepthForPresent = false;
+        bool rebuildDepthNow = false;
+        bool rebuildStartupDepthNow = false;
+        DepthState retryDepth{};
+        DepthState startupDepth{};
+        LogicalSwapchain* retrySwapchain = nullptr;
+
         {
-            VkResult idleRes = pLogicalDevice->vkd.QueueWaitIdle(queueForRealloc);
-            if (idleRes != VK_SUCCESS)
+            scoped_lock depthLock(globalLock);
+
+            // Give startup rendering a few successful presents to settle before
+            // rediscovering depth.  This is the depth-only equivalent of the
+            // old startup F10 workaround: no config reload, no arbitrary sleep,
+            // and no QueueWaitIdle.
+            if (!presentSwapchains.empty())
             {
-                reportDeviceLostDiagnostics(rawDeviceForRealloc, queueForRealloc,
-                                            "QueueWaitIdle(deferred depth realloc)", idleRes);
-                panicLayer(pLogicalDevice,
-                    "GPU stalled during deferred depth realloc (QueueWaitIdle returned "
-                    + std::to_string(idleRes) + ")");
-                return pLogicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+                auto& startup = startupDepthReinitStates[pLogicalDevice];
+                const auto now = std::chrono::steady_clock::now();
+                if (startup.presentCount == 0)
+                {
+                    startup.firstPresentAt = now;
+                    startup.nextAttemptAt = now + STARTUP_DEPTH_MIN_SETTLE_TIME;
+                }
+                ++startup.presentCount;
+
+                const bool settledByFrames = startup.presentCount >= STARTUP_DEPTH_STABLE_PRESENTS;
+                const bool settledByTime = now - startup.firstPresentAt >= STARTUP_DEPTH_MIN_SETTLE_TIME;
+                const bool attemptDue = startup.nextAttemptAt.time_since_epoch().count() == 0
+                                     || now >= startup.nextAttemptAt;
+
+                if (!startup.completed && settledByFrames && settledByTime && attemptDue)
+                {
+                    const LogicalSwapchain* startupSwapchain = presentSwapchains.front().get();
+                    if (prepareStartupDepthReinitializationLocked(pLogicalDevice, startupSwapchain, startupDepth))
+                    {
+                        if (depthRebuildFencesReady(pLogicalDevice, startupSwapchain))
+                        {
+                            // Do not publish the new depth state until our old
+                            // effect command buffers are known to be finished.
+                            // This keeps the transition atomic from the present
+                            // path's point of view.
+                            pLogicalDevice->activeDepthState = startupDepth;
+                            pLogicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+                            rebuildStartupDepthNow = true;
+                            startup.completed = true;
+                        }
+                        else
+                        {
+                            // Keep the old state quarantined: submitting it while
+                            // waiting would defeat the whole point of the startup
+                            // refresh.  The application present is passed through
+                            // until the next non-blocking fence poll succeeds.
+                            bypassDepthForPresent = true;
+                            startup.nextAttemptAt = now + STARTUP_DEPTH_RETRY_DELAY;
+                            Logger::debug("startup depth reinitialization: waiting for effect fences before rebuild");
+                        }
+                    }
+                    else
+                    {
+                        // Keep looking while the game finishes constructing its
+                        // real depth attachment.  This is cheap and non-blocking.
+                        startup.nextAttemptAt = now + STARTUP_DEPTH_RETRY_DELAY;
+                    }
+                }
             }
-            scoped_lock reallocLock(globalLock);
-            performDeferredDepthRealloc(pLogicalDevice);
+
+            for (const auto& scPtr : presentSwapchains)
+            {
+                LogicalSwapchain* sc = scPtr.get();
+                if (!sc || sc->pLogicalDevice != pLogicalDevice)
+                    continue;
+
+                DepthState currentDepth = getDepthState(pLogicalDevice);
+                const bool currentValid = !hasDepthState(currentDepth)
+                    || validateDepthStateForResolve(pLogicalDevice, currentDepth);
+                const bool exactMatch = currentValid
+                    && depthMatchesSwapchainExtent(currentDepth, sc);
+
+                auto retryIt = depthRetryStates.find(pLogicalDevice);
+                const bool retryDisabled = retryIt != depthRetryStates.end() && retryIt->second.disabled;
+
+                if (hasDepthState(currentDepth) && (!currentValid || !exactMatch))
+                {
+                    armDepthRetryLocked(pLogicalDevice, sc,
+                                        currentValid ? "depth extent does not match swapchain"
+                                                     : "depth image is no longer valid");
+                    bypassDepthForPresent = true;
+                    break;
+                }
+
+                if (retryDisabled)
+                {
+                    bypassDepthForPresent = true;
+
+                    if (depthRetryDueLocked(pLogicalDevice))
+                    {
+                        // Only re-enable depth if a freshly tracked image now
+                        // exactly matches the current swapchain.
+                        DepthState candidate = getDepthState(pLogicalDevice);
+                        if (depthMatchesSwapchainExtent(candidate, sc)
+                            && validateDepthStateForResolve(pLogicalDevice, candidate))
+                        {
+                            retryDepth = candidate;
+                            retrySwapchain = sc;
+                            if (depthRebuildFencesReady(pLogicalDevice, sc))
+                                rebuildDepthNow = true;
+                            else
+                                scheduleDepthRetryLocked(pLogicalDevice, true);
+                        }
+                        else
+                        {
+                            Logger::debug("depth retry: no exact swapchain-sized depth buffer yet");
+                            scheduleDepthRetryLocked(pLogicalDevice, false);
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if (rebuildStartupDepthNow)
+            {
+                // Fence status is the only synchronisation used here.  We do
+                // not stall the application queue just to fix startup depth.
+                pLogicalDevice->activeDepthState = startupDepth;
+                pLogicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+                pLogicalDevice->depthReallocPending = false;
+
+                for (auto& [handle, sc] : swapchainMap)
+                {
+                    if (!sc || sc->pLogicalDevice != pLogicalDevice)
+                        continue;
+
+                    reallocateCommandBuffers(pLogicalDevice, sc.get(), startupDepth);
+                    Logger::debug("startup depth reinitialization: rebuilt swapchain "
+                                  + convertToString(handle) + " with depth "
+                                  + std::to_string(startupDepth.extent.width) + "x"
+                                  + std::to_string(startupDepth.extent.height));
+                }
+            }
+
+            if (rebuildDepthNow && retrySwapchain)
+            {
+                // Rebuild every swapchain belonging to this device from the
+                // same depth generation.  Fences above guarantee our own
+                // previous effect command buffers are no longer executing,
+                // and GetFenceStatus never blocks.
+                pLogicalDevice->activeDepthState = retryDepth;
+                pLogicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+                pLogicalDevice->depthReallocPending = false;
+
+                for (auto& [handle, sc] : swapchainMap)
+                {
+                    if (!sc || sc->pLogicalDevice != pLogicalDevice)
+                        continue;
+                    reallocateCommandBuffers(pLogicalDevice, sc.get(), retryDepth);
+                    Logger::debug("non-blocking depth retry rebuilt swapchain "
+                                  + convertToString(handle) + " with depth "
+                                  + std::to_string(retryDepth.extent.width) + "x"
+                                  + std::to_string(retryDepth.extent.height));
+                }
+
+                auto& retry = depthRetryStates[pLogicalDevice];
+                retry.disabled = false;
+                retry.retryPending = false;
+                retry.retryAt = {};
+                bypassDepthForPresent = false;
+            }
+        }
+
+        if (bypassDepthForPresent)
+        {
+            // Crucially, don't submit the old command buffer while depth is
+            // invalid.  This is what prevents a resize race from escalating
+            // into VK_ERROR_DEVICE_LOST.  The app's own present remains intact.
+            VkResult passthroughResult = pLogicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+            reportDeviceLostDiagnostics(pLogicalDevice, queue, "vkQueuePresentKHR(depth-disabled passthrough)", passthroughResult);
+            if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                panicLayer(pLogicalDevice, "Vulkan device lost during depth-disabled passthrough present");
+            return passthroughResult;
         }
 
         // Reuse static buffers to avoid per-frame heap allocations
@@ -4115,6 +4605,8 @@ namespace VKIntox
             if (vr != VK_SUCCESS)
             {
                 reportDeviceLostDiagnostics(pLogicalDevice, pLogicalDevice->queue, "vkQueueSubmit(effect)", vr);
+                if (vr == VK_ERROR_DEVICE_LOST)
+                    panicLayer(pLogicalDevice, "Vulkan device lost during effect submit");
                 return vr;
             }
 
@@ -4138,6 +4630,8 @@ namespace VKIntox
             if (vr != VK_SUCCESS)
             {
                 reportDeviceLostDiagnostics(pLogicalDevice, pLogicalDevice->queue, "submitOverlayFrame", vr);
+                if (vr == VK_ERROR_DEVICE_LOST)
+                    panicLayer(pLogicalDevice, "Vulkan device lost during overlay submit");
                 return vr;
             }
 
@@ -4150,6 +4644,32 @@ namespace VKIntox
 
         VkResult presentResult = pLogicalDevice->vkd.QueuePresentKHR(queue, &presentInfo);
         reportDeviceLostDiagnostics(pLogicalDevice, queue, "vkQueuePresentKHR(final)", presentResult);
+        if (presentResult == VK_ERROR_DEVICE_LOST)
+            panicLayer(pLogicalDevice, "Vulkan device lost during final present");
+        
+        // CRITICAL FIX: Handle OUT_OF_DATE and SUBOPTIMAL by resetting affected swapchains
+        if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
+        {
+            Logger::warn("QueuePresentKHR returned " + std::string(presentResult == VK_ERROR_OUT_OF_DATE_KHR ? "OUT_OF_DATE" : "SUBOPTIMAL") + ", flagging swapchains for reset");
+            scoped_lock l(globalLock);
+            for (unsigned int i = 0; i < pPresentInfo->swapchainCount; i++)
+            {
+                auto swapIt = swapchainMap.find(pPresentInfo->pSwapchains[i]);
+                if (swapIt != swapchainMap.end() && swapIt->second)
+                {
+                    LogicalSwapchain* sc = swapIt->second.get();
+                    // Reset depth resolve state to prevent use of stale resources
+                    sc->depthResolveSourceView = VK_NULL_HANDLE;
+                    
+                    for (auto& perImg : sc->depthResolvePerImage) perImg.image = VK_NULL_HANDLE;
+                    // Flag for reload on next valid frame
+                    sc->rebuildEffectsOnNextPresent = true;
+                }
+            }
+            // Don't return error - let app handle the resize/recreate naturally
+            return VK_SUCCESS;
+        }
+        
         return presentResult;
     }
 
@@ -4180,6 +4700,8 @@ namespace VKIntox
     {
         scoped_lock l(globalLock);
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return VK_ERROR_DEVICE_LOST;
         VkResult vr;
         if (!VKIntox::settingsManager.getDepthCapture() || !pCreateInfo || pCreateInfo->attachmentCount == 0)
         {
@@ -4249,6 +4771,8 @@ namespace VKIntox
     {
         scoped_lock l(globalLock);
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return VK_ERROR_DEVICE_LOST;
         VkResult vr;
         if (!VKIntox::settingsManager.getDepthCapture() || !pCreateInfo || pCreateInfo->attachmentCount == 0)
         {
@@ -4318,6 +4842,8 @@ namespace VKIntox
     {
         scoped_lock l(globalLock);
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return VK_ERROR_DEVICE_LOST;
         VkResult vr;
         if (!VKIntox::settingsManager.getDepthCapture() || !pCreateInfo || pCreateInfo->attachmentCount == 0)
         {
@@ -4400,12 +4926,16 @@ namespace VKIntox
         {
             scoped_lock l(globalLock);
             LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+            if (pLogicalDevice == nullptr)
+                return VK_ERROR_DEVICE_LOST;
             return pLogicalDevice->vkd.CreateImage(device, pCreateInfo, pAllocator, pImage);
         }
 
         scoped_lock l(globalLock);
 
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return VK_ERROR_DEVICE_LOST;
         if (isDepthFormat(pCreateInfo->format)
             && ((pCreateInfo->usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))
         {
@@ -4477,12 +5007,16 @@ namespace VKIntox
         {
             scoped_lock l(globalLock);
             LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+            if (pLogicalDevice == nullptr)
+                return VK_ERROR_DEVICE_LOST;
             return pLogicalDevice->vkd.BindImageMemory(device, image, memory, memoryOffset);
         }
 
         scoped_lock l(globalLock);
 
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return VK_ERROR_DEVICE_LOST;
         // No layer bookkeeping needed here — depth image metadata is populated
         // at CreateImage time and used at CmdBeginRenderPass time. The previous
         // implementation did a std::find and then returned `result` either way.
@@ -4498,12 +5032,16 @@ namespace VKIntox
         {
             scoped_lock l(globalLock);
             LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+            if (pLogicalDevice == nullptr)
+                return VK_ERROR_DEVICE_LOST;
             return pLogicalDevice->vkd.CreateImageView(device, pCreateInfo, pAllocator, pView);
         }
 
         scoped_lock l(globalLock);
 
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return VK_ERROR_DEVICE_LOST;
         VkResult result = pLogicalDevice->vkd.CreateImageView(device, pCreateInfo, pAllocator, pView);
         if (result != VK_SUCCESS)
             return result;
@@ -4567,6 +5105,8 @@ namespace VKIntox
         {
             scoped_lock l(globalLock);
             LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+            if (pLogicalDevice == nullptr)
+                return;
             pLogicalDevice->vkd.DestroyImageView(device, imageView, pAllocator);
             return;
         }
@@ -4574,6 +5114,8 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return;
         pLogicalDevice->snapshotTargetViewStates.erase(imageView);
         pLogicalDevice->depthViewStates.erase(imageView);
         clearTrackedDepthScopesLocked(pLogicalDevice, [imageView](const DepthState& state) { return state.imageView == imageView; });
@@ -4615,12 +5157,16 @@ namespace VKIntox
         {
             scoped_lock l(globalLock);
             LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+            if (pLogicalDevice == nullptr)
+                return VK_ERROR_DEVICE_LOST;
             return pLogicalDevice->vkd.CreateFramebuffer(device, pCreateInfo, pAllocator, pFramebuffer);
         }
 
         scoped_lock l(globalLock);
 
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return VK_ERROR_DEVICE_LOST;
         VkResult result = pLogicalDevice->vkd.CreateFramebuffer(device, pCreateInfo, pAllocator, pFramebuffer);
         if (result != VK_SUCCESS)
             return result;
@@ -4666,6 +5212,8 @@ namespace VKIntox
         {
             scoped_lock l(globalLock);
             LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+            if (pLogicalDevice == nullptr)
+                return;
             pLogicalDevice->vkd.DestroyFramebuffer(device, framebuffer, pAllocator);
             return;
         }
@@ -4673,6 +5221,8 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return;
         pLogicalDevice->framebufferDepthStates.erase(framebuffer);
         pLogicalDevice->framebufferSnapshotTargets.erase(framebuffer);
         pLogicalDevice->vkd.DestroyFramebuffer(device, framebuffer, pAllocator);
@@ -5716,6 +6266,8 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         LogicalDevice* pLogicalDevice = deviceMap[GetKey(device)].get();
+        if (pLogicalDevice == nullptr)
+            return;
 
         // Check if this is a tracked depth image
         auto it = std::find(pLogicalDevice->depthImages.begin(), pLogicalDevice->depthImages.end(), image);

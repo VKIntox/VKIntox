@@ -41,12 +41,12 @@ namespace VKIntox
         // Workaround for transient multisampled depth attachments (Advanced tab).
         // When true, VKIntox injects its own depth resolve attachment so the
         // resolved depth survives past the render pass for effects to sample.
-        bool depthTransientWorkaround = false;
+        bool depthTransientWorkaround = true;
         // Depth capture method for persistent storage path (Advanced tab).
         // 0 = off (use legacy per-swapchain resolve only),
         // 1 = Option A: RenderPassEnd hook (recommended, blit inline at CmdEndRenderPass),
         // 2 = Option B: QueueSubmit interception (robust fallback, inject blit at submit).
-        int depthCaptureMethod = 0;
+        int depthCaptureMethod = 2;
 
         // --- Alternative depth buffer handling ---
         // Depth source channel/mode selection (Advanced tab).

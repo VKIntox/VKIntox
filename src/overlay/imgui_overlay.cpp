@@ -1111,4 +1111,10 @@ namespace VKIntox
         return cmd;
     }
 
+    void ImGuiOverlay::collectCommandFences(std::vector<VkFence>& out) const
+    {
+        for (VkFence f : commandBufferFences)
+            if (f != VK_NULL_HANDLE) out.push_back(f);
+    }
+
 } // namespace VKIntox

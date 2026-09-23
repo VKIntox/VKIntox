@@ -178,7 +178,7 @@ namespace VKIntox
         .axis_stop = pointerAxisStop,
         .axis_discrete = pointerAxisDiscrete,
         .axis_value120 = pointerAxisValue120,
-        .axis_relative_direction = pointerAxisRelativeDirection,
+        // .axis_relative_direction removed in newer wayland-protocols
     };
 
     // Called by shared seat listener when pointer capability is available
