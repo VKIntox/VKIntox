@@ -85,18 +85,18 @@ ENABLE_VKINTOX=1 your_game_command
 | `F10` | reload configuration and recompile shaders |
 
 ### configuring depth
+
 if depth-dependent effects (like DOF) look incorrect:
-1.  open the **Advanced** tab in the overlay.
-2.  try different **Depth Resolve Modes**.
-3.  press `F10` to apply changes.
-4.  for **roblox**, use **Reverse-Z** with inversion **ON**.
+
+1.  try hitting your config reload keybind (default: `F10`)
+2.  restart your game
 
 ## known issues
 
-*   **initial startup:** a restart may be required after the first launch for depth detection to stabilize.
-*   **graphics switching:** changing quality settings in-game can lead to crashes or the depth buffer "freezing".
+*   **initial startup:** a restart may be required after the first launch for stability
+*   **graphics switching:** changing quality settings in-game often leads to crashes
 *   **performance:** shader compilation on first load may cause a brief stutter.
-*   **stability:** stability in the home screen is *very* poor. it's best to join games via your browser instead
+*   **stability:** stability in the catalog is *very* poor. it's best to not use it
 
 ## troubleshooting
 
@@ -123,6 +123,7 @@ flatpak upgrade org.vinegarhq.Sober
 *   **sober freezes on launch:** i suggest trying a simple restart... 1-2 times.
 *   **sober freezes inside the catalog!:** opening the catalog re-builds graphics constantly that leads to freezes... don't use it
 *   **my effects are off on launch?:** press F1 (or whatever you have it set to, if you changed). effects are OFF on launch by default for more stable startups
+*   **my 3d effects look frozen!:** press your reload keybind (default: `F10`) to reload depth
 
 ---
 
