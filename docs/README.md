@@ -4,7 +4,7 @@
 
 vulkan post-processing layer with advanced depth buffer resolve for linux.
 
-[![License](https://img.shields.io/badge/license-zlib-green?style=flat-square)](./LICENSE) ![Version](https://img.shields.io/badge/version-0.1.1-dev-05-blue?style=flat-square)
+[![License](https://img.shields.io/badge/license-zlib-green?style=flat-square)](./LICENSE) ![Version](https://img.shields.io/badge/version-0.1.1--dev--05-blue?style=flat-square)
 
 </div>
 
