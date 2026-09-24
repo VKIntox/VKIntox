@@ -98,7 +98,7 @@ if depth-dependent effects (like DOF) look incorrect:
 *   **performance:** shader compilation on first load may cause a brief stutter.
 *   **stability:** stability in the catalog is *very* poor. it's best to not use it
 
-## troubleshooting
+## troubleshooting / FAQ
 
 *   **logs:** vkintox saves logs to `/path/to/config/VKIntox/vkintox.log`. to capture diagnostics, run sober with debug logging enabled:
 
@@ -124,6 +124,7 @@ flatpak upgrade org.vinegarhq.Sober
 *   **sober freezes inside the catalog!:** opening the catalog re-builds graphics constantly that leads to freezes... don't use it
 *   **my effects are off on launch?:** press F1 (or whatever you have it set to, if you changed). effects are OFF on launch by default for more stable startups
 *   **my 3d effects look frozen!:** press your reload keybind (default: `F10`) to reload depth
+*   **i just added an .ini preset from ReShade, how do I use it?:** reload your config once you've put your .ini file in the right directory (`/path/to/config/VKIntox/configs/shaders/`), and it will appear on the Shader INI dropdown
 
 ---
 
