@@ -993,6 +993,34 @@ namespace VKIntox
 
         ImGui::Begin("VKIntox Overlay", nullptr, ImGuiWindowFlags_NoCollapse);
 
+        const ImVec2 windowPos = ImGui::GetWindowPos();
+        const ImVec2 windowSize = ImGui::GetWindowSize();
+        const float titleBarHeight = ImGui::GetCurrentWindowRead()->TitleBarHeight;
+        const float closeButtonSize = std::min(ImGui::GetFrameHeight(), titleBarHeight - 8.0f);
+        const float closeButtonRightInset = 12.0f;
+        const ImVec2 buttonMin(windowPos.x + windowSize.x - closeButtonSize - closeButtonRightInset,
+                               windowPos.y + (titleBarHeight - closeButtonSize) * 0.5f);
+        const ImVec2 buttonMax(buttonMin.x + closeButtonSize, buttonMin.y + closeButtonSize);
+        const ImVec2 buttonCenter(buttonMin.x + closeButtonSize * 0.5f,
+                                  buttonMin.y + closeButtonSize * 0.5f);
+        const bool buttonHovered = ImGui::IsMouseHoveringRect(buttonMin, buttonMax, false);
+        const bool closeRequested = buttonHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        ImDrawList* drawList = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
+        ImVec4 surfaceColor = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+        surfaceColor.w = 1.0f;
+        drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
+                                  ImGui::ColorConvertFloat4ToU32(surfaceColor));
+        if (buttonHovered)
+            ImGui::SetTooltip("Close overlay");
+        const float crossInset = closeButtonSize * 0.18f;
+        const ImVec2 crossStart1(buttonCenter.x - crossInset, buttonCenter.y - crossInset);
+        const ImVec2 crossEnd1(buttonCenter.x + crossInset, buttonCenter.y + crossInset);
+        const ImVec2 crossStart2(buttonCenter.x + crossInset, buttonCenter.y - crossInset);
+        const ImVec2 crossEnd2(buttonCenter.x - crossInset, buttonCenter.y + crossInset);
+        const ImU32 checkColor = ImGui::GetColorU32(ImGuiCol_Text);
+        drawList->AddLine(crossStart1, crossEnd1, checkColor, 1.5f);
+        drawList->AddLine(crossStart2, crossEnd2, checkColor, 1.5f);
+
         // Clamp position after the window is created (prevents dragging offscreen)
         ImVec2 winPos = ImGui::GetWindowPos();
         ImVec2 winSize = ImGui::GetWindowSize();
@@ -1054,6 +1082,9 @@ namespace VKIntox
         }
 
         ImGui::End();  // VKIntox Overlay
+
+        if (closeRequested)
+            toggle();
 
         // Debug window (separate, controlled by setting)
         renderDebugWindow();
