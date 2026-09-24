@@ -108,17 +108,25 @@ flatpak run --env=VKINTOX_LOG_LEVEL=debug org.vinegarhq.Sober
 
 you can then inspect the log file at `~/.var/app/org.vinegarhq.Sober/config/VKIntox/vkintox.log`. (in the case of specifically Sober)
 
-*   **sober stopped launching:** try running `./setup sober` again, and run:
+*   **sober uses software rendering, the wrong GPU, or fails to launch:** update Sober and its Flatpak graphics runtimes first:
 
 ```bash
-flatpak override --user --env=VK_LOADER_DRIVERS_DISABLE=lvp_icd.x86_64.json --env=__NV_PRIME_RENDER_OFFLOAD=1 --env=__GLX_VENDOR_LIBRARY_NAME=nvidia --env=VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json org.sober.Sober
+flatpak update
 ```
 
-and also make sure Sober, and your flatpak driver runtimes are up to date:
+Remove old GPU overrides that can force a vendor-specific ICD or disable the wrong driver:
 
 ```bash
-flatpak upgrade org.vinegarhq.Sober
+flatpak override --user --unset-env=VK_ICD_FILENAMES --unset-env=VK_LOADER_DRIVERS_DISABLE --unset-env=__NV_PRIME_RENDER_OFFLOAD --unset-env=__GLX_VENDOR_LIBRARY_NAME org.vinegarhq.Sober
 ```
+
+Flatpak selects the graphics driver for AMD and Intel GPUs automatically. On a hybrid NVIDIA laptop, force Sober onto the NVIDIA GPU with:
+
+```bash
+flatpak override --user --env=__NV_PRIME_RENDER_OFFLOAD=1 --env=__GLX_VENDOR_LIBRARY_NAME=nvidia org.vinegarhq.Sober
+```
+
+To check which Flatpak graphics drivers are active, run `flatpak --gl-drivers`. For NVIDIA, the host driver and Flatpak NVIDIA runtime versions must match. See the [Sober GPU troubleshooting guide](https://vinegarhq.org/Sober/Troubleshooting.html#sober-does-not-launch-to-my-dedicated-gpu) and [Flatpak graphics driver documentation](https://docs.flatpak.org/en/latest/extension.html#extension-points).
 
 *   **sober freezes on launch:** i suggest trying a simple restart... 1-2 times.
 *   **sober freezes inside the catalog!:** opening the catalog re-builds graphics constantly that leads to freezes... don't use it
