@@ -139,6 +139,9 @@ flatpak info --user runtime/org.gnome.Sdk/x86_64/50 >/dev/null 2>&1 || die "gnom
 run_progress "pulling freedesktop sdk" flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/25.08
 flatpak info --user runtime/org.freedesktop.Sdk/x86_64/25.08 >/dev/null 2>&1 || die "freedesktop sdk install failed"
 
+run_progress "pulling llvm 21 sdk extension" flatpak install -y --user flathub runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/25.08
+flatpak info --user runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/25.08 >/dev/null 2>&1 || die "llvm 21 sdk extension install failed"
+
 SOURCE_HASH=$(find src packaging/meson-config -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
 SOURCE_HASH=$(printf '%s\n' "$SOURCE_HASH" "$(sha256sum Justfile meson.build meson_options.txt packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json packaging/nix/flake.nix)")
 SOURCE_HASH=$(printf '%s' "$SOURCE_HASH" | sha256sum | cut -d' ' -f1)
