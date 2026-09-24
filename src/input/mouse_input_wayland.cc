@@ -162,11 +162,6 @@ namespace VKIntox
         scrollAccumulator -= (float)value120 / 120.0f;
     }
 
-    static void pointerAxisRelativeDirection(void* /*data*/, wl_pointer* /*pointer*/,
-                                             uint32_t /*axis*/, uint32_t /*direction*/)
-    {
-    }
-
     static const wl_pointer_listener pointerListener = {
         .enter = pointerEnter,
         .leave = pointerLeave,

@@ -518,7 +518,6 @@ namespace VKIntox
         // Visual indicator for current mode
         ImGui::Indent();
         {
-            static const char* modeShortNames[] = {"R", "A", "RGB", "Log", "ViewZ", "NDC", "RevZ"};
             ImGui::TextDisabled("Current: %s%s%s", 
                 depthModeNames[dsc],
                 depthInvert ? ", INVERTED" : "",

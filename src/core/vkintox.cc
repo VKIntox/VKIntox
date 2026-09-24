@@ -240,16 +240,13 @@ namespace VKIntox
         return parseBoolEnvValue(value, false);
     }
 
+#ifdef VKINTOX_DEBUG
     static bool isDepthCopyDumpEnabled()
     {
-#ifdef VKINTOX_DEBUG
         const char* value = std::getenv("VKINTOX_DEBUG_DUMP_DEPTH_COPY");
         if (value == nullptr)
             return false;
         return parseBoolEnvValue(value, false);
-#else
-        return false;
-#endif
     }
 
     static VkImageLayout getInternalDepthReadOnlyLayoutForDebug(VkFormat format)
@@ -276,7 +273,6 @@ namespace VKIntox
         return pLogicalSwapchain->depthResolveUsesShader ? VK_IMAGE_ASPECT_COLOR_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
     }
 
-#ifdef VKINTOX_DEBUG
     // Developer-only debug helper: dumps the depth-resolve image to
     // /tmp/vkintox-depth-copy-<i>.f32 so we can inspect what the layer is
     // feeding into effects. Compiled out of release builds — it does a

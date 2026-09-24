@@ -253,7 +253,7 @@ namespace VKIntox
         renderPassBeginInfo.framebuffer       = edgeFramebuffers[imageIndex];
         renderPassBeginInfo.renderArea.offset = {0, 0};
         renderPassBeginInfo.renderArea.extent = imageExtent;
-        VkClearValue clearValue               = {0.0f, 0.0f, 0.0f, 1.0f};
+        VkClearValue clearValue               = {.color = {{0.0f, 0.0f, 0.0f, 1.0f}}};
         renderPassBeginInfo.clearValueCount   = 1;
         renderPassBeginInfo.pClearValues      = &clearValue;
         // edge renderPass

@@ -143,7 +143,7 @@ namespace VKIntox
                             profileListStale = true;
 
                             // Load per-profile settings for the new profile
-                            ProfileSettings ps = ConfigSerializer::loadProfileSettings(activeProfilePath);
+                            static_cast<void>(ConfigSerializer::loadProfileSettings(activeProfilePath));
                             // Profile settings loaded (safeAntiCheat removed)
                         }
                     }
