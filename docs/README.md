@@ -100,13 +100,13 @@ if depth-dependent effects (like DOF) look incorrect:
 
 ## troubleshooting
 
-*   **logs:** Sober logs are saved to `~/.var/app/org.vinegarhq.Sober/config/VKIntox/vkintox.log`. to capture diagnostics, enable debug logging before launching Sober:
+*   **logs:** vkintox saves logs to `/path/to/config/VKIntox/vkintox.log`. to capture diagnostics, run sober with debug logging enabled:
 
 ```bash
-flatpak override --user --env=VKINTOX_LOG_LEVEL=debug org.vinegarhq.Sober
+flatpak run --env=VKINTOX_LOG_LEVEL=debug org.vinegarhq.Sober
 ```
 
-Remove the override once done with `flatpak override --user --unset-env=VKINTOX_LOG_LEVEL org.vinegarhq.Sober`.
+you can then inspect the log file at `~/.var/app/org.vinegarhq.Sober/config/VKIntox/vkintox.log`. (in the case of specifically Sober)
 
 *   **sober stopped launching:** try running `./setup sober` again, and run:
 
