@@ -117,6 +117,8 @@ else
     need_cmd meson
     need_cmd ninja
     need_cmd sudo
+    need_cmd curl
+    need_cmd unzip
 fi
 
 if [[ "$MODE" == "system" ]]; then
@@ -128,37 +130,46 @@ if [[ "$MODE" == "system" ]]; then
     say "authenticating for system install"
     sudo -v || die "could not authenticate for system install"
     run_progress "installed to system" sudo -n ninja -C build install
-    exit 0
 fi
 
-section "flatpak sdks"
+if [[ "$MODE" != "system" ]]; then
+    section "flatpak sdks"
 
-run_progress "pulling gnome sdk" flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/50
-flatpak info --user runtime/org.gnome.Sdk/x86_64/50 >/dev/null 2>&1 || die "gnome sdk install failed"
+    run_progress "pulling gnome sdk" flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/50
+    flatpak info --user runtime/org.gnome.Sdk/x86_64/50 >/dev/null 2>&1 || die "gnome sdk install failed"
 
-run_progress "pulling freedesktop sdk" flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/25.08
-flatpak info --user runtime/org.freedesktop.Sdk/x86_64/25.08 >/dev/null 2>&1 || die "freedesktop sdk install failed"
+    run_progress "pulling freedesktop sdk" flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/25.08
+    flatpak info --user runtime/org.freedesktop.Sdk/x86_64/25.08 >/dev/null 2>&1 || die "freedesktop sdk install failed"
 
-run_progress "pulling llvm 21 sdk extension" flatpak install -y --user flathub runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/25.08
-flatpak info --user runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/25.08 >/dev/null 2>&1 || die "llvm 21 sdk extension install failed"
+    run_progress "pulling clang" flatpak install -y --user flathub runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/25.08
+    flatpak info --user runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/25.08 >/dev/null 2>&1 || die "llvm 21 sdk extension install failed"
+fi
 
 SOURCE_HASH=$(find src packaging/meson-config -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
 SOURCE_HASH=$(printf '%s\n' "$SOURCE_HASH" "$(sha256sum Justfile meson.build meson_options.txt packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json packaging/nix/flake.nix)")
 SOURCE_HASH=$(printf '%s' "$SOURCE_HASH" | sha256sum | cut -d' ' -f1)
 LAYER_MARKER="$HOME/.local/share/VKIntox/sober-layer.sha256"
 
-section "building layer"
-if [[ ! -f "$LAYER_MARKER" || "$(cat "$LAYER_MARKER")" != "$SOURCE_HASH" ]] || \
-   ! flatpak info --user org.freedesktop.Platform.VulkanLayer.VKIntox >/dev/null 2>&1; then
-    run_progress "building + installing layer" just flatpak-build
-    mkdir -p "$(dirname "$LAYER_MARKER")"
-    printf '%s\n' "$SOURCE_HASH" > "$LAYER_MARKER"
+if [[ "$MODE" != "system" ]]; then
+    section "building layer"
+    if [[ ! -f "$LAYER_MARKER" || "$(cat "$LAYER_MARKER")" != "$SOURCE_HASH" ]] || \
+       ! flatpak info --user org.freedesktop.Platform.VulkanLayer.VKIntox >/dev/null 2>&1; then
+        run_progress "building + installing layer" just flatpak-build
+        mkdir -p "$(dirname "$LAYER_MARKER")"
+        printf '%s\n' "$SOURCE_HASH" > "$LAYER_MARKER"
+    else
+        ok "layer already up to date"
+    fi
 else
-    ok "layer already up to date"
+    section "building layer"
 fi
 
 section "config dirs"
-APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
+if [[ "$MODE" == "system" ]]; then
+    APP_CONFIG="$HOME/.config/VKIntox"
+else
+    APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
+fi
 RESHADE_DIR="$APP_CONFIG/reshade"
 PACKAGE_DIR="$RESHADE_DIR/packages"
 FONT_DIR="$APP_CONFIG/font"
@@ -264,13 +275,18 @@ fi
 section "shader paths"
 ok "shader/texture paths setup"
 
-section "enable layer"
-if flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
-    ok "ENABLE_VKINTOX=1 set"
+if [[ "$MODE" != "system" ]]; then
+    section "enable layer"
+    if flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
+        ok "ENABLE_VKINTOX=1 set"
+    else
+        warn "couldn't set override — app may not be installed yet"
+        warn "after installing, run:"
+        printf "    ${DIM}flatpak override --user %s --env=ENABLE_VKINTOX=1${NC}\n" "$APP_ID"
+    fi
 else
-    warn "couldn't set override — app may not be installed yet"
-    warn "after installing, run:"
-    printf "    ${DIM}flatpak override --user %s --env=ENABLE_VKINTOX=1${NC}\n" "$APP_ID"
+    section "enable layer"
+    ok "enable with ENABLE_VKINTOX=1 when launching a native game"
 fi
 
 SHADER_COUNT=$(find "$PACKAGE_DIR/Shaders" -name '*.fx' 2>/dev/null | wc -l)
