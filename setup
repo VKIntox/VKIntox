@@ -146,7 +146,7 @@ if [[ "$MODE" != "system" ]]; then
 fi
 
 SOURCE_HASH=$(find src packaging/meson-config -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
-SOURCE_HASH=$(printf '%s\n' "$SOURCE_HASH" "$(sha256sum Justfile meson.build meson_options.txt packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json packaging/nix/flake.nix)")
+SOURCE_HASH=$(printf '%s\n' "$SOURCE_HASH" "$(sha256sum VERSION Justfile meson.build meson_options.txt packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json packaging/nix/flake.nix)")
 SOURCE_HASH=$(printf '%s' "$SOURCE_HASH" | sha256sum | cut -d' ' -f1)
 LAYER_MARKER="$HOME/.local/share/VKIntox/sober-layer.sha256"
 
@@ -175,6 +175,7 @@ PACKAGE_DIR="$RESHADE_DIR/packages"
 FONT_DIR="$APP_CONFIG/font"
 
 mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$FONT_DIR"
+cp "$SCRIPT_DIR/VERSION" "$APP_CONFIG/version"
 ok "created config dirs"
 
 if [[ -f "$SCRIPT_DIR/assets/font/font.ttf" ]]; then

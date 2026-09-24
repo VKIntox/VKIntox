@@ -129,7 +129,7 @@ flatpak upgrade org.vinegarhq.Sober
 
 > experimental software. use at your own risk.
 
-special thanks to **slobodaapl** (vkShade) and **DadSchoorse** (vkBasalt).
+special thanks to **slobodaapl** (vkShade), **DadSchoorse** (vkBasalt), **Daaboulex** (Wayland overlay), **crosire** (ReShade), and **ocornut** (Dear ImGui).
 
 <div align="center">
 

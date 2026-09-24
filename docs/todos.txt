@@ -35,8 +35,8 @@ for the flatpak builds maybe just build natively and transfer to .flatpak-build/
 
 7. Manage versioning:
 
-* Add version of VKIntox to Diagnostics, clean up and add more acknowledgements
-* Install version from project root to config dir, and read it from there on RUNTIME, otherwise fallback to unknown
+* Add version of VKIntox to Diagnostics, clean up and add more acknowledgements DONE
+* Install version from project root to config dir, and read it from there on RUNTIME, otherwise fallback to unknown DONE
 
 ================================================
 TODOS for v0.2.0

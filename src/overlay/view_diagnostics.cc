@@ -14,9 +14,6 @@
 
 namespace VKIntox
 {
-    // Build version - increment this each build
-    static constexpr int BUILD_NUMBER = 14;
-    static constexpr const char* BUILD_DATE = "2026-03-10";
     namespace
     {
         // Ring buffer for storing history
@@ -550,18 +547,42 @@ namespace VKIntox
         ImGui::Spacing();
 
         ImGui::Text("Credits");
-        ImGui::TextDisabled("Original vkBasalt by");
+        ImGui::TextDisabled("VKIntox maintained by");
+        ImGui::SameLine();
+        ImGui::TextLinkOpenURL("@buwryme", "https://github.com/buwryme");
+        ImGui::TextDisabled("vkShade by");
+        ImGui::SameLine();
+        ImGui::TextLinkOpenURL("@slobodaapl", "https://github.com/slobodaapl");
+        ImGui::TextDisabled("vkBasalt by");
         ImGui::SameLine();
         ImGui::TextLinkOpenURL("@DadSchoorse", "https://github.com/DadSchoorse/vkBasalt");
         ImGui::TextDisabled("Overlay fork by");
         ImGui::SameLine();
         ImGui::TextLinkOpenURL("@Boux", "https://github.com/Boux/vkBasalt_overlay");
-        ImGui::TextDisabled("Wayland fork by");
+        ImGui::TextDisabled("Wayland overlay by");
         ImGui::SameLine();
         ImGui::TextLinkOpenURL("@Daaboulex", "https://github.com/Daaboulex/vkBasalt_overlay_wayland");
+        ImGui::TextDisabled("ReShade FX support by");
+        ImGui::SameLine();
+        ImGui::TextLinkOpenURL("@crosire", "https://github.com/crosire/reshade");
+        ImGui::TextDisabled("Dear ImGui by");
+        ImGui::SameLine();
+        ImGui::TextLinkOpenURL("@ocornut", "https://github.com/ocornut/imgui");
 
         ImGui::Spacing();
-        ImGui::TextDisabled("Build #%d (%s)", BUILD_NUMBER, BUILD_DATE);
+        static const std::string runtimeVersion = [] {
+            std::ifstream versionFile(ConfigSerializer::getBaseConfigDir() + "/version");
+            std::string version;
+            if (versionFile.is_open() && std::getline(versionFile, version) && !version.empty())
+            {
+                if (!version.empty() && version.back() == '\r')
+                    version.pop_back();
+                if (!version.empty())
+                    return version;
+            }
+            return std::string("unknown");
+        }();
+        ImGui::TextDisabled("VKIntox version %s", runtimeVersion.c_str());
         ImGui::TextDisabled("Report issues:");
         ImGui::TextLinkOpenURL("github.com/Daaboulex/vkBasalt_overlay_wayland/issues", "https://github.com/Daaboulex/vkBasalt_overlay_wayland/issues");
 
