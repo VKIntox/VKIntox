@@ -16,9 +16,9 @@ an independent fork of **vkShade** that fixes the depth buffer issues inherent t
 
 <div align="center">
 
-<img src="../assets/showcase_screenshot1.png" width="45%" alt="VKIntox in action"> <img src="../assets/showcase_screenshot2.png" width="45%" alt="VKIntox UI">
+<img src="assets/showcase_screenshot1.png" width="45%" alt="VKIntox in action"> <img src="assets/showcase_screenshot2.png" width="45%" alt="VKIntox UI">
 
-<img src="../assets/showcase_screenshot3.png" width="90%" alt="Depth resolve modes">
+<img src="assets/showcase_screenshot3.png" width="90%" alt="Depth resolve modes">
 
 </div>
 
