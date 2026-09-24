@@ -8,13 +8,13 @@ TODOS for v0.1.1
 
 0. stability changes DONE
 
-1. Fix warning errors when compiling (do last AFTER all other changes for this version)
+1. Fix warning errors when compiling (do last AFTER all other changes for this version)... DONE
 
 2. Overlay:
 
 * Add tick button for the overlay to close it instead of hotkey DONE
 
-3. Add native .INI support for profiles/presets
+3. Add native .INI support for profiles/presets... PARTIALLY DONE, still buggy
 
 * Maybe even switch to it fully
 
@@ -31,7 +31,7 @@ for the flatpak builds maybe just build natively and transfer to .flatpak-build/
 * And also in addition to what's above, make re-running the setup script (re-installing .fx files) not break effects like AdaptiveFog DONE (managed packages no longer erase the user's whole ReShade directory)... DONE?
 * Possibly, merge setup into one unified script for all: Sober, native games, Flatpak games... DONE
 
-6. Organize source folder into a more hierarchial, organized structure instead of stuffing everything into one big root
+6. Organize source folder into a more hierarchial, organized structure instead of stuffing everything into one big root... DONE
 
 ================================================
 TODOS for v0.2.0
