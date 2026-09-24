@@ -33,6 +33,11 @@ for the flatpak builds maybe just build natively and transfer to .flatpak-build/
 
 6. Organize source folder into a more hierarchial, organized structure instead of stuffing everything into one big root... DONE
 
+7. Manage versioning:
+
+* Add version of VKIntox to Diagnostics, clean up and add more acknowledgements
+* Install version from project root to config dir, and read it from there on RUNTIME, otherwise fallback to unknown
+
 ================================================
 TODOS for v0.2.0
 ================================================
