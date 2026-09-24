@@ -169,22 +169,6 @@ namespace VKIntox
                     ImGui::SetTooltip("Delete this profile");
             }
 
-            static std::vector<std::string> shaderProfiles;
-            static bool shaderProfilesStale = true;
-            const auto discoveredShaderProfiles = ConfigSerializer::listShaderProfilesForGame(activeGameName);
-            if (shaderProfilesStale || discoveredShaderProfiles != shaderProfiles)
-            {
-                shaderProfiles = discoveredShaderProfiles;
-                shaderProfilesStale = false;
-                if ((activeShaderProfileName.empty() ||
-                     std::find(shaderProfiles.begin(), shaderProfiles.end(), activeShaderProfileName) == shaderProfiles.end()) &&
-                    !shaderProfiles.empty())
-                    activeShaderProfileName = std::find(shaderProfiles.begin(), shaderProfiles.end(), "default") != shaderProfiles.end()
-                        ? "default" : shaderProfiles.front();
-                else if (shaderProfiles.empty())
-                    activeShaderProfileName.clear();
-                activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
-            }
             ImGui::Text("Shader INI:");
             ImGui::SameLine(100.0f);
             ImGui::SetNextItemWidth(120);
@@ -228,13 +212,10 @@ namespace VKIntox
                         pushToast(LogLevel::Error, "Could not delete the shader profile.");
                     else
                     {
-                        shaderProfiles = ConfigSerializer::listShaderProfilesForGame(activeGameName);
-                        shaderProfilesStale = false;
+                        activeShaderProfileName.clear();
+                        refreshShaderProfiles();
                         if (!shaderProfiles.empty())
                         {
-                            activeShaderProfileName = std::find(shaderProfiles.begin(), shaderProfiles.end(), "default") != shaderProfiles.end()
-                                ? "default" : shaderProfiles.front();
-                            activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
                             pendingShaderProfilePath = activeShaderProfilePath;
                             pendingShaderProfile = true;
                             applyRequested = true;
@@ -265,8 +246,7 @@ namespace VKIntox
                     else if (ConfigSerializer::createShaderProfile(activeGameName, newShaderProfileName))
                     {
                         activeShaderProfileName = newShaderProfileName;
-                        activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
-                        shaderProfilesStale = true;
+                        refreshShaderProfiles();
                         pendingShaderProfilePath = activeShaderProfilePath;
                         pendingShaderProfile = true;
                         applyRequested = true;

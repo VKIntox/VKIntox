@@ -4354,6 +4354,8 @@ namespace VKIntox
 
             if (shouldReload)
             {
+                if (pLogicalDevice->imguiOverlay)
+                    pLogicalDevice->imguiOverlay->refreshShaderProfiles();
                 Logger::info("hot-reloading config and effects...");
 
                 // Check if overlay wants to load a different config

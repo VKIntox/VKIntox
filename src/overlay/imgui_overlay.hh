@@ -127,6 +127,7 @@ namespace VKIntox
             activeGameName = gameName;
             activeProfileName = profileName;
             activeProfilePath = profilePath;
+            refreshShaderProfiles();
 
             // Load per-profile settings
             if (!profilePath.empty())
@@ -135,6 +136,8 @@ namespace VKIntox
                 // Profile settings loaded (safeAntiCheat removed)
             }
         }
+
+        void refreshShaderProfiles();
 
         // Trigger debounced reload (for config switch)
         void markDirty() { paramsDirty = true; lastChangeTime = std::chrono::steady_clock::now(); }
@@ -266,6 +269,7 @@ namespace VKIntox
         bool pendingShaderProfile = false;
         std::string activeShaderProfileName;
         std::string activeShaderProfilePath;
+        std::vector<std::string> shaderProfiles;
 
         // Per-app profile system
         std::string activeGameName;       // Detected executable name

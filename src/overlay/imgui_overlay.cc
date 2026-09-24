@@ -311,6 +311,20 @@ namespace VKIntox
         saveToPersistentState();
     }
 
+    void ImGuiOverlay::refreshShaderProfiles()
+    {
+        shaderProfiles = ConfigSerializer::listShaderProfilesForGame(activeGameName);
+        if (activeShaderProfileName.empty() ||
+            std::find(shaderProfiles.begin(), shaderProfiles.end(), activeShaderProfileName) == shaderProfiles.end())
+        {
+            const auto defaultProfile = std::find(shaderProfiles.begin(), shaderProfiles.end(), "default");
+            activeShaderProfileName = defaultProfile != shaderProfiles.end()
+                ? *defaultProfile
+                : (shaderProfiles.empty() ? std::string() : shaderProfiles.front());
+        }
+        activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
+    }
+
     void ImGuiOverlay::pushToast(LogLevel level, const std::string& message)
     {
         std::lock_guard<std::mutex> lock(toastsMutex);
