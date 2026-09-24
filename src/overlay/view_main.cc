@@ -171,13 +171,18 @@ namespace VKIntox
 
             static std::vector<std::string> shaderProfiles;
             static bool shaderProfilesStale = true;
-            if (shaderProfilesStale)
+            const auto discoveredShaderProfiles = ConfigSerializer::listShaderProfilesForGame(activeGameName);
+            if (shaderProfilesStale || discoveredShaderProfiles != shaderProfiles)
             {
-                shaderProfiles = ConfigSerializer::listShaderProfilesForGame(activeGameName);
+                shaderProfiles = discoveredShaderProfiles;
                 shaderProfilesStale = false;
-                if (activeShaderProfileName.empty() && !shaderProfiles.empty())
+                if ((activeShaderProfileName.empty() ||
+                     std::find(shaderProfiles.begin(), shaderProfiles.end(), activeShaderProfileName) == shaderProfiles.end()) &&
+                    !shaderProfiles.empty())
                     activeShaderProfileName = std::find(shaderProfiles.begin(), shaderProfiles.end(), "default") != shaderProfiles.end()
                         ? "default" : shaderProfiles.front();
+                else if (shaderProfiles.empty())
+                    activeShaderProfileName.clear();
                 activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
             }
             ImGui::Text("Shader INI:");

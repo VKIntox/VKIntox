@@ -935,7 +935,10 @@ namespace VKIntox
     std::string ConfigSerializer::getShaderProfilePath(const std::string& gameName, const std::string& profileName)
     {
         const std::string base = getBaseConfigDir();
-        if (base.empty() || gameName.empty() || profileName.empty())
+        if (base.empty() || gameName.empty() || profileName.empty() ||
+            gameName.find('/') != std::string::npos || gameName.find('\\') != std::string::npos ||
+            gameName == "." || gameName == ".." || profileName.find('/') != std::string::npos ||
+            profileName.find('\\') != std::string::npos || profileName == "." || profileName == "..")
             return "";
         return base + "/configs/shaders/" + gameName + "@" + profileName + ".ini";
     }
@@ -1010,7 +1013,18 @@ namespace VKIntox
         auto sectionFor = [&effectPaths](const std::string& effectName) {
             const auto it = effectPaths.find(effectName);
             if (it != effectPaths.end() && std::filesystem::path(it->second).extension() == ".fx")
-                return std::filesystem::path(it->second).filename().string();
+            {
+                const std::string filename = std::filesystem::path(it->second).filename().string();
+                size_t matches = 0;
+                for (const auto& [name, path] : effectPaths)
+                    if (std::filesystem::path(path).extension() == ".fx" &&
+                        std::filesystem::path(path).filename() == filename)
+                        ++matches;
+                // ReShade sections are keyed by shader filename. VKIntox can
+                // additionally key by effect name, which is needed when a
+                // profile uses the same shader more than once.
+                return matches > 1 ? effectName : filename;
+            }
             return effectName;
         };
         std::map<std::pair<std::string, std::string>, std::string> merged;
@@ -1349,8 +1363,17 @@ namespace VKIntox
                     const std::string suffix = key.substr(separator + 1);
                     if (!suffix.empty() && !value.empty())
                     {
-                        const std::string section = std::filesystem::path(effect->second).extension() == ".fx"
-                            ? std::filesystem::path(effect->second).filename().string() : effect->first;
+                        std::string section = effect->first;
+                        if (std::filesystem::path(effect->second).extension() == ".fx")
+                        {
+                            const std::string filename = std::filesystem::path(effect->second).filename().string();
+                            size_t matches = 0;
+                            for (const auto& [name, path] : effectPaths)
+                                if (std::filesystem::path(path).extension() == ".fx" &&
+                                    std::filesystem::path(path).filename() == filename)
+                                    ++matches;
+                            section = matches > 1 ? effect->first : filename;
+                        }
                         moved.push_back({section, key[separator] == '@' ? "@" + suffix : suffix, value});
                         continue;
                     }
