@@ -41,15 +41,13 @@ start_spin() {
 }
 
 stop_spin() {
-    local was_spinning=0
     if [[ -n "$spin_pid" ]]; then
-        was_spinning=1
         kill "$spin_pid" 2>/dev/null || true
         wait "$spin_pid" 2>/dev/null || true
         spin_pid=""
-    fi
-    if [[ -t 1 && $was_spinning -eq 1 ]]; then
-        printf "\r\033[K\n"
+        if [[ -t 1 ]]; then
+            printf "\r\033[K"
+        fi
     fi
 }
 
@@ -276,4 +274,4 @@ printf "\n${BLUE}${B}done${NC}\n"
 printf "  shaders:    ${DIM}%s${NC}  (%s)\n" "$SHADER_COUNT" "$PACKAGE_DIR/Shaders"
 printf "  textures:   ${DIM}%s${NC}  (%s)\n" "$TEXTURE_COUNT" "$PACKAGE_DIR/Textures"
 printf "  packages:   ${DIM}%s${NC}\n" "$PACKAGE_DIR"
-printf "\n  ${B}setup finished!${NC}\n"
+printf "\n${B}setup finished!!${NC}\n"
