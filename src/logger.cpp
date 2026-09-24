@@ -1,6 +1,10 @@
 #include "logger.hpp"
 
 #include <cstdlib>
+#include <filesystem>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
 
 #include <sstream>
 
@@ -23,8 +27,27 @@ namespace VKIntox
             }
             else
             {
-                m_outStream = std::unique_ptr<std::ostream, std::function<void(std::ostream*)>>(new std::ofstream(filename),
-                                                                                                [](std::ostream* os) { delete os; });
+                std::error_code ec;
+                std::filesystem::path path(filename);
+                std::filesystem::create_directories(path.parent_path(), ec);
+
+                ec.clear();
+                auto fileSize = std::filesystem::file_size(path, ec);
+                if (!ec && fileSize > 4 * 1024 * 1024)
+                {
+                    std::filesystem::path oldPath = path;
+                    oldPath += ".1";
+                    std::filesystem::remove(oldPath, ec);
+                    ec.clear();
+                    std::filesystem::rename(path, oldPath, ec);
+                }
+
+                auto file = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::app);
+                if (*file)
+                    m_outStream = std::unique_ptr<std::ostream, std::function<void(std::ostream*)>>(file.release(),
+                                                                                                    [](std::ostream* os) { delete os; });
+                else
+                    m_outStream = std::unique_ptr<std::ostream, std::function<void(std::ostream*)>>(&std::cerr, [](std::ostream*) {});
             }
         }
     }
@@ -86,12 +109,20 @@ namespace VKIntox
 
             const char* prefix = s_prefixes.at(static_cast<uint32_t>(level));
 
+            const auto now = std::chrono::system_clock::now();
+            const auto time = std::chrono::system_clock::to_time_t(now);
+            const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
+            std::tm localTime{};
+            localtime_r(&time, &localTime);
+
             std::stringstream stream(message);
             std::string       line;
 
             while (std::getline(stream, line, '\n'))
             {
-                *m_outStream << prefix << line << '\n';
+                *m_outStream << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S")
+                             << '.' << std::setfill('0') << std::setw(3) << milliseconds
+                             << ' ' << prefix << line << '\n';
             }
             m_outStream->flush();
         }
@@ -164,7 +195,14 @@ namespace VKIntox
 
         if (filename.empty())
         {
-            filename = "stderr";
+            const char* configHome = getenv("XDG_CONFIG_HOME");
+            const char* home = getenv("HOME");
+            if (configHome && *configHome)
+                filename = std::string(configHome) + "/VKIntox/vkintox.log";
+            else if (home && *home)
+                filename = std::string(home) + "/.config/VKIntox/vkintox.log";
+            else
+                filename = "stderr";
         }
 
         return filename;
