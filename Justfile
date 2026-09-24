@@ -34,6 +34,11 @@ nsight_capture_dir := "/tmp/nsight-captures"
 build:
     meson compile -C {{ build_dir }}
 
+# Configure a native build with Clang and ccache. Meson records the compiler
+# in the build directory, so use a separate build dir if changing toolchains.
+configure:
+    CC='ccache clang' CXX='ccache clang++' meson setup --buildtype=release --prefix=/usr {{ build_dir }}
+
 prepare-layer:
     mkdir -p {{ dev_layer_dir }}
     sed \

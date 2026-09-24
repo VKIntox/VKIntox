@@ -25,10 +25,12 @@
       "name": "vkintox",
       "buildsystem": "meson",
       "build-options": {
-        "prepend-pkg-config-path": "/usr/lib/extensions/vulkan/VKIntox/lib/pkgconfig",
         "env": {
+          "CC": "/usr/lib/sdk/llvm21/bin/clang",
+          "CXX": "/usr/lib/sdk/llvm21/bin/clang++",
           "CPPFLAGS": "-I/usr/lib/extensions/vulkan/VKIntox/include"
-        }
+        },
+        "prepend-pkg-config-path": "/usr/lib/extensions/vulkan/VKIntox/lib/pkgconfig"
       },
       "config-opts": [
         "--buildtype=release",
