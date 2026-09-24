@@ -23,10 +23,9 @@ flatpak-build:
       --repo={{ flatpak_repo_dir }} \
       {{ flatpak_build_dir }} \
       {{ flatpak_manifest }}
-    flatpak remote-delete --user vkintox-local || true
-    flatpak remote-add --user vkintox-local {{ flatpak_repo_dir }} --no-gpg-verify
-    flatpak remote-modify --user --no-gpg-verify vkintox-local
-    flatpak install --user -y vkintox-local org.freedesktop.Platform.VulkanLayer.VKIntox
+    flatpak remote-add --user --if-not-exists vkintox-local {{ flatpak_repo_dir }} --no-gpg-verify
+    flatpak remote-modify --user --url=file://{{ flatpak_repo_dir }} --no-gpg-verify vkintox-local
+    flatpak install --user --or-update -y vkintox-local org.freedesktop.Platform.VulkanLayer.VKIntox
 
 nsight_dir := "/opt/nsight-graphics/NVIDIA-Nsight-Graphics-2026.1/host/linux-desktop-nomad-x64"
 nsight_capture_bin := nsight_dir / "ngfx-capture.bin"

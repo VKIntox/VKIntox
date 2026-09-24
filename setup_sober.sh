@@ -42,7 +42,6 @@ fi
 
 # --- 2. SDKs ------------------------------------------------------------------
 step "Installing Flatpak SDKs"
-say "Answer 'y' if flatpak prompts about remotes or permissions."
 
 flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/50 || die "GNOME SDK install failed"
 flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/25.08 || die "Freedesktop SDK install failed"
