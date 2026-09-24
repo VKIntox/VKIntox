@@ -97,6 +97,14 @@ if depth-dependent effects (like DOF) look incorrect:
 
 ## troubleshooting
 
+*   **logs:** Sober logs are saved to `~/.var/app/org.vinegarhq.Sober/config/VKIntox/vkintox.log`. to capture diagnostics, enable debug logging before launching Sober:
+
+```bash
+flatpak override --user --env=VKINTOX_LOG_LEVEL=debug org.vinegarhq.Sober
+```
+
+Remove the override once done with `flatpak override --user --unset-env=VKINTOX_LOG_LEVEL org.vinegarhq.Sober`.
+
 *   **sober stopped launching:** try running `setup_sober.sh` again, and run:
 
 ```bash
@@ -108,6 +116,9 @@ and also make sure Sober, and your flatpak driver runtimes are up to date:
 ```bash
 flatpak upgrade org.vinegarhq.Sober
 ```
+
+*   **sober freezes on launch:** i suggest trying a simple restart... 1-2 times.
+*   **sober freezes inside the catalog!:** opening the catalog re-builds graphics constantly that leads to freezes... don't use it
 
 ---
 
