@@ -4357,6 +4357,15 @@ namespace VKIntox
                 if (pLogicalDevice->imguiOverlay)
                     pLogicalDevice->imguiOverlay->refreshShaderProfiles();
                 Logger::info("hot-reloading config and effects...");
+                auto reloadSelectedEffects = [&]() {
+                    cachedEffects.initialized = false;
+                    cachedParams.dirty = true;
+                    const std::vector<std::string> activeEffects = pLogicalDevice->imguiOverlay
+                        ? pLogicalDevice->imguiOverlay->getActiveEffects()
+                        : pConfig->getOption<std::vector<std::string>>("effects", {});
+                    reloadAllSwapchains(pLogicalDevice, activeEffects);
+                    pLogicalDevice->depthReallocPending = false;
+                };
 
                 // Check if overlay wants to load a different config
                 if (pLogicalDevice->imguiOverlay && pLogicalDevice->imguiOverlay->hasPendingConfig())
@@ -4368,7 +4377,7 @@ namespace VKIntox
                     std::vector<std::string> disabledEffects = pConfig->getOption<std::vector<std::string>>("disabledEffects", {});
                     pLogicalDevice->imguiOverlay->setSelectedEffects(newEffects, disabledEffects);
                     pLogicalDevice->imguiOverlay->clearPendingConfig();
-                    pLogicalDevice->imguiOverlay->markDirty();  // Defer reload via debounce
+                    reloadSelectedEffects();
                 }
                 else if (pLogicalDevice->imguiOverlay && pLogicalDevice->imguiOverlay->hasPendingShaderProfile())
                 {
@@ -4382,28 +4391,19 @@ namespace VKIntox
                     }
                     else
                     {
-                        activeShaderProfilePath.clear();
+                        switchConfig(pConfig->getConfigFilePath(), "");
+                        const std::vector<std::string> newEffects = pConfig->getOption<std::vector<std::string>>("effects", {});
+                        const std::vector<std::string> disabledEffects = pConfig->getOption<std::vector<std::string>>("disabledEffects", {});
+                        pLogicalDevice->imguiOverlay->setSelectedEffects(newEffects, disabledEffects);
                     }
-                    cachedEffects.initialized = false;
-                    cachedParams.dirty = true;
                     pLogicalDevice->imguiOverlay->clearPendingShaderProfile();
-                    pLogicalDevice->imguiOverlay->markDirty();
+                    reloadSelectedEffects();
                 }
                 else
                 {
                     pConfig->reload();
                     applyShaderProfile(pConfig.get(), activeShaderProfilePath);
-                    cachedEffects.initialized = false;
-                    cachedParams.dirty = true;
-
-                    std::vector<std::string> activeEffects = pLogicalDevice->imguiOverlay
-                        ? pLogicalDevice->imguiOverlay->getActiveEffects()
-                        : pConfig->getOption<std::vector<std::string>>("effects", {});
-
-                    reloadAllSwapchains(pLogicalDevice, activeEffects);
-                    // reloadAllSwapchains does full QueueWaitIdle + reallocate,
-                    // so any pending deferred depth realloc is now satisfied.
-                    pLogicalDevice->depthReallocPending = false;
+                    reloadSelectedEffects();
                 }
             }
 

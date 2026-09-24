@@ -206,12 +206,12 @@ namespace VKIntox
                 ImGui::SameLine();
                 if (ImGui::Button("-##delshaderprofile"))
                 {
-                    if (!autoSaveProfile())
-                        pushToast(LogLevel::Error, "Could not save the active shader profile.");
-                    else if (!ConfigSerializer::deleteShaderProfile(activeGameName, activeShaderProfileName))
+                    if (!ConfigSerializer::deleteShaderProfile(activeGameName, activeShaderProfileName))
                         pushToast(LogLevel::Error, "Could not delete the shader profile.");
                     else
                     {
+                        profileDirty = false;
+                        paramsDirty = false;
                         activeShaderProfileName.clear();
                         refreshShaderProfiles();
                         if (!shaderProfiles.empty())
@@ -295,13 +295,19 @@ namespace VKIntox
                 ImGui::Text("Delete profile '%s'?", activeProfileName.c_str());
                 if (ImGui::Button("Yes, delete"))
                 {
-                    ConfigSerializer::deleteProfile(activeGameName, activeProfileName);
-                    activeProfileName = "default";
-                    activeProfilePath = ConfigSerializer::getProfilePath(activeGameName, "default");
-                    ConfigSerializer::setActiveProfile(activeGameName, "default");
-                    pendingConfigPath = activeProfilePath;
-                    applyRequested = true;
-                    profileListStale = true;
+                    if (ConfigSerializer::deleteProfile(activeGameName, activeProfileName))
+                    {
+                        profileDirty = false;
+                        paramsDirty = false;
+                        activeProfileName = "default";
+                        activeProfilePath = ConfigSerializer::getProfilePath(activeGameName, "default");
+                        ConfigSerializer::setActiveProfile(activeGameName, "default");
+                        pendingConfigPath = activeProfilePath;
+                        applyRequested = true;
+                        profileListStale = true;
+                    }
+                    else
+                        pushToast(LogLevel::Error, "Could not delete the profile.");
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();

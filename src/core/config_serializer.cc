@@ -706,7 +706,11 @@ namespace VKIntox
                                                   const std::string& profileName)
     {
         std::string configsDir = getConfigsDir();
-        if (configsDir.empty() || gameName.empty())
+        if (configsDir.empty() || gameName.empty() ||
+            gameName.find('/') != std::string::npos || gameName.find('\\') != std::string::npos ||
+            gameName == "." || gameName == ".." ||
+            profileName.find('/') != std::string::npos || profileName.find('\\') != std::string::npos ||
+            profileName == "." || profileName == "..")
             return "";
 
         if (profileName.empty() || profileName == "default")
@@ -868,7 +872,10 @@ namespace VKIntox
                                           const std::string& profileName,
                                           const std::string& copyFromProfile)
     {
-        if (gameName.empty() || profileName.empty() || profileName == "default")
+        if (gameName.empty() || profileName.empty() || profileName == "default" ||
+            gameName.find('/') != std::string::npos || gameName.find('\\') != std::string::npos ||
+            profileName.find('/') != std::string::npos || profileName.find('\\') != std::string::npos ||
+            profileName == "." || profileName == "..")
             return false;
 
         std::string newPath = getProfilePath(gameName, profileName);
