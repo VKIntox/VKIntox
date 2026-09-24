@@ -1,0 +1,992 @@
+#include "reshade_parser.hh"
+
+#include <climits>
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <queue>
+#include <set>
+#include <unordered_map>
+#include <cstdlib>
+#include <signal.h>
+#include <setjmp.h>
+
+#include "reshade/effect_parser.hh"
+#include "reshade/effect_codegen.hh"
+#include "reshade/effect_preprocessor.hh"
+#include "reshade/reshade_depth_macros.hh"
+
+#include "logger.hh"
+#include "config_serializer.hh"
+
+namespace VKIntox
+{
+    namespace
+    {
+        bool hasFatalCompilerDiagnostics(const std::string& diagnostics)
+        {
+            return diagnostics.find(" error ") != std::string::npos ||
+                   diagnostics.find(": error ") != std::string::npos ||
+                   diagnostics.find("error X") != std::string::npos ||
+                   diagnostics.find("preprocessor error:") != std::string::npos;
+        }
+
+        // Helper to find annotation by name
+        template<typename T>
+        auto findAnnotation(const T& annotations, const std::string& name)
+        {
+            return std::find_if(annotations.begin(), annotations.end(),
+                [&name](const auto& a) { return a.name == name; });
+        }
+
+        // Helper to check if annotation exists
+        template<typename T>
+        bool hasAnnotation(const T& annotations, const std::string& name)
+        {
+            return findAnnotation(annotations, name) != annotations.end();
+        }
+
+        // Helper to get float value from annotation (handles int->float conversion)
+        template<typename T>
+        float getAnnotationFloat(const T& annotation)
+        {
+            return annotation.type.is_floating_point()
+                ? annotation.value.as_float[0]
+                : static_cast<float>(annotation.value.as_int[0]);
+        }
+
+        // Helper to get int value from annotation (handles float->int conversion)
+        template<typename T>
+        int getAnnotationInt(const T& annotation)
+        {
+            return annotation.type.is_integral()
+                ? annotation.value.as_int[0]
+                : static_cast<int>(annotation.value.as_float[0]);
+        }
+
+        // Parse null-separated string into vector
+        std::vector<std::string> parseNullSeparatedString(const std::string& str)
+        {
+            std::vector<std::string> items;
+            size_t start = 0;
+
+            for (size_t i = 0; i <= str.size(); i++)
+            {
+                bool atEnd = (i == str.size() || str[i] == '\0');
+                if (!atEnd)
+                    continue;
+
+                if (i > start)
+                    items.push_back(str.substr(start, i - start));
+                start = i + 1;
+            }
+
+            return items;
+        }
+
+        void addStandardMacros(reshadefx::preprocessor& pp)
+        {
+            pp.add_macro_definition("__RESHADE__", std::to_string(INT_MAX));
+            pp.add_macro_definition("__RESHADE_PERFORMANCE_MODE__", "1");
+            pp.add_macro_definition("__RENDERER__", "0x20000");
+            pp.add_macro_definition("BUFFER_WIDTH", "1920");
+            pp.add_macro_definition("BUFFER_HEIGHT", "1080");
+            pp.add_macro_definition("BUFFER_RCP_WIDTH", "(1.0 / BUFFER_WIDTH)");
+            pp.add_macro_definition("BUFFER_RCP_HEIGHT", "(1.0 / BUFFER_HEIGHT)");
+            pp.add_macro_definition("BUFFER_COLOR_DEPTH", "8");
+            pp.add_macro_definition("BUFFER_COLOR_BIT_DEPTH", "BUFFER_COLOR_DEPTH");
+            addReshadeDepthMacros(pp);
+
+            // Component-specific texture gather shorthands (missing from this reshadefx version)
+            // Must use append_string — raw macro structs lack parameter substitution markers
+            pp.append_string(
+                "#define tex2DgatherR(s, coords) tex2Dgather(s, coords, 0)\n"
+                "#define tex2DgatherG(s, coords) tex2Dgather(s, coords, 1)\n"
+                "#define tex2DgatherB(s, coords) tex2Dgather(s, coords, 2)\n"
+                "#define tex2DgatherA(s, coords) tex2Dgather(s, coords, 3)\n"
+
+                // VKIntox parser compatibility:
+                // - storage1D token is not recognized by this reshadefx snapshot
+                // - f32tof16/f16tof32 intrinsics are missing
+                "#define storage1D storage\n"
+                "#define f32tof16 _vkintox_f32tof16\n"
+                "#define f16tof32 _vkintox_f16tof32\n"
+                "uint _vkintox_f32tof16(float v) {\n"
+                "  uint x = asuint(v);\n"
+                "  uint sign = (x >> 16) & 0x8000u;\n"
+                "  int exp = int((x >> 23) & 0xFFu) - 112;\n"
+                "  uint mant = x & 0x7FFFFFu;\n"
+                "  if (exp <= 0) return sign;\n"
+                "  if (exp >= 31) return sign | 0x7C00u;\n"
+                "  return sign | (uint(exp) << 10) | ((mant + 0x1000u) >> 13);\n"
+                "}\n"
+                "uint2 _vkintox_f32tof16(float2 v) { return uint2(_vkintox_f32tof16(v.x), _vkintox_f32tof16(v.y)); }\n"
+                "uint4 _vkintox_f32tof16(float4 v) { return uint4(_vkintox_f32tof16(v.x), _vkintox_f32tof16(v.y), _vkintox_f32tof16(v.z), _vkintox_f32tof16(v.w)); }\n"
+                "float _vkintox_f16tof32(uint h) {\n"
+                "  uint sign = (h & 0x8000u) << 16;\n"
+                "  uint exp = (h >> 10) & 0x1Fu;\n"
+                "  uint mant = h & 0x3FFu;\n"
+                "  if (exp == 0u) return asfloat(sign);\n"
+                "  if (exp == 31u) return asfloat(sign | 0x7F800000u | (mant << 13));\n"
+                "  return asfloat(sign | ((exp + 112u) << 23) | (mant << 13));\n"
+                "}\n"
+                "float2 _vkintox_f16tof32(uint2 h) { return float2(_vkintox_f16tof32(h.x), _vkintox_f16tof32(h.y)); }\n"
+                "float4 _vkintox_f16tof32(uint4 h) { return float4(_vkintox_f16tof32(h.x), _vkintox_f16tof32(h.y), _vkintox_f16tof32(h.z), _vkintox_f16tof32(h.w)); }\n"
+
+                // Non-square matrix types — map to matrix<> template syntax
+                "#define float2x3 matrix<float, 2, 3>\n"
+                "#define float2x4 matrix<float, 2, 4>\n"
+                "#define float3x2 matrix<float, 3, 2>\n"
+                "#define float3x4 matrix<float, 3, 4>\n"
+                "#define float4x2 matrix<float, 4, 2>\n"
+                "#define float4x3 matrix<float, 4, 3>\n"
+
+                // High-precision derivative variants — map to standard derivatives
+                "#define ddx_fine(x) ddx(x)\n"
+                "#define ddy_fine(x) ddy(x)\n"
+                "#define ddx_coarse(x) ddx(x)\n"
+                "#define ddy_coarse(x) ddy(x)\n"
+            );
+        }
+
+        void setupPreprocessor(reshadefx::preprocessor& pp)
+        {
+            addStandardMacros(pp);
+
+            // Add all discovered shader paths from shader manager
+            ShaderManagerConfig shaderMgrConfig = ConfigSerializer::loadShaderManagerConfig();
+            for (const auto& path : shaderMgrConfig.discoveredShaderPaths)
+                pp.add_include_path(path);
+        }
+
+        // Overload with pre-cached include paths (avoids re-reading config from disk)
+        void setupPreprocessor(reshadefx::preprocessor& pp,
+                               const std::vector<std::string>& includePaths)
+        {
+            addStandardMacros(pp);
+            for (const auto& path : includePaths)
+                pp.add_include_path(path);
+        }
+
+        void applyFloatRange(FloatParam& p, const auto& annotations)
+        {
+            auto minIt = findAnnotation(annotations, "ui_min");
+            auto maxIt = findAnnotation(annotations, "ui_max");
+
+            if (minIt != annotations.end())
+                p.minValue = getAnnotationFloat(*minIt);
+            if (maxIt != annotations.end())
+                p.maxValue = getAnnotationFloat(*maxIt);
+        }
+
+        void applyIntRange(IntParam& p, const auto& annotations)
+        {
+            auto minIt = findAnnotation(annotations, "ui_min");
+            auto maxIt = findAnnotation(annotations, "ui_max");
+
+            if (minIt != annotations.end())
+                p.minValue = getAnnotationInt(*minIt);
+            if (maxIt != annotations.end())
+                p.maxValue = getAnnotationInt(*maxIt);
+        }
+
+        std::unique_ptr<EffectParam> convertSpecConstant(
+            const reshadefx::uniform_info& spec,
+            const std::string& effectName,
+            Config* pConfig)
+        {
+            // Label (common to all types)
+            auto labelIt = findAnnotation(spec.annotations, "ui_label");
+            std::string label = (labelIt != spec.annotations.end()) ? labelIt->value.string_data : spec.name;
+
+            // Tooltip (common to all types)
+            auto tooltipIt = findAnnotation(spec.annotations, "ui_tooltip");
+            std::string tooltip = (tooltipIt != spec.annotations.end()) ? tooltipIt->value.string_data : "";
+
+            // UI type (common to all types)
+            auto typeIt = findAnnotation(spec.annotations, "ui_type");
+            std::string uiType = (typeIt != spec.annotations.end()) ? typeIt->value.string_data : "";
+
+            // Helper lambda to populate float vector parameters
+            auto populateFloatVector = [&](FloatVecParam& p, uint32_t componentCount) {
+                p.effectName = effectName;
+                p.name = spec.name;
+                p.label = label;
+                p.tooltip = tooltip;
+                p.uiType = uiType;
+                p.componentCount = componentCount;
+
+                auto minIt = findAnnotation(spec.annotations, "ui_min");
+                auto maxIt = findAnnotation(spec.annotations, "ui_max");
+                for (uint32_t c = 0; c < componentCount; c++)
+                {
+                    std::string suffix = "[" + std::to_string(c) + "]";
+                    p.defaultValue[c] = spec.initializer_value.as_float[c];
+                    p.value[c] = pConfig->getInstanceOption<float>(effectName, spec.name + suffix, p.defaultValue[c]);
+                    if (minIt != spec.annotations.end())
+                        p.minValue[c] = getAnnotationFloat(*minIt);
+                    if (maxIt != spec.annotations.end())
+                        p.maxValue[c] = getAnnotationFloat(*maxIt);
+                }
+
+                auto stepIt = findAnnotation(spec.annotations, "ui_step");
+                if (stepIt != spec.annotations.end())
+                    p.step = getAnnotationFloat(*stepIt);
+            };
+
+            // Helper lambda to populate int vector parameters
+            auto populateIntVector = [&](IntVecParam& p, uint32_t componentCount) {
+                p.effectName = effectName;
+                p.name = spec.name;
+                p.label = label;
+                p.tooltip = tooltip;
+                p.uiType = uiType;
+                p.componentCount = componentCount;
+
+                auto minIt = findAnnotation(spec.annotations, "ui_min");
+                auto maxIt = findAnnotation(spec.annotations, "ui_max");
+                for (uint32_t c = 0; c < componentCount; c++)
+                {
+                    std::string suffix = "[" + std::to_string(c) + "]";
+                    p.defaultValue[c] = spec.initializer_value.as_int[c];
+                    p.value[c] = pConfig->getInstanceOption<int32_t>(effectName, spec.name + suffix, p.defaultValue[c]);
+                    if (minIt != spec.annotations.end())
+                        p.minValue[c] = getAnnotationInt(*minIt);
+                    if (maxIt != spec.annotations.end())
+                        p.maxValue[c] = getAnnotationInt(*maxIt);
+                }
+
+                auto stepIt = findAnnotation(spec.annotations, "ui_step");
+                if (stepIt != spec.annotations.end())
+                    p.step = getAnnotationFloat(*stepIt);
+            };
+
+            // Helper lambda to populate uint vector parameters
+            auto populateUintVector = [&](UintVecParam& p, uint32_t componentCount) {
+                p.effectName = effectName;
+                p.name = spec.name;
+                p.label = label;
+                p.tooltip = tooltip;
+                p.uiType = uiType;
+                p.componentCount = componentCount;
+
+                auto minIt = findAnnotation(spec.annotations, "ui_min");
+                auto maxIt = findAnnotation(spec.annotations, "ui_max");
+                for (uint32_t c = 0; c < componentCount; c++)
+                {
+                    std::string suffix = "[" + std::to_string(c) + "]";
+                    p.defaultValue[c] = spec.initializer_value.as_uint[c];
+                    p.value[c] = pConfig->getInstanceOption<uint32_t>(effectName, spec.name + suffix, p.defaultValue[c]);
+                    if (minIt != spec.annotations.end())
+                        p.minValue[c] = static_cast<uint32_t>(getAnnotationInt(*minIt));
+                    if (maxIt != spec.annotations.end())
+                        p.maxValue[c] = static_cast<uint32_t>(getAnnotationInt(*maxIt));
+                }
+
+                auto stepIt = findAnnotation(spec.annotations, "ui_step");
+                if (stepIt != spec.annotations.end())
+                    p.step = getAnnotationFloat(*stepIt);
+            };
+
+            // Create appropriate subclass based on spec type
+            if (spec.type.is_floating_point() && spec.type.rows >= 2 && spec.type.rows <= 4)
+            {
+                // float2/float3/float4 vector types
+                auto p = std::make_unique<FloatVecParam>();
+                populateFloatVector(*p, spec.type.rows);
+                return p;
+            }
+            else if (spec.type.is_floating_point() && spec.type.rows == 1)
+            {
+                // scalar float
+                auto p = std::make_unique<FloatParam>();
+                p->effectName = effectName;
+                p->name = spec.name;
+                p->label = label;
+                p->tooltip = tooltip;
+                p->uiType = uiType;
+                p->defaultValue = spec.initializer_value.as_float[0];
+                p->value = pConfig->getInstanceOption<float>(effectName, spec.name, p->defaultValue);
+                applyFloatRange(*p, spec.annotations);
+
+                auto stepIt = findAnnotation(spec.annotations, "ui_step");
+                if (stepIt != spec.annotations.end())
+                    p->step = getAnnotationFloat(*stepIt);
+
+                return p;
+            }
+            else if (spec.type.is_boolean())
+            {
+                auto p = std::make_unique<BoolParam>();
+                p->effectName = effectName;
+                p->name = spec.name;
+                p->label = label;
+                p->tooltip = tooltip;
+                p->uiType = uiType;
+                p->defaultValue = (spec.initializer_value.as_uint[0] != 0);
+                p->value = pConfig->getInstanceOption<bool>(effectName, spec.name, p->defaultValue);
+                return p;
+            }
+            else if (spec.type.is_integral() && spec.type.is_signed() && spec.type.rows >= 2 && spec.type.rows <= 4)
+            {
+                // int2/int3/int4 vector types
+                auto p = std::make_unique<IntVecParam>();
+                populateIntVector(*p, spec.type.rows);
+                return p;
+            }
+            else if (spec.type.is_integral() && spec.type.is_signed() && spec.type.rows == 1)
+            {
+                // Scalar signed int
+                auto p = std::make_unique<IntParam>();
+                p->effectName = effectName;
+                p->name = spec.name;
+                p->label = label;
+                p->tooltip = tooltip;
+                p->uiType = uiType;
+                p->defaultValue = spec.initializer_value.as_int[0];
+                p->value = pConfig->getInstanceOption<int32_t>(effectName, spec.name, p->defaultValue);
+                applyIntRange(*p, spec.annotations);
+
+                auto stepIt = findAnnotation(spec.annotations, "ui_step");
+                if (stepIt != spec.annotations.end())
+                    p->step = getAnnotationFloat(*stepIt);
+
+                auto itemsIt = findAnnotation(spec.annotations, "ui_items");
+                if (itemsIt != spec.annotations.end())
+                    p->items = parseNullSeparatedString(itemsIt->value.string_data);
+
+                return p;
+            }
+            else if (spec.type.is_integral() && !spec.type.is_signed() && spec.type.rows >= 2 && spec.type.rows <= 4)
+            {
+                // uint2/uint3/uint4 vector types
+                auto p = std::make_unique<UintVecParam>();
+                populateUintVector(*p, spec.type.rows);
+                return p;
+            }
+            else if (spec.type.is_integral() && !spec.type.is_signed() && spec.type.rows == 1)
+            {
+                // Scalar unsigned int
+                auto p = std::make_unique<UintParam>();
+                p->effectName = effectName;
+                p->name = spec.name;
+                p->label = label;
+                p->tooltip = tooltip;
+                p->uiType = uiType;
+                p->defaultValue = spec.initializer_value.as_uint[0];
+                p->value = pConfig->getInstanceOption<uint32_t>(effectName, spec.name, p->defaultValue);
+
+                auto minIt = findAnnotation(spec.annotations, "ui_min");
+                auto maxIt = findAnnotation(spec.annotations, "ui_max");
+                if (minIt != spec.annotations.end())
+                    p->minValue = static_cast<uint32_t>(getAnnotationInt(*minIt));
+                if (maxIt != spec.annotations.end())
+                    p->maxValue = static_cast<uint32_t>(getAnnotationInt(*maxIt));
+
+                auto stepIt = findAnnotation(spec.annotations, "ui_step");
+                if (stepIt != spec.annotations.end())
+                    p->step = getAnnotationFloat(*stepIt);
+
+                return p;
+            }
+
+            return nullptr;
+        }
+
+        bool shouldSkipSpecConstant(const reshadefx::uniform_info& spec)
+        {
+            if (spec.name.empty())
+                return true;
+            if (spec.name.rfind("__vkintox_", 0) == 0)
+                return true;
+            if (hasAnnotation(spec.annotations, "source"))
+                return true;
+            return false;
+        }
+    } // anonymous namespace
+
+    // Signal-safe crash recovery for SIGFPE/SIGABRT from embedded reshadefx compiler
+    static thread_local sigjmp_buf parserSignalJmpBuf;
+    static thread_local volatile sig_atomic_t parserSignalJmpActive = 0;
+    static thread_local volatile sig_atomic_t parserCaughtSignal = 0;
+
+    static void parserCrashHandler(int sig)
+    {
+        if (parserSignalJmpActive)
+        {
+            parserCaughtSignal = sig;
+            siglongjmp(parserSignalJmpBuf, 1);
+        }
+        signal(sig, SIG_DFL);
+        raise(sig);
+    }
+
+    static void installParserCrashHandlers()
+    {
+        static bool installed = false;
+        if (installed)
+            return;
+        struct sigaction sa = {};
+        sa.sa_handler = parserCrashHandler;
+        sa.sa_flags = 0;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGFPE, &sa, nullptr);
+        sigaction(SIGABRT, &sa, nullptr);
+        installed = true;
+    }
+
+    std::vector<std::unique_ptr<EffectParam>> parseReshadeEffect(
+        const std::string& effectName,
+        const std::string& effectPath,
+        Config* pConfig,
+        std::vector<std::string>* techniqueNames)
+    {
+        std::vector<std::unique_ptr<EffectParam>> params;
+
+        // Protect against SIGFPE/SIGABRT from reshadefx compiler
+        installParserCrashHandlers();
+        if (sigsetjmp(parserSignalJmpBuf, 1) != 0)
+        {
+            parserSignalJmpActive = 0;
+            Logger::err("parseReshadeEffect: caught signal for " + effectName);
+            return params;
+        }
+        parserSignalJmpActive = 1;
+
+        try
+        {
+
+        // Setup preprocessor
+        reshadefx::preprocessor preprocessor;
+        setupPreprocessor(preprocessor);
+
+        if (!preprocessor.append_file(effectPath))
+        {
+            Logger::err("reshade_parser: failed to load shader file: " + effectPath);
+            return params;
+        }
+
+        std::string errors = preprocessor.errors();
+        if (!errors.empty())
+            Logger::err("reshade_parser preprocessor errors: " + errors);
+
+        // Parse
+        reshadefx::parser parser;
+        auto codegen = std::unique_ptr<reshadefx::codegen>(
+            reshadefx::create_codegen_spirv(true, true, true, true));
+
+        if (!parser.parse(std::move(preprocessor.output()), codegen.get()))
+        {
+            errors = parser.errors();
+            if (!errors.empty())
+                Logger::err("reshade_parser parse errors: " + errors);
+            return params;
+        }
+
+        errors = parser.errors();
+        if (!errors.empty())
+        {
+            if (hasFatalCompilerDiagnostics(errors))
+            {
+                Logger::err("reshade_parser parse errors: " + errors);
+                return params;
+            }
+
+            Logger::warn("reshade_parser parse warnings: " + errors);
+        }
+
+        // Extract module and convert uniforms to parameters
+        reshadefx::module module;
+        codegen->write_result(module);
+        if (techniqueNames)
+        {
+            techniqueNames->clear();
+            for (const auto& technique : module.techniques)
+                techniqueNames->push_back(technique.name);
+        }
+
+        // Process spec_constants
+        // Note: float2/float3/float4 are split into multiple scalar spec_constants with the same name
+        // We need to detect and combine them
+        for (size_t i = 0; i < module.spec_constants.size(); i++)
+        {
+            const auto& spec = module.spec_constants[i];
+
+            if (shouldSkipSpecConstant(spec))
+                continue;
+
+            // Check if this is part of a vector (same name appears multiple times consecutively)
+            size_t componentCount = 1;
+            while (i + componentCount < module.spec_constants.size() &&
+                   module.spec_constants[i + componentCount].name == spec.name)
+            {
+                componentCount++;
+            }
+
+            if (componentCount >= 2 && componentCount <= 4)
+            {
+                // Vector type - combine multiple scalar spec_constants with same name
+                auto labelIt = findAnnotation(spec.annotations, "ui_label");
+                std::string label = (labelIt != spec.annotations.end()) ? labelIt->value.string_data : spec.name;
+
+                auto tooltipIt = findAnnotation(spec.annotations, "ui_tooltip");
+                std::string tooltip = (tooltipIt != spec.annotations.end()) ? tooltipIt->value.string_data : "";
+
+                auto typeIt = findAnnotation(spec.annotations, "ui_type");
+                std::string uiType = (typeIt != spec.annotations.end()) ? typeIt->value.string_data : "";
+
+                auto minIt = findAnnotation(spec.annotations, "ui_min");
+                auto maxIt = findAnnotation(spec.annotations, "ui_max");
+                auto stepIt = findAnnotation(spec.annotations, "ui_step");
+
+                if (spec.type.is_floating_point())
+                {
+                    // float2/float3/float4
+                    auto p = std::make_unique<FloatVecParam>();
+                    p->effectName = effectName;
+                    p->name = spec.name;
+                    p->label = label;
+                    p->tooltip = tooltip;
+                    p->uiType = uiType;
+                    p->componentCount = static_cast<uint32_t>(componentCount);
+
+                    for (size_t c = 0; c < componentCount; c++)
+                    {
+                        std::string suffix = "[" + std::to_string(c) + "]";
+                        p->defaultValue[c] = module.spec_constants[i + c].initializer_value.as_float[0];
+                        p->value[c] = pConfig->getInstanceOption<float>(effectName, spec.name + suffix, p->defaultValue[c]);
+                        if (minIt != spec.annotations.end())
+                            p->minValue[c] = getAnnotationFloat(*minIt);
+                        if (maxIt != spec.annotations.end())
+                            p->maxValue[c] = getAnnotationFloat(*maxIt);
+                    }
+                    if (stepIt != spec.annotations.end())
+                        p->step = getAnnotationFloat(*stepIt);
+
+                    params.push_back(std::move(p));
+                }
+                else if (spec.type.is_integral() && spec.type.is_signed())
+                {
+                    // int2/int3/int4
+                    auto p = std::make_unique<IntVecParam>();
+                    p->effectName = effectName;
+                    p->name = spec.name;
+                    p->label = label;
+                    p->tooltip = tooltip;
+                    p->uiType = uiType;
+                    p->componentCount = static_cast<uint32_t>(componentCount);
+
+                    for (size_t c = 0; c < componentCount; c++)
+                    {
+                        std::string suffix = "[" + std::to_string(c) + "]";
+                        p->defaultValue[c] = module.spec_constants[i + c].initializer_value.as_int[0];
+                        p->value[c] = pConfig->getInstanceOption<int32_t>(effectName, spec.name + suffix, p->defaultValue[c]);
+                        if (minIt != spec.annotations.end())
+                            p->minValue[c] = getAnnotationInt(*minIt);
+                        if (maxIt != spec.annotations.end())
+                            p->maxValue[c] = getAnnotationInt(*maxIt);
+                    }
+                    if (stepIt != spec.annotations.end())
+                        p->step = getAnnotationFloat(*stepIt);
+
+                    params.push_back(std::move(p));
+                }
+                else if (spec.type.is_integral() && !spec.type.is_signed())
+                {
+                    // uint2/uint3/uint4
+                    auto p = std::make_unique<UintVecParam>();
+                    p->effectName = effectName;
+                    p->name = spec.name;
+                    p->label = label;
+                    p->tooltip = tooltip;
+                    p->uiType = uiType;
+                    p->componentCount = static_cast<uint32_t>(componentCount);
+
+                    for (size_t c = 0; c < componentCount; c++)
+                    {
+                        std::string suffix = "[" + std::to_string(c) + "]";
+                        p->defaultValue[c] = module.spec_constants[i + c].initializer_value.as_uint[0];
+                        p->value[c] = pConfig->getInstanceOption<uint32_t>(effectName, spec.name + suffix, p->defaultValue[c]);
+                        if (minIt != spec.annotations.end())
+                            p->minValue[c] = static_cast<uint32_t>(getAnnotationInt(*minIt));
+                        if (maxIt != spec.annotations.end())
+                            p->maxValue[c] = static_cast<uint32_t>(getAnnotationInt(*maxIt));
+                    }
+                    if (stepIt != spec.annotations.end())
+                        p->step = getAnnotationFloat(*stepIt);
+
+                    params.push_back(std::move(p));
+                }
+
+                // Skip the remaining components since we've already processed them
+                i += componentCount - 1;
+            }
+            else
+            {
+                // Regular scalar parameter
+                auto param = convertSpecConstant(spec, effectName, pConfig);
+                if (param)
+                {
+                    param->noSave = hasAnnotation(spec.annotations, "nosave");
+                    params.push_back(std::move(param));
+                }
+            }
+        }
+
+        // Process uniforms (runtime-changeable values)
+        for (const auto& uniform : module.uniforms)
+        {
+            if (shouldSkipSpecConstant(uniform))
+                continue;
+
+            auto param = convertSpecConstant(uniform, effectName, pConfig);
+            if (param)
+            {
+                param->noSave = hasAnnotation(uniform.annotations, "nosave");
+                params.push_back(std::move(param));
+            }
+        }
+
+        }
+        catch (const std::exception& e)
+        {
+            Logger::err("parseReshadeEffect exception for " + effectName + ": " + e.what());
+        }
+        catch (...)
+        {
+            Logger::err("parseReshadeEffect unknown exception for " + effectName);
+        }
+
+        parserSignalJmpActive = 0;
+        return params;
+    }
+
+    ShaderTestResult testShaderCompilation(
+        const std::string& effectName,
+        const std::string& effectPath)
+    {
+        // Convenience overload — loads include paths from shader_manager.conf
+        ShaderManagerConfig smConfig = ConfigSerializer::loadShaderManagerConfig();
+        return testShaderCompilation(effectName, effectPath, smConfig.discoveredShaderPaths);
+    }
+
+    ShaderTestResult testShaderCompilation(
+        const std::string& effectName,
+        const std::string& effectPath,
+        const std::vector<std::string>& includePaths)
+    {
+        ShaderTestResult result;
+        result.effectName = effectName;
+        result.filePath = effectPath;
+
+        // Install signal handlers for SIGFPE/SIGABRT from reshadefx compiler
+        installParserCrashHandlers();
+        if (sigsetjmp(parserSignalJmpBuf, 1) != 0)
+        {
+            parserSignalJmpActive = 0;
+            std::string sigName = (parserCaughtSignal == SIGFPE) ? "SIGFPE" : "SIGABRT";
+            result.success = false;
+            result.errorMessage = sigName + " signal during shader compilation";
+            return result;
+        }
+        parserSignalJmpActive = 1;
+
+        try
+        {
+            // Setup preprocessor with pre-cached include paths
+            reshadefx::preprocessor preprocessor;
+            setupPreprocessor(preprocessor, includePaths);
+
+            // Try to load and preprocess the file
+            if (!preprocessor.append_file(effectPath))
+            {
+                result.success = false;
+                result.errorMessage = "Failed to load shader file";
+                std::string ppErrors = preprocessor.errors();
+                if (!ppErrors.empty())
+                    result.errorMessage += ": " + ppErrors;
+                return result;
+            }
+
+            // Check for preprocessor errors (skip warnings — e.g. unknown pragma)
+            std::string ppErrors = preprocessor.errors();
+            if (!ppErrors.empty() && ppErrors.find("preprocessor error:") != std::string::npos)
+            {
+                result.success = false;
+                result.errorMessage = "Preprocessor errors: " + ppErrors;
+                return result;
+            }
+
+            // Save preprocessed source for depth check (parser takes ownership via move)
+            std::string ppSource = preprocessor.output();
+
+            // Try to parse the shader
+            reshadefx::parser parser;
+            auto codegen = std::unique_ptr<reshadefx::codegen>(
+                reshadefx::create_codegen_spirv(true, true, true, true));
+
+            if (!parser.parse(preprocessor.output(), codegen.get()))
+            {
+                result.success = false;
+                result.errorMessage = "Parse errors: " + parser.errors();
+                return result;
+            }
+
+            // Check for parse warnings/errors
+            std::string parseErrors = parser.errors();
+            if (!parseErrors.empty() && hasFatalCompilerDiagnostics(parseErrors))
+            {
+                result.success = false;
+                result.errorMessage = "Parse errors: " + parseErrors;
+                return result;
+            }
+            if (!parseErrors.empty())
+                Logger::warn("reshade_parser test warnings: " + parseErrors);
+
+            // Try to generate code
+            reshadefx::module module;
+            codegen->write_result(module);
+
+            if (const char* dumpPath = std::getenv("VKINTOX_DUMP_SPIRV");
+                dumpPath != nullptr && *dumpPath != '\0' && !module.spirv.empty())
+            {
+                std::ofstream dump(dumpPath, std::ios::binary);
+                if (dump.is_open())
+                {
+                    dump.write(reinterpret_cast<const char*>(module.spirv.data()), static_cast<std::streamsize>(module.spirv.size() * sizeof(uint32_t)));
+                }
+            }
+
+            // Check if shader actually uses the depth buffer at runtime.
+            // ReShade.fxh always declares a DEPTH texture + "DepthBuffer" sampler +
+            // GetLinearizedDepth function, but most shaders never call them.
+            // Libraries like qUINT_common.fxh also declare depth samplers that
+            // may go unused (e.g. qUINT_bloom includes the header but never uses depth).
+            //
+            // Strategy: find depth samplers, then verify they're actually used
+            // in the compiled SPIR-V code (not just declared). A sampler that is
+            // declared but never loaded/sampled in any entry point is dead code.
+            {
+                std::string depthTexName;
+                for (const auto& tex : module.textures)
+                {
+                    if (tex.semantic == "DEPTH")
+                    {
+                        depthTexName = tex.unique_name;
+                        break;
+                    }
+                }
+
+                if (!depthTexName.empty())
+                {
+                    // Check if any entry point transitively uses the depth sampler.
+                    //
+                    // ReShade.fxh/qUINT_common.fxh declare depth functions that
+                    // compile into the SPIR-V even when unreachable from entry
+                    // points. A raw OpLoad scan would produce false positives.
+                    //
+                    // Algorithm: build a per-function call graph from the SPIR-V,
+                    // then BFS from entry points to check reachability.
+                    auto isSamplerUsedInSpirv = [&](uint32_t samplerId) -> bool {
+                        const auto& code = module.spirv;
+                        if (code.size() < 5)
+                            return false;
+
+                        // Pass 1: collect entry point function IDs
+                        std::set<uint32_t> entryFuncIds;
+                        size_t i = 5;  // Skip SPIR-V header
+                        while (i < code.size())
+                        {
+                            uint32_t wc = code[i] >> 16;
+                            uint32_t op = code[i] & 0xFFFF;
+                            if (wc == 0)
+                                break;
+                            // OpEntryPoint: [wc|15, execModel, funcId, name..., interface...]
+                            if (op == 15 && wc >= 3 && (i + 2) < code.size())
+                                entryFuncIds.insert(code[i + 2]);
+                            i += wc;
+                        }
+
+                        // Pass 2: scan function bodies for depth sampler loads and call edges
+                        struct FuncInfo
+                        {
+                            bool loadsDepthSampler = false;
+                            std::vector<uint32_t> callees;
+                        };
+                        std::unordered_map<uint32_t, FuncInfo> funcs;
+                        uint32_t currentFunc = 0;
+                        i = 5;
+                        while (i < code.size())
+                        {
+                            uint32_t wc = code[i] >> 16;
+                            uint32_t op = code[i] & 0xFFFF;
+                            if (wc == 0)
+                                break;
+                            // OpFunction: [wc|54, resultType, funcId, control, funcType]
+                            if (op == 54 && wc >= 3 && (i + 2) < code.size())
+                            {
+                                currentFunc = code[i + 2];
+                                funcs[currentFunc];
+                            }
+                            // OpFunctionEnd: [wc|56]
+                            else if (op == 56)
+                                currentFunc = 0;
+                            else if (currentFunc != 0)
+                            {
+                                // OpLoad: [wc|61, resultType, resultId, pointer]
+                                if (op == 61 && wc >= 4 && (i + 3) < code.size())
+                                {
+                                    if (code[i + 3] == samplerId)
+                                        funcs[currentFunc].loadsDepthSampler = true;
+                                }
+                                // OpFunctionCall: [wc|57, resultType, resultId, funcId, args...]
+                                if (op == 57 && wc >= 4 && (i + 3) < code.size())
+                                    funcs[currentFunc].callees.push_back(code[i + 3]);
+                            }
+                            i += wc;
+                        }
+
+                        // BFS from entry points through call graph
+                        std::queue<uint32_t> worklist;
+                        std::set<uint32_t> visited;
+                        for (uint32_t ep : entryFuncIds)
+                        {
+                            worklist.push(ep);
+                            visited.insert(ep);
+                        }
+                        while (!worklist.empty())
+                        {
+                            uint32_t fid = worklist.front();
+                            worklist.pop();
+                            auto it = funcs.find(fid);
+                            if (it == funcs.end())
+                                continue;
+                            if (it->second.loadsDepthSampler)
+                                return true;
+                            for (uint32_t callee : it->second.callees)
+                            {
+                                if (visited.insert(callee).second)
+                                    worklist.push(callee);
+                            }
+                        }
+                        return false;
+                    };
+
+                    bool depthUsed = false;
+                    for (const auto& samp : module.samplers)
+                    {
+                        if (samp.texture_name != depthTexName)
+                            continue;
+                        if (!isSamplerUsedInSpirv(samp.id))
+                            continue;  // Declared but never used — dead code
+                        depthUsed = true;
+                        break;
+                    }
+                    result.usesDepth = depthUsed;
+                }
+            }
+
+            result.success = true;
+        }
+        catch (const std::exception& e)
+        {
+            result.success = false;
+            result.errorMessage = "Exception: " + std::string(e.what());
+        }
+        catch (...)
+        {
+            result.success = false;
+            result.errorMessage = "Unknown exception during compilation";
+        }
+
+        parserSignalJmpActive = 0;
+        return result;
+    }
+
+    bool checkShaderUsesDepth(
+        const std::string& effectName,
+        const std::string& effectPath,
+        const std::vector<std::string>& includePaths)
+    {
+        ShaderTestResult result = testShaderCompilation(effectName, effectPath, includePaths);
+        return result.usesDepth;
+    }
+
+    // Built-in macros that should not be exposed to users
+    static const std::set<std::string> builtInMacros = {
+        "__RESHADE__",
+        "__RESHADE_PERFORMANCE_MODE__",
+        "__RENDERER__",
+        "BUFFER_WIDTH",
+        "BUFFER_HEIGHT",
+        "BUFFER_RCP_WIDTH",
+        "BUFFER_RCP_HEIGHT",
+        "BUFFER_COLOR_DEPTH",
+        "__FILE__",
+        "__LINE__",
+        "__DATE__",
+        "__TIME__",
+        "__VENDOR__",
+        "__APPLICATION__",
+    };
+
+    std::vector<PreprocessorDefinition> extractPreprocessorDefinitions(
+        const std::string& effectName,
+        const std::string& effectPath)
+    {
+        std::vector<PreprocessorDefinition> defs;
+
+        try
+        {
+            // Setup preprocessor
+            reshadefx::preprocessor preprocessor;
+            setupPreprocessor(preprocessor);
+
+            if (!preprocessor.append_file(effectPath))
+            {
+                Logger::err("extractPreprocessorDefinitions: failed to load shader: " + effectPath);
+                return defs;
+            }
+
+            // Get all macros that were actually used in the shader
+            auto usedMacros = preprocessor.used_macro_definitions();
+
+            for (const auto& [name, value] : usedMacros)
+            {
+                // Skip built-in macros
+                if (builtInMacros.count(name))
+                    continue;
+
+                // Skip macros that start with underscore (internal/compiler)
+                if (!name.empty() && name[0] == '_')
+                    continue;
+
+                PreprocessorDefinition def;
+                def.name = name;
+                def.effectName = effectName;
+                def.defaultValue = value.empty() ? "1" : value;
+                def.value = def.defaultValue;
+                defs.push_back(def);
+            }
+
+            if (!defs.empty())
+            {
+                Logger::debug("extractPreprocessorDefinitions: found " + std::to_string(defs.size()) +
+                    " user macros in " + effectName);
+                for (const auto& def : defs)
+                    Logger::debug("  " + def.name + " = " + def.defaultValue);
+            }
+        }
+        catch (const std::exception& e)
+        {
+            Logger::err("extractPreprocessorDefinitions exception for " + effectName + ": " + e.what());
+        }
+        catch (...)
+        {
+            Logger::err("extractPreprocessorDefinitions unknown exception for " + effectName);
+        }
+
+        return defs;
+    }
+
+} // namespace VKIntox

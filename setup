@@ -139,8 +139,8 @@ flatpak info --user runtime/org.gnome.Sdk/x86_64/50 >/dev/null 2>&1 || die "gnom
 run_progress "pulling freedesktop sdk" flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/25.08
 flatpak info --user runtime/org.freedesktop.Sdk/x86_64/25.08 >/dev/null 2>&1 || die "freedesktop sdk install failed"
 
-SOURCE_HASH=$(find src config -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
-SOURCE_HASH=$(printf '%s\n' "$SOURCE_HASH" "$(sha256sum Justfile meson.build meson_options.txt org.freedesktop.Platform.VulkanLayer.VKIntox.json)")
+SOURCE_HASH=$(find src packaging/meson-config -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+SOURCE_HASH=$(printf '%s\n' "$SOURCE_HASH" "$(sha256sum Justfile meson.build meson_options.txt packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json packaging/nix/flake.nix)")
 SOURCE_HASH=$(printf '%s' "$SOURCE_HASH" | sha256sum | cut -d' ' -f1)
 LAYER_MARKER="$HOME/.local/share/VKIntox/sober-layer.sha256"
 
@@ -173,7 +173,7 @@ section "reshade shaders"
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"; stop_spin' EXIT
 
-INI_FILE="$SCRIPT_DIR/EffectPackages.ini"
+INI_FILE="$SCRIPT_DIR/assets/EffectPackages.ini"
 EFFECTS_HASH=$(sha256sum "$INI_FILE" | cut -d' ' -f1)
 EFFECTS_MARKER="$PACKAGE_DIR/.vkintox_effects_hash"
 

@@ -1,0 +1,52 @@
+{
+  "id": "org.freedesktop.Platform.VulkanLayer.VKIntox",
+  "branch": "25.08",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "25.08",
+  "sdk": "org.freedesktop.Sdk",
+  "build-extension": true,
+  "modules": [
+    {
+      "name": "spirv-headers",
+      "buildsystem": "simple",
+      "build-commands": [
+        "mkdir -p ${FLATPAK_DEST}/include/spirv",
+        "cp -r include/spirv ${FLATPAK_DEST}/include/"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/KhronosGroup/SPIRV-Headers.git",
+          "tag": "vulkan-sdk-1.4.350.1"
+        }
+      ]
+    },
+    {
+      "name": "vkintox",
+      "buildsystem": "meson",
+      "build-options": {
+        "env": {
+          "CC": "/usr/lib/sdk/llvm21/bin/clang",
+          "CXX": "/usr/lib/sdk/llvm21/bin/clang++",
+          "CPPFLAGS": "-I/usr/lib/extensions/vulkan/VKIntox/include"
+        },
+        "prepend-pkg-config-path": "/usr/lib/extensions/vulkan/VKIntox/lib/pkgconfig"
+      },
+      "config-opts": [
+        "--buildtype=release",
+        "--prefix=/usr/lib/extensions/vulkan/VKIntox",
+        "--libdir=/usr/lib/extensions/vulkan/VKIntox/lib",
+        "-Dappend_libdir_vkintox=false",
+        "-Dwith_so=true",
+        "-Dwith_json=true",
+        "-Dcpp_args=-I/usr/lib/extensions/vulkan/VKIntox/include"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../.."
+        }
+      ]
+    }
+  ]
+}

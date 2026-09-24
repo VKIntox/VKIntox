@@ -3,7 +3,7 @@ set shell := ["sh", "-eu", "-c"]
 repo_root := justfile_directory()
 build_dir := repo_root / "build"
 lib_dir := build_dir / "src"
-layer_dir := build_dir / "config"
+layer_dir := build_dir / "packaging/meson-config"
 dev_layer_dir := "/tmp/vkintox-dev-layer"
 dev_layer_manifest := dev_layer_dir / "VKIntox.json"
 layer_name := "VK_LAYER_VKINTOX_post_processing"
@@ -13,9 +13,9 @@ default_log := "/tmp/vkintox.log"
 default:
     @just --list
 
-flatpak_manifest := repo_root / "org.freedesktop.Platform.VulkanLayer.VKIntox.json"
-flatpak_build_dir := repo_root / ".flatpak-build"
-flatpak_repo_dir := repo_root / ".flatpak-repo"
+flatpak_manifest := repo_root / "packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json"
+flatpak_build_dir := repo_root / "build/flatpak"
+flatpak_repo_dir := repo_root / "build/flatpak-repo"
 
 flatpak-build:
     flatpak-builder \

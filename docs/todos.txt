@@ -1,0 +1,42 @@
+vkintox TODO
+
+Current version: v0.1.0
+
+================================================
+TODOS for v0.1.1
+================================================
+
+0. stability changes DONE
+
+1. Fix warning errors when compiling (do last AFTER all other changes for this version)
+
+2. Overlay:
+
+* Add tick button for the overlay to close it instead of hotkey DONE
+
+3. Add native .INI support for profiles/presets
+
+* Maybe even switch to it fully
+
+4. Switch the compiler from G++ to Clang++; PROPERLY utilise ccache (especially for flatpak builds, PLEASE!!!
+for the flatpak builds maybe just build natively and transfer to .flatpak-build/files ?) DONE, but ccache for flatpak building isn't possible
+
+5. Improve setup script:
+
+* Make removing the layer when already installed not need user confirmation. (maybe yes > flatpak remove ...) DONE
+* Stop re-installing effect packages when already installed & up to date (copy EffectPackages.ini sha256hash as .vkintox_effects_hash to installation dir and verify it matches on run) DONE
+* Do similar thing as above but for the layer itself (store build-input sha256 under ~/.local/share/VKIntox and check on setup) DONE
+* Improve output styling, make the script more pleasing to the eye, and use more commonly used styling? DONE
+* Move shader dynamic paths from setup script to C++ effect loading logic. Make path verbosity stay inside logs, but not clutter the UI DONE (the C++ loader already discovers folders recursively; setup no longer writes absolute paths) DONE
+* And also in addition to what's above, make re-running the setup script (re-installing .fx files) not break effects like AdaptiveFog DONE (managed packages no longer erase the user's whole ReShade directory)... DONE?
+* Possibly, merge setup into one unified script for all: Sober, native games, Flatpak games... DONE
+
+6. Organize source folder into a more hierarchial, organized structure instead of stuffing everything into one big root
+
+================================================
+TODOS for v0.2.0
+================================================
+
+1. Overhaul UI to use Flutter/Dart instead of ImGui with Vulkan frame buffer casts & proper input passthrough (for V2, not any soon, probably not even for this year lol)
+2. Ensure stability, yet again
+3. Try to improve performance?

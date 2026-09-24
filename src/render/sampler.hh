@@ -1,0 +1,27 @@
+#ifndef SAMPLER_HPP_INCLUDED
+#define SAMPLER_HPP_INCLUDED
+#include <vector>
+#include <fstream>
+#include <string>
+#include <iostream>
+#include <vector>
+#include <memory>
+
+#include "vulkan_include.hh"
+
+#include "logical_device.hh"
+
+#include "reshade/effect_module.hh"
+namespace VKIntox
+{
+    VkSampler createSampler(LogicalDevice* pLogicalDevice);
+
+    VkSampler createReshadeSampler(LogicalDevice* pLogicalDevice, const reshadefx::sampler_info& samplerInfo);
+
+    VkSamplerAddressMode convertReshadeAddressMode(const reshadefx::texture_address_mode& addressMode);
+
+    void
+    convertReshadeFilter(const reshadefx::texture_filter& textureFilter, VkFilter& minFilter, VkFilter& magFilter, VkSamplerMipmapMode& mipmapMode);
+} // namespace VKIntox
+
+#endif // SAMPLER_HPP_INCLUDED

@@ -1,0 +1,27 @@
+#pragma once
+
+#include "vulkan_include.hh"
+
+#include "vkfuncs.hh"
+
+#define FORVKFUNC(func) PFN_vk##func func = nullptr;
+
+namespace VKIntox
+{
+
+    struct InstanceDispatch
+    {
+        VK_INSTANCE_FUNCS
+    };
+
+    struct DeviceDispatch
+    {
+        VK_DEVICE_FUNCS
+    };
+
+    void fillDispatchTableInstance(VkInstance instance, PFN_vkGetInstanceProcAddr gipa, InstanceDispatch* table);
+    void fillDispatchTableDevice(VkDevice device, PFN_vkGetDeviceProcAddr gdpa, DeviceDispatch* table);
+
+} // namespace VKIntox
+
+#undef FORVKFUNC

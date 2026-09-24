@@ -15,5 +15,5 @@ if get_option('with_so')
 endif
 
 if get_option('with_json')
-    subdir('config')
+    subdir('packaging/meson-config')
 endif
