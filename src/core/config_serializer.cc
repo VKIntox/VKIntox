@@ -1269,6 +1269,7 @@ namespace VKIntox
         std::ifstream source(profilePath);
         if (!source || gameName.empty())
             return false;
+        static constexpr const char* migratedMarker = "# SHADERS ALREADY MIGRATED TO INI";
         auto parseLine = [](const std::string& line) {
             std::string key, value;
             bool quoted = false, foundEquals = false;
@@ -1303,10 +1304,16 @@ namespace VKIntox
         std::vector<std::string> techniques;
         std::vector<std::string> techniqueSorting;
         const std::set<std::string> builtinTypes = {"cas", "dls", "fxaa", "smaa", "deband", "lut"};
+        bool alreadyMigrated = false;
         std::string line;
         while (std::getline(source, line))
         {
             original.push_back(line);
+            const auto markerStart = line.find_first_not_of(" \t\r");
+            const auto markerEnd = line.find_last_not_of(" \t\r");
+            if (markerStart != std::string::npos &&
+                line.compare(markerStart, markerEnd - markerStart + 1, migratedMarker) == 0)
+                alreadyMigrated = true;
             auto [key, value] = parseLine(line);
             if (key.empty()) continue;
             if (key == "effects" || key == "disabledEffects")
@@ -1329,6 +1336,8 @@ namespace VKIntox
         }
         if (source.bad())
             return false;
+        if (alreadyMigrated)
+            return true;
         for (auto it = effectPaths.begin(); it != effectPaths.end();)
         {
             if (std::find(effects.begin(), effects.end(), it->first) == effects.end())
@@ -1427,7 +1436,14 @@ namespace VKIntox
             return false;
         std::ostringstream output;
         for (const auto& keptLine : kept) output << keptLine << '\n';
-        return output.good() && writeAtomically(profilePath, output.str());
+        if (!output.good())
+            return false;
+        std::string migratedConfig = output.str();
+        if (!migratedConfig.empty() && migratedConfig.back() != '\n')
+            migratedConfig.push_back('\n');
+        migratedConfig += migratedMarker;
+        migratedConfig.push_back('\n');
+        return writeAtomically(profilePath, migratedConfig);
     }
 
     ProfileSettings ConfigSerializer::loadProfileSettings(const std::string& filePath)
