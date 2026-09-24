@@ -30,8 +30,8 @@ namespace VKIntox
             // === Render the slider ===
             if (ImGui::SliderFloat(p.label.c_str(), &p.value, p.minValue, p.maxValue))
             {
-                if (p.step > 0.0f)
-                    p.value = std::round(p.value / p.step) * p.step;
+                const float step = p.step > 0.0f ? p.step : 0.1f;
+                p.value = std::round(p.value / step) * step;
                 changed = true;
             }
 

@@ -45,10 +45,11 @@ namespace VKIntox
                     break;
             }
 
-            if (changed && p.step > 0.0f)
+            if (changed)
             {
+                const float step = p.step > 0.0f ? p.step : 0.1f;
                 for (uint32_t i = 0; i < p.componentCount; i++)
-                    p.value[i] = std::round(p.value[i] / p.step) * p.step;
+                    p.value[i] = std::round(p.value[i] / step) * step;
             }
 
             // === Right-click context menu ===
