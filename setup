@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+# vkintox installer
+# usage: ./setup sober | ./setup flatpak APP_ID | ./setup system
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+usage:
+  ./setup sober              build + install layer/shaders for sober
+  ./setup flatpak APP_ID     build + configure layer for a flatpak app
+  ./setup system             build + install system-wide
+EOF
+}
+
+if [[ -t 1 ]]; then
+    B='\033[1m'; BLUE='\033[34m'; GREEN='\033[32m'; YELLOW='\033[33m'
+    RED='\033[31m'; DIM='\033[2m'; NC='\033[0m'
+    # Six-dot Braille spinner, cycling a lit dot around a 2x3 cell.
+    SPIN_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+else
+    B=''; BLUE=''; GREEN=''; YELLOW=''; RED=''; DIM=''; NC=''
+    SPIN_FRAMES=()
+fi
+
+spin_pid=""
+
+start_spin() {
+    [[ ${#SPIN_FRAMES[@]} -eq 0 ]] && return
+    local msg="$1"
+    (
+        local i=0
+        while true; do
+            printf "\r  ${BLUE}${SPIN_FRAMES[$((i % ${#SPIN_FRAMES[@]}))]}${NC} %s  " "$msg"
+            ((i += 1))
+            sleep 0.12
+        done
+    ) &
+    spin_pid=$!
+    disown $spin_pid 2>/dev/null || true
+}
+
+stop_spin() {
+    local was_spinning=0
+    if [[ -n "$spin_pid" ]]; then
+        was_spinning=1
+        kill "$spin_pid" 2>/dev/null || true
+        wait "$spin_pid" 2>/dev/null || true
+        spin_pid=""
+    fi
+    if [[ -t 1 && $was_spinning -eq 1 ]]; then
+        printf "\r\033[K\n"
+    fi
+}
+
+run_progress() {
+    local label="$1"; shift
+    local log status
+    log=$(mktemp)
+    start_spin "$label..."
+    if "$@" >"$log" 2>&1; then
+        stop_spin
+        ok "$label"
+        rm -f "$log"
+    else
+        status=$?
+        stop_spin
+        cat "$log" >&2
+        rm -f "$log"
+        die "$label failed (exit $status)"
+    fi
+}
+
+trap 'stop_spin' EXIT
+
+say()  { printf "${BLUE}  →${NC} %s\n" "$*"; }
+ok()   { stop_spin; printf "${GREEN}  ✓${NC} %s\n" "$*"; }
+warn() { stop_spin; printf "${YELLOW}  !${NC} %s\n" "$*"; }
+die()  { stop_spin; printf "${RED}  ✗${NC} %s\n" "$*" >&2; exit 1; }
+section() { stop_spin; printf "\n${BLUE}${B}%s${NC}\n" "$*"; }
+
+need_cmd() {
+    command -v "$1" >/dev/null 2>&1 || die "missing $1 — install it first"
+}
+
+MODE="${1:-}"
+[[ -z "$MODE" ]] && { usage; exit 2; }
+if [[ "$MODE" == "flatpak" ]]; then
+    [[ $# == 2 ]] || { usage; die "flatpak needs an app id"; }
+    APP_ID="$2"
+elif [[ "$MODE" == "sober" ]]; then
+    APP_ID="org.vinegarhq.Sober"
+else
+    APP_ID=""
+fi
+[[ "$MODE" =~ ^(sober|flatpak|system)$ ]] || { usage; die "unknown mode: $MODE"; }
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+section "dependencies"
+need_cmd just
+need_cmd python3
+need_cmd sha256sum
+
+if [[ "$MODE" != "system" ]]; then
+    need_cmd flatpak
+    need_cmd curl
+    need_cmd unzip
+    ok "tools ready"
+
+    if flatpak remote-list --user 2>/dev/null | grep -q '^flathub'; then
+        ok "flathub remote exists"
+    else
+        warn "adding flathub remote"
+        flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    fi
+else
+    need_cmd meson
+    need_cmd ninja
+fi
+
+if [[ "$MODE" == "system" ]]; then
+    section "system install"
+    run_progress "configured" just configure
+
+    run_progress "compiled" just build
+
+    run_progress "installed to system" sudo ninja -C build install
+    exit 0
+fi
+
+section "flatpak sdks"
+
+run_progress "pulling gnome sdk" flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/50
+flatpak info --user runtime/org.gnome.Sdk/x86_64/50 >/dev/null 2>&1 || die "gnome sdk install failed"
+
+run_progress "pulling freedesktop sdk" flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/25.08
+flatpak info --user runtime/org.freedesktop.Sdk/x86_64/25.08 >/dev/null 2>&1 || die "freedesktop sdk install failed"
+
+SOURCE_HASH=$(find src config -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+SOURCE_HASH=$(printf '%s\n' "$SOURCE_HASH" "$(sha256sum Justfile meson.build meson_options.txt org.freedesktop.Platform.VulkanLayer.VKIntox.json)")
+SOURCE_HASH=$(printf '%s' "$SOURCE_HASH" | sha256sum | cut -d' ' -f1)
+LAYER_MARKER="$HOME/.local/share/VKIntox/sober-layer.sha256"
+
+section "building layer"
+if [[ ! -f "$LAYER_MARKER" || "$(cat "$LAYER_MARKER")" != "$SOURCE_HASH" ]] || \
+   ! flatpak info --user org.freedesktop.Platform.VulkanLayer.VKIntox >/dev/null 2>&1; then
+    run_progress "building + installing layer" just flatpak-build
+    mkdir -p "$(dirname "$LAYER_MARKER")"
+    printf '%s\n' "$SOURCE_HASH" > "$LAYER_MARKER"
+else
+    ok "layer already up to date"
+fi
+
+section "config dirs"
+APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
+RESHADE_DIR="$APP_CONFIG/reshade"
+PACKAGE_DIR="$RESHADE_DIR/packages"
+FONT_DIR="$APP_CONFIG/font"
+
+mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$FONT_DIR"
+ok "created config dirs"
+
+if [[ -f "$SCRIPT_DIR/assets/font/font.ttf" ]]; then
+    cp "$SCRIPT_DIR/assets/font/font.ttf" "$FONT_DIR/"
+    ok "copied font.ttf"
+fi
+[[ -f "$SCRIPT_DIR/assets/font/LICENSE" ]] && cp "$SCRIPT_DIR/assets/font/LICENSE" "$FONT_DIR/"
+
+section "reshade shaders"
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"; stop_spin' EXIT
+
+INI_FILE="$SCRIPT_DIR/EffectPackages.ini"
+EFFECTS_HASH=$(sha256sum "$INI_FILE" | cut -d' ' -f1)
+EFFECTS_MARKER="$PACKAGE_DIR/.vkintox_effects_hash"
+
+if [[ -f "$EFFECTS_MARKER" && "$(cat "$EFFECTS_MARKER")" == "$EFFECTS_HASH" ]]; then
+    ok "effects up to date"
+else
+    rm -rf "$PACKAGE_DIR"
+    mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures"
+
+    start_spin "downloading + extracting packages..."
+    PACKAGE_LOG="$WORK_DIR/package-install.log"
+    python3 - "$WORK_DIR" "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$INI_FILE" >"$PACKAGE_LOG" 2>&1 <<'PYEOF' || { stop_spin; cat "$PACKAGE_LOG" >&2; die "shader fetch failed"; }
+import configparser, os, sys, shutil, urllib.request, zipfile
+
+work_dir, shaders_dir, textures_dir, ini_file = sys.argv[1:5]
+
+with open(ini_file, "r", encoding="utf-8-sig") as f:
+    cfg = configparser.ConfigParser(strict=False)
+    cfg.read_string(f.read())
+
+ok = 0
+failed = []
+
+for section in cfg.sections():
+    pkg = cfg[section]
+    name = pkg.get("PackageName", section)
+    url = pkg.get("DownloadUrl")
+    if not url: continue
+
+    raw_shader = pkg.get("InstallPath", r".\reshade-shaders\Shaders").replace("\\", "/").lstrip("./")
+    sub_shader = raw_shader.replace("reshade-shaders/Shaders", "", 1).strip("/")
+    raw_tex = pkg.get("TextureInstallPath", r".\reshade-shaders\Textures").replace("\\", "/").lstrip("./")
+    sub_tex = raw_tex.replace("reshade-shaders/Textures", "", 1).strip("/")
+
+    tgt_shaders = os.path.join(shaders_dir, sub_shader) if sub_shader else shaders_dir
+    tgt_textures = os.path.join(textures_dir, sub_tex) if sub_tex else textures_dir
+    os.makedirs(tgt_shaders, exist_ok=True)
+    os.makedirs(tgt_textures, exist_ok=True)
+
+    effect_files = [f.strip() for f in pkg.get("EffectFiles", "").split(",") if f.strip()]
+    deny_files = {f.strip() for f in pkg.get("DenyEffectFiles", "").split(",") if f.strip()}
+
+    zip_path = os.path.join(work_dir, f"{section}.zip")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as r, open(zip_path, "wb") as out:
+            shutil.copyfileobj(r, out)
+        with zipfile.ZipFile(zip_path) as z:
+            z.extractall(os.path.join(work_dir, section))
+    except Exception as e:
+        failed.append(f"{name} ({e})")
+        continue
+
+    n_sh = n_tx = 0
+    for root, _, files in os.walk(os.path.join(work_dir, section)):
+        for fn in files:
+            src = os.path.join(root, fn)
+            if fn in deny_files: continue
+            if fn.endswith((".fx", ".fxh")):
+                if fn.endswith(".fx") and effect_files and fn not in effect_files: continue
+                shutil.copy2(src, tgt_shaders); n_sh += 1
+            elif fn.lower().endswith((".png", ".jpg", ".jpeg", ".dds", ".tga", ".bmp")):
+                shutil.copy2(src, tgt_textures); n_tx += 1
+
+    if n_sh == 0 and n_tx == 0:
+        failed.append(f"{name} (no matching files)")
+    else:
+        ok += 1
+        print(f"  ✓ {name}: {n_sh} shader(s), {n_tx} texture(s)")
+
+print()
+print(f"  {ok} package(s) installed")
+if failed:
+    print(f"  {len(failed)} package(s) had problems:")
+    for f in failed:
+        print(f"    - {f}")
+    raise SystemExit(1)
+PYEOF
+    stop_spin
+    cat "$PACKAGE_LOG"
+    ok "shaders fetched + extracted"
+    printf '%s\n' "$EFFECTS_HASH" > "$EFFECTS_MARKER"
+fi
+
+section "shader paths"
+ok "shader/texture paths setup"
+
+section "enable layer"
+if flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
+    ok "ENABLE_VKINTOX=1 set"
+else
+    warn "couldn't set override — app may not be installed yet"
+    warn "after installing, run:"
+    printf "    ${DIM}flatpak override --user %s --env=ENABLE_VKINTOX=1${NC}\n" "$APP_ID"
+fi
+
+SHADER_COUNT=$(find "$PACKAGE_DIR/Shaders" -name '*.fx' 2>/dev/null | wc -l)
+TEXTURE_COUNT=$(find "$PACKAGE_DIR/Textures" -type f 2>/dev/null | wc -l)
+
+printf "\n${BLUE}${B}done${NC}\n"
+printf "  shaders:    ${DIM}%s${NC}  (%s)\n" "$SHADER_COUNT" "$PACKAGE_DIR/Shaders"
+printf "  textures:   ${DIM}%s${NC}  (%s)\n" "$TEXTURE_COUNT" "$PACKAGE_DIR/Textures"
+printf "  packages:   ${DIM}%s${NC}\n" "$PACKAGE_DIR"
+printf "\n  ${B}setup finished!${NC}\n"

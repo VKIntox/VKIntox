@@ -27,7 +27,7 @@ an independent fork of **vkShade** that fixes the depth buffer issues inherent t
 *   **advanced depth resolve:** automatically picks the correct depth buffer or allows manual selection (Reverse-Z, etc).
 *   **in-game overlay:** a native gui toggled via `HOME` to manage effects on the fly.
 *   **reshade compatibility:** supports `.fx` files by compiling them to spir-v at runtime.
-*   **sober integration:** a dedicated setup script for running roblox with full post-processing support.
+*   **unified setup:** one script for Sober, Flatpak games, and native system installs.
 
 ## how it works
 
@@ -40,7 +40,7 @@ vkintox operates as a vulkan layer that sits between the game and the driver.
 ## requirements
 
 *   **gpu:** vulkan-capable hardware with recent drivers.
-*   **sober setup:** python3, curl, unzip.
+*   **setup:** `just`; Sober setup also uses Flatpak, Python 3, curl, and unzip. System installation uses Meson, Ninja, and sudo.
 *   **native build:** Clang/Clang++, ccache, Meson, Ninja, glslangValidator, Wayland/X11 development libraries.
 
 > [!IMPORTANT]
@@ -48,24 +48,27 @@ vkintox operates as a vulkan layer that sits between the game and the driver.
 
 ## installation
 
-### for sober (flatpak)
-this script fetches the gnome sdk, compiles vkintox, and installs it as a flatpak extension.
+### for Sober (Flatpak)
+This builds VKIntox as a Flatpak Vulkan layer, installs the ReShade packages listed in `EffectPackages.ini`, and enables the layer in Sober. Re-running it skips the build and package download when their inputs have not changed.
 
 ```bash
 git clone https://github.com/buwryme/VKIntox.git
 cd VKIntox
-chmod +x setup_sober.sh; ./setup_sober.sh
+./setup sober
+```
+
+### for another Flatpak game
+This runs the same build, package installation, and configuration steps as Sober, targeting the selected app ID and its Flatpak config directory:
+
+```bash
+./setup flatpak com.target.app
 ```
 
 ### for native games
-build and install system-wide.
+Build and install VKIntox system-wide (the script uses `sudo` for installation):
 
 ```bash
-git clone https://github.com/buwryme/VKIntox.git
-cd VKIntox
-CC='ccache clang' CXX='ccache clang++' meson setup --buildtype=release --prefix=/usr build-release
-ninja -C build-release
-sudo ninja -C build-release install
+./setup system
 ```
 
 to enable for a specific game, launch it with:
@@ -105,7 +108,7 @@ flatpak override --user --env=VKINTOX_LOG_LEVEL=debug org.vinegarhq.Sober
 
 Remove the override once done with `flatpak override --user --unset-env=VKINTOX_LOG_LEVEL org.vinegarhq.Sober`.
 
-*   **sober stopped launching:** try running `setup_sober.sh` again, and run:
+*   **sober stopped launching:** try running `./setup sober` again, and run:
 
 ```bash
 flatpak override --user --env=VK_LOADER_DRIVERS_DISABLE=lvp_icd.x86_64.json --env=__NV_PRIME_RENDER_OFFLOAD=1 --env=__GLX_VENDOR_LIBRARY_NAME=nvidia --env=VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json org.sober.Sober

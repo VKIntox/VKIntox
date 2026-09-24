@@ -23,13 +23,15 @@ for the flatpak builds maybe just build natively and transfer to .flatpak-build/
 
 5. Improve setup script:
 
-* Make removing the layer when already installed not need user confirmation. (maybe yes > flatpak remove ...)
-* Stop re-installing effect packages when already installed & up to date (copy EffectPackages.ini sha256hash as .vkintox_effects_hash to installation dir and verify it matches on run)
-* Do similar thing as above but for the layer itself (save sha256hash of layer files to somewhere where it's best to store it and check on setup)
-* Improve output styling, make the script more pleasing to the eye, and use more commonly used decorations?
-* Move shader dynamic paths from setup script to C++ effect loading logic. Make path verbosity stay inside logs, but not clutter the UI
-* And also in addition to what's above, make re-running the setup script (re-installing .fx files) not break effects like AdaptiveFog
-* Possibly, merge setup into one unified script for all: Sober, native games, Flatpak games...
+* Make removing the layer when already installed not need user confirmation. (maybe yes > flatpak remove ...) DONE
+* Stop re-installing effect packages when already installed & up to date (copy EffectPackages.ini sha256hash as .vkintox_effects_hash to installation dir and verify it matches on run) DONE
+* Do similar thing as above but for the layer itself (store build-input sha256 under ~/.local/share/VKIntox and check on setup) DONE
+* Improve output styling, make the script more pleasing to the eye, and use more commonly used styling? DONE
+* Move shader dynamic paths from setup script to C++ effect loading logic. Make path verbosity stay inside logs, but not clutter the UI DONE (the C++ loader already discovers folders recursively; setup no longer writes absolute paths)
+* And also in addition to what's above, make re-running the setup script (re-installing .fx files) not break effects like AdaptiveFog DONE (managed packages no longer erase the user's whole ReShade directory)... DONE?
+* Possibly, merge setup into one unified script for all: Sober, native games, Flatpak games... DONE
+
+6. Organize source folder into a more hierarchial, organized structure instead of stuffing everything into one big root
 
 ================================================
 TODOS for v0.2.0
