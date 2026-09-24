@@ -2244,6 +2244,91 @@ namespace VKIntox
     static std::string detectedGameName;
     static std::string activeProfileName;
     static std::string activeProfilePath;
+    static std::string activeShaderProfilePath;
+
+    void applyShaderProfile(Config* config, const std::string& path)
+    {
+        if (!config)
+            return;
+        if (!path.empty())
+        {
+            const auto definitions = config->getEffectDefinitions();
+            std::map<std::string, std::vector<std::string>> namesByFile;
+            for (const auto& [name, effectPath] : definitions)
+                namesByFile[std::filesystem::path(effectPath).filename().string()].push_back(name);
+            const auto profile = ConfigSerializer::loadShaderProfileData(path);
+            for (const auto& param : profile.params)
+            {
+                std::vector<std::string> effectNames;
+                const auto it = namesByFile.find(param.effectName);
+                if (it != namesByFile.end())
+                    effectNames = it->second;
+                else if (!param.effectName.empty())
+                    effectNames.push_back(param.effectName);
+                if (!param.paramName.empty() && param.paramName.front() == '@')
+                {
+                    const std::string macroName = param.paramName.substr(1);
+                    if (effectNames.empty())
+                    {
+                        for (const auto& [name, effectPath] : definitions)
+                            config->setOption(name + "@" + macroName, param.value);
+                    }
+                    else
+                    {
+                        for (const auto& effectName : effectNames)
+                            config->setOption(effectName + "@" + macroName, param.value);
+                    }
+                    continue;
+                }
+                for (const auto& effectName : effectNames)
+                    config->setOption(effectName + "." + param.paramName, param.value);
+            }
+            if (profile.hasEffectList)
+            {
+                auto join = [](const std::vector<std::string>& values) {
+                    std::string result;
+                    for (const auto& value : values)
+                    {
+                        if (!result.empty()) result += ':';
+                        result += value;
+                    }
+                    return result;
+                };
+                config->setOption("effects", join(profile.effects));
+                config->setOption("disabledEffects", join(profile.disabledEffects));
+            }
+            else if (profile.hasTechniques)
+            {
+                std::set<std::string> selectedTechniques(profile.techniques.begin(), profile.techniques.end());
+                std::set<std::string> sortedTechniques(profile.techniqueSorting.begin(), profile.techniqueSorting.end());
+                std::vector<std::string> effects, disabled;
+                for (const auto& [name, effectPath] : definitions)
+                {
+                    const std::string filename = std::filesystem::path(effectPath).filename().string();
+                    if (std::filesystem::path(filename).extension() != ".fx")
+                        continue;
+                    bool inSorting = false, enabled = false;
+                    for (const auto& technique : profile.techniqueSorting)
+                        if (technique.size() > filename.size() && technique.compare(technique.size() - filename.size(), filename.size(), filename) == 0 && technique[technique.size() - filename.size() - 1] == '@') inSorting = true;
+                    for (const auto& technique : profile.techniques)
+                        if (technique.size() > filename.size() && technique.compare(technique.size() - filename.size(), filename.size(), filename) == 0 && technique[technique.size() - filename.size() - 1] == '@') enabled = true;
+                    if (inSorting || enabled)
+                    {
+                        effects.push_back(name);
+                        if (!enabled) disabled.push_back(name);
+                    }
+                }
+                auto join = [](const std::vector<std::string>& values) {
+                    std::string result;
+                    for (const auto& value : values) { if (!result.empty()) result += ':'; result += value; }
+                    return result;
+                };
+                config->setOption("effects", join(effects));
+                config->setOption("disabledEffects", join(disabled));
+            }
+        }
+        activeShaderProfilePath = path;
+    }
 
     // Initialize configs: base (VKIntox.conf) + current (from game profile / env / default)
     void initConfigs()
@@ -2295,6 +2380,10 @@ namespace VKIntox
 
                 if (!activeProfilePath.empty())
                 {
+                    for (const auto& profile : ConfigSerializer::listProfilesForGame(detectedGameName))
+                        ConfigSerializer::migrateProfileShaderSettings(ConfigSerializer::getProfilePath(detectedGameName, profile), detectedGameName);
+                    if (ConfigSerializer::listShaderProfilesForGame(detectedGameName).empty())
+                        ConfigSerializer::createShaderProfile(detectedGameName, "default");
                     currentConfigPath = activeProfilePath;
                     Logger::info("game: " + detectedGameName + " | profile: " + activeProfileName);
                 }
@@ -2316,6 +2405,11 @@ namespace VKIntox
                 {
                     pConfig = std::make_shared<Config>(currentConfigPath);
                     pConfig->setFallback(pBaseConfig.get());
+                    if (!detectedGameName.empty())
+                    {
+                        activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(detectedGameName, "default");
+                        applyShaderProfile(pConfig.get(), activeShaderProfilePath);
+                    }
                     Logger::info("current config: " + currentConfigPath);
                 }
                 else
@@ -2334,13 +2428,14 @@ namespace VKIntox
     }
 
     // Switch to a new config (called from overlay)
-    void switchConfig(const std::string& configPath)
+    void switchConfig(const std::string& configPath, const std::string& shaderPath = "")
     {
         Logger::info("switching to config: " + configPath);
 
         // Create new config from file (starts with no overrides)
         pConfig = std::make_shared<Config>(configPath);
         pConfig->setFallback(pBaseConfig.get());
+        applyShaderProfile(pConfig.get(), shaderPath);
 
         // Also clear any overrides on the base config to avoid stale values
         if (pBaseConfig)
@@ -4265,7 +4360,7 @@ namespace VKIntox
                 if (pLogicalDevice->imguiOverlay && pLogicalDevice->imguiOverlay->hasPendingConfig())
                 {
                     std::string newConfigPath = pLogicalDevice->imguiOverlay->getPendingConfigPath();
-                    switchConfig(newConfigPath);
+                    switchConfig(newConfigPath, activeShaderProfilePath);
                     // Update overlay with effects from the new config
                     std::vector<std::string> newEffects = pConfig->getOption<std::vector<std::string>>("effects", {});
                     std::vector<std::string> disabledEffects = pConfig->getOption<std::vector<std::string>>("disabledEffects", {});
@@ -4273,9 +4368,29 @@ namespace VKIntox
                     pLogicalDevice->imguiOverlay->clearPendingConfig();
                     pLogicalDevice->imguiOverlay->markDirty();  // Defer reload via debounce
                 }
+                else if (pLogicalDevice->imguiOverlay && pLogicalDevice->imguiOverlay->hasPendingShaderProfile())
+                {
+                    const std::string shaderPath = pLogicalDevice->imguiOverlay->getPendingShaderProfilePath();
+                    if (!shaderPath.empty())
+                    {
+                        switchConfig(pConfig->getConfigFilePath(), shaderPath);
+                        std::vector<std::string> newEffects = pConfig->getOption<std::vector<std::string>>("effects", {});
+                        std::vector<std::string> disabledEffects = pConfig->getOption<std::vector<std::string>>("disabledEffects", {});
+                        pLogicalDevice->imguiOverlay->setSelectedEffects(newEffects, disabledEffects);
+                    }
+                    else
+                    {
+                        activeShaderProfilePath.clear();
+                    }
+                    cachedEffects.initialized = false;
+                    cachedParams.dirty = true;
+                    pLogicalDevice->imguiOverlay->clearPendingShaderProfile();
+                    pLogicalDevice->imguiOverlay->markDirty();
+                }
                 else
                 {
                     pConfig->reload();
+                    applyShaderProfile(pConfig.get(), activeShaderProfilePath);
                     cachedEffects.initialized = false;
                     cachedParams.dirty = true;
 

@@ -106,6 +106,9 @@ namespace VKIntox
         bool hasPendingConfig() const { return !pendingConfigPath.empty(); }
         std::string getPendingConfigPath() const { return pendingConfigPath; }
         void clearPendingConfig() { pendingConfigPath.clear(); }
+        bool hasPendingShaderProfile() const { return pendingShaderProfile; }
+        std::string getPendingShaderProfilePath() const { return pendingShaderProfilePath; }
+        void clearPendingShaderProfile() { pendingShaderProfilePath.clear(); pendingShaderProfile = false; }
 
         // Depth pin changed (needs command buffer reallocation)
         bool hasDepthPinChanged() const { return depthPinChanged; }
@@ -259,13 +262,17 @@ namespace VKIntox
         uint32_t currentHeight = 1080;
         char saveConfigName[64] = "";
         std::string pendingConfigPath;
+        std::string pendingShaderProfilePath;
+        bool pendingShaderProfile = false;
+        std::string activeShaderProfileName;
+        std::string activeShaderProfilePath;
 
         // Per-app profile system
         std::string activeGameName;       // Detected executable name
         std::string activeProfileName;    // Active profile ("default", "performance", etc.)
         std::string activeProfilePath;    // Full path to active profile file
         bool profileDirty = false;        // True when changes need saving
-        void autoSaveProfile();           // Save current state to active profile
+        bool autoSaveProfile();           // Save current state to active profile
         void collectSaveData(            // Shared helper for save operations
             std::vector<std::string>& effects,
             std::vector<std::string>& disabledEffects,

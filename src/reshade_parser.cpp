@@ -438,7 +438,8 @@ namespace VKIntox
     std::vector<std::unique_ptr<EffectParam>> parseReshadeEffect(
         const std::string& effectName,
         const std::string& effectPath,
-        Config* pConfig)
+        Config* pConfig,
+        std::vector<std::string>* techniqueNames)
     {
         std::vector<std::unique_ptr<EffectParam>> params;
 
@@ -497,6 +498,12 @@ namespace VKIntox
         // Extract module and convert uniforms to parameters
         reshadefx::module module;
         codegen->write_result(module);
+        if (techniqueNames)
+        {
+            techniqueNames->clear();
+            for (const auto& technique : module.techniques)
+                techniqueNames->push_back(technique.name);
+        }
 
         // Process spec_constants
         // Note: float2/float3/float4 are split into multiple scalar spec_constants with the same name
@@ -619,7 +626,10 @@ namespace VKIntox
                 // Regular scalar parameter
                 auto param = convertSpecConstant(spec, effectName, pConfig);
                 if (param)
+                {
+                    param->noSave = hasAnnotation(spec.annotations, "nosave");
                     params.push_back(std::move(param));
+                }
             }
         }
 
@@ -631,7 +641,10 @@ namespace VKIntox
 
             auto param = convertSpecConstant(uniform, effectName, pConfig);
             if (param)
+            {
+                param->noSave = hasAnnotation(uniform.annotations, "nosave");
                 params.push_back(std::move(param));
+            }
         }
 
         }

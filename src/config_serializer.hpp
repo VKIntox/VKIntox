@@ -17,6 +17,17 @@ namespace VKIntox
         std::string value;
     };
 
+    struct ShaderProfileData
+    {
+        std::vector<ConfigParam> params;
+        bool hasTechniques = false;
+        std::vector<std::string> techniques;
+        std::vector<std::string> techniqueSorting;
+        bool hasEffectList = false;
+        std::vector<std::string> effects;
+        std::vector<std::string> disabledEffects;
+    };
+
     // Global VKIntox settings (from VKIntox.conf)
     struct VkBasaltSettings
     {
@@ -158,6 +169,20 @@ namespace VKIntox
         // Delete a named profile (cannot delete "default")
         static bool deleteProfile(const std::string& gameName,
                                   const std::string& profileName);
+
+        static std::string getShaderProfilePath(const std::string& gameName, const std::string& profileName);
+        static std::vector<std::string> listShaderProfilesForGame(const std::string& gameName);
+        static bool createShaderProfile(const std::string& gameName, const std::string& profileName);
+        static bool deleteShaderProfile(const std::string& gameName, const std::string& profileName);
+        static bool saveShaderProfile(const std::string& path, const std::vector<ConfigParam>& params,
+                                      const std::vector<std::string>& effects = {},
+                                      const std::vector<std::string>& disabledEffects = {},
+                                      const std::map<std::string, std::string>& effectPaths = {},
+                                      const std::vector<std::string>& enabledTechniques = {},
+                                      const std::vector<std::string>& techniqueSorting = {});
+        static std::vector<ConfigParam> loadShaderProfile(const std::string& path);
+        static ShaderProfileData loadShaderProfileData(const std::string& path);
+        static bool migrateProfileShaderSettings(const std::string& profilePath, const std::string& gameName);
 
         // Load per-profile settings from a config file
         static ProfileSettings loadProfileSettings(const std::string& filePath);

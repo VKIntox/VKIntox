@@ -34,6 +34,7 @@ namespace VKIntox
         EffectType type = EffectType::BuiltIn;
         bool enabled = true;
         std::vector<std::unique_ptr<EffectParam>> parameters;
+        std::vector<std::string> techniqueNames;
         std::vector<PreprocessorDefinition> preprocessorDefs;  // ReShade: user-configurable macros
         std::string compileError;  // Empty if compiled successfully, error message if failed
         std::filesystem::file_time_type fileModTime{};  // Last modification time of .fx file when parsed

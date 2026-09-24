@@ -23,6 +23,7 @@ namespace VKIntox
 
         // Set a fallback config for options not found in this config
         void setFallback(Config* fallback) { pFallback = fallback; }
+        void setOption(const std::string& option, const std::string& value) { options[option] = value; }
 
         template<typename T>
         T getOption(const std::string& option, const T& defaultValue = {})

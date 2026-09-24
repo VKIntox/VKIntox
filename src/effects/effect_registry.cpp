@@ -337,7 +337,7 @@ namespace VKIntox
         else
         {
             // Only parse parameters if compilation succeeded
-            config.parameters = parseReshadeEffect(name, path, pConfig);
+            config.parameters = parseReshadeEffect(name, path, pConfig, &config.techniqueNames);
 
             // Extract preprocessor definitions (user-configurable macros)
             config.preprocessorDefs = extractPreprocessorDefinitions(name, path);

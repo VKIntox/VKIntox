@@ -13,7 +13,9 @@
 #include <set>
 #include <sstream>
 #include <unistd.h>
+#include <fcntl.h>
 #include <climits>
+#include <cerrno>
 
 namespace VKIntox
 {
@@ -21,6 +23,38 @@ namespace VKIntox
     {
         constexpr int MIN_MAX_EFFECTS = 1;
         constexpr int MAX_MAX_EFFECTS = 200;
+
+        bool writeAtomically(const std::string& path, const std::string& contents)
+        {
+            std::string temporary = path + ".tmp-XXXXXX";
+            std::vector<char> name(temporary.begin(), temporary.end());
+            name.push_back('\0');
+            const int fd = mkstemp(name.data());
+            if (fd < 0)
+                return false;
+            size_t offset = 0;
+            bool success = true;
+            while (offset < contents.size())
+            {
+                const ssize_t count = write(fd, contents.data() + offset, contents.size() - offset);
+                if (count < 0 && errno == EINTR)
+                    continue;
+                if (count <= 0)
+                {
+                    success = false;
+                    break;
+                }
+                offset += static_cast<size_t>(count);
+            }
+            if (success && fsync(fd) != 0)
+                success = false;
+            if (close(fd) != 0)
+                success = false;
+            if (success && std::rename(name.data(), path.c_str()) == 0)
+                return true;
+            unlink(name.data());
+            return false;
+        }
     } // namespace
 
     std::string ConfigSerializer::getBaseConfigDir()
@@ -896,6 +930,432 @@ namespace VKIntox
         }
 
         return false;
+    }
+
+    std::string ConfigSerializer::getShaderProfilePath(const std::string& gameName, const std::string& profileName)
+    {
+        const std::string base = getBaseConfigDir();
+        if (base.empty() || gameName.empty() || profileName.empty())
+            return "";
+        return base + "/configs/shaders/" + gameName + "@" + profileName + ".ini";
+    }
+
+    std::vector<std::string> ConfigSerializer::listShaderProfilesForGame(const std::string& gameName)
+    {
+        std::vector<std::string> profiles;
+        const std::string base = getBaseConfigDir();
+        if (base.empty() || gameName.empty())
+            return profiles;
+        const std::string dir = base + "/configs/shaders";
+        DIR* d = opendir(dir.c_str());
+        if (!d)
+            return profiles;
+        const std::string prefix = gameName + "@";
+        struct dirent* entry;
+        while ((entry = readdir(d)) != nullptr)
+        {
+            const std::string name = entry->d_name;
+            if (name.size() > prefix.size() + 4 && name.compare(0, prefix.size(), prefix) == 0 && name.substr(name.size() - 4) == ".ini")
+                profiles.push_back(name.substr(prefix.size(), name.size() - prefix.size() - 4));
+        }
+        closedir(d);
+        std::sort(profiles.begin(), profiles.end());
+        return profiles;
+    }
+
+    bool ConfigSerializer::createShaderProfile(const std::string& gameName, const std::string& profileName)
+    {
+        const std::string path = getShaderProfilePath(gameName, profileName);
+        if (path.empty() || profileName.find('/') != std::string::npos || profileName.find('\\') != std::string::npos)
+            return false;
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+        if (ec)
+            return false;
+        const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644);
+        if (fd < 0)
+            return false;
+        static constexpr char emptyPreset[] = "Techniques=\nTechniqueSorting=\nVKIntoxEffects=\nVKIntoxDisabledEffects=\n";
+        const ssize_t written = write(fd, emptyPreset, sizeof(emptyPreset) - 1);
+        const int closeResult = close(fd);
+        const bool success = written == static_cast<ssize_t>(sizeof(emptyPreset) - 1) && closeResult == 0;
+        if (!success)
+        {
+            unlink(path.c_str());
+        }
+        return success;
+    }
+
+    bool ConfigSerializer::deleteShaderProfile(const std::string& gameName, const std::string& profileName)
+    {
+        const std::string path = getShaderProfilePath(gameName, profileName);
+        return !path.empty() && std::remove(path.c_str()) == 0;
+    }
+
+    bool ConfigSerializer::saveShaderProfile(const std::string& path, const std::vector<ConfigParam>& params,
+                                             const std::vector<std::string>& effects,
+                                             const std::vector<std::string>& disabledEffects,
+                                             const std::map<std::string, std::string>& effectPaths,
+                                             const std::vector<std::string>& enabledTechniques,
+                                             const std::vector<std::string>& techniqueSorting)
+    {
+        if (path.empty())
+            return false;
+        std::error_code ec;
+        const auto parent = std::filesystem::path(path).parent_path();
+        if (!parent.empty())
+            std::filesystem::create_directories(parent, ec);
+        if (ec)
+            return false;
+        auto sectionFor = [&effectPaths](const std::string& effectName) {
+            const auto it = effectPaths.find(effectName);
+            if (it != effectPaths.end() && std::filesystem::path(it->second).extension() == ".fx")
+                return std::filesystem::path(it->second).filename().string();
+            return effectName;
+        };
+        std::map<std::pair<std::string, std::string>, std::string> merged;
+        for (const auto& p : params)
+            merged[{sectionFor(p.effectName), p.paramName}] = p.value;
+        std::set<std::string> disabled(disabledEffects.begin(), disabledEffects.end());
+        std::vector<std::string> techniques = enabledTechniques;
+        std::vector<std::string> sortedTechniques = techniqueSorting;
+        if (techniques.empty())
+        {
+            for (const auto& effect : effects)
+            {
+                if (disabled.count(effect))
+                    continue;
+                const std::string section = sectionFor(effect);
+                if (std::filesystem::path(section).extension() == ".fx")
+                    techniques.push_back(std::filesystem::path(section).stem().string() + "@" + section);
+            }
+        }
+        if (sortedTechniques.empty())
+            sortedTechniques = techniques;
+        auto deduplicate = [](std::vector<std::string>& values) {
+            std::set<std::string> seen;
+            values.erase(std::remove_if(values.begin(), values.end(), [&seen](const std::string& value) {
+                return !seen.insert(value).second;
+            }), values.end());
+        };
+        deduplicate(techniques);
+        deduplicate(sortedTechniques);
+        std::ostringstream file;
+        file << "Techniques=";
+        for (size_t i = 0; i < techniques.size(); ++i)
+        {
+            if (i) file << ',';
+            file << techniques[i];
+        }
+        file << "\nTechniqueSorting=";
+        for (size_t i = 0; i < sortedTechniques.size(); ++i)
+        {
+            if (i) file << ',';
+            file << sortedTechniques[i];
+        }
+        file << "\nVKIntoxEffects=";
+        for (size_t i = 0; i < effects.size(); ++i)
+        {
+            if (i) file << ':';
+            file << effects[i];
+        }
+        file << "\nVKIntoxDisabledEffects=";
+        for (size_t i = 0; i < disabledEffects.size(); ++i)
+        {
+            if (i) file << ':';
+            file << disabledEffects[i];
+        }
+        file << "\n\n";
+        std::map<std::pair<std::string, std::string>, std::string> outputValues;
+        std::map<std::pair<std::string, std::string>, std::map<size_t, std::string>> vectorValues;
+        for (const auto& [key, value] : merged)
+        {
+            if (!key.second.empty() && key.second.front() == '@')
+                continue;
+            const auto open = key.second.rfind('[');
+            if (open != std::string::npos && key.second.back() == ']')
+            {
+                try
+                {
+                    const size_t component = std::stoul(key.second.substr(open + 1, key.second.size() - open - 2));
+                    vectorValues[{key.first, key.second.substr(0, open)}][component] = value;
+                    continue;
+                }
+                catch (...) {}
+            }
+            outputValues[key] = value;
+        }
+        for (const auto& [key, components] : vectorValues)
+        {
+            std::string value;
+            for (const auto& [index, component] : components)
+            {
+                if (!value.empty()) value += ',';
+                value += component;
+            }
+            outputValues[key] = value;
+        }
+        std::map<std::string, std::map<std::string, std::string>> preprocessorValues;
+        for (const auto& [key, value] : merged)
+            if (!key.second.empty() && key.second.front() == '@')
+                preprocessorValues[key.first][key.second.substr(1)] = value;
+        auto writePreprocessorDefinitions = [&file](const std::map<std::string, std::string>& macros) {
+            file << "PreprocessorDefinitions=";
+            bool first = true;
+            for (const auto& [name, macroValue] : macros)
+            {
+                if (!first) file << ',';
+                file << name << '=';
+                for (const char c : macroValue)
+                {
+                    file << c;
+                    if (c == ',') file << ',';
+                }
+                first = false;
+            }
+            file << '\n';
+        };
+        const auto globalMacros = preprocessorValues.find("");
+        if (globalMacros != preprocessorValues.end())
+        {
+            writePreprocessorDefinitions(globalMacros->second);
+            preprocessorValues.erase(globalMacros);
+        }
+        std::string current;
+        for (const auto& [key, value] : outputValues)
+        {
+            if (key.first != current)
+            {
+                current = key.first;
+                file << "[" << current << "]\n";
+                const auto macros = preprocessorValues.find(current);
+                if (macros != preprocessorValues.end())
+                {
+                    writePreprocessorDefinitions(macros->second);
+                    preprocessorValues.erase(macros);
+                }
+            }
+            file << key.second << "=" << value << "\n";
+        }
+        for (const auto& [section, macros] : preprocessorValues)
+        {
+            file << "[" << section << "]\n";
+            writePreprocessorDefinitions(macros);
+        }
+        return file.good() && writeAtomically(path, file.str());
+    }
+
+    ShaderProfileData ConfigSerializer::loadShaderProfileData(const std::string& path)
+    {
+        ShaderProfileData data;
+        std::ifstream file(path);
+        std::string line, section;
+        while (std::getline(file, line))
+        {
+            const auto first = line.find_first_not_of(" \t\r");
+            if (first == std::string::npos || line[first] == ';' || line[first] == '#')
+                continue;
+            if (line[first] == '[')
+            {
+                const auto end = line.find(']', first + 1);
+                section = end == std::string::npos ? "" : line.substr(first + 1, end - first - 1);
+                continue;
+            }
+            const auto eq = line.find('=', first);
+            if (eq == std::string::npos)
+                continue;
+            auto trim = [](std::string s) {
+                const auto b = s.find_first_not_of(" \t\r");
+                if (b == std::string::npos) return std::string();
+                const auto e = s.find_last_not_of(" \t\r");
+                return s.substr(b, e - b + 1);
+            };
+            const auto key = trim(line.substr(first, eq - first));
+            const auto value = trim(line.substr(eq + 1));
+            auto splitValues = [&trim](const std::string& text, char delimiter) {
+                std::vector<std::string> values;
+                std::string item;
+                for (size_t i = 0; i < text.size(); ++i)
+                {
+                    if (text[i] == delimiter)
+                    {
+                        if (delimiter == ',' && i + 1 < text.size() && text[i + 1] == ',')
+                        {
+                            item += delimiter;
+                            ++i;
+                        }
+                        else
+                        {
+                            item = trim(std::move(item));
+                            if (!item.empty()) values.push_back(std::move(item));
+                            item.clear();
+                        }
+                    }
+                    else
+                        item += text[i];
+                }
+                item = trim(std::move(item));
+                if (!item.empty()) values.push_back(std::move(item));
+                return values;
+            };
+            if (section.empty() && key == "Techniques")
+            {
+                data.hasTechniques = true;
+                data.techniques = splitValues(value, ',');
+                continue;
+            }
+            if (section.empty() && key == "TechniqueSorting")
+            {
+                data.techniqueSorting = splitValues(value, ',');
+                continue;
+            }
+            if (section.empty() && key == "VKIntoxEffects")
+            {
+                data.hasEffectList = true;
+                data.effects = splitValues(value, ':');
+                continue;
+            }
+            if (section.empty() && key == "VKIntoxDisabledEffects")
+            {
+                data.hasEffectList = true;
+                data.disabledEffects = splitValues(value, ':');
+                continue;
+            }
+            if (key == "PreprocessorDefinitions")
+            {
+                for (const auto& definition : splitValues(value, ','))
+                {
+                    const auto split = definition.find('=');
+                    if (split != std::string::npos)
+                        data.params.push_back({section, "@" + trim(definition.substr(0, split)), trim(definition.substr(split + 1))});
+                }
+                continue;
+            }
+            if (section.empty() || section == "GENERAL")
+                continue;
+            if (value.find(',') == std::string::npos)
+                data.params.push_back({section, key, value});
+            else
+            {
+                const auto components = splitValues(value, ',');
+                for (size_t index = 0; index < components.size(); ++index)
+                    data.params.push_back({section, key + "[" + std::to_string(index) + "]", components[index]});
+            }
+        }
+        return data;
+    }
+
+    std::vector<ConfigParam> ConfigSerializer::loadShaderProfile(const std::string& path)
+    {
+        return loadShaderProfileData(path).params;
+    }
+
+    bool ConfigSerializer::migrateProfileShaderSettings(const std::string& profilePath, const std::string& gameName)
+    {
+        std::ifstream source(profilePath);
+        if (!source || gameName.empty())
+            return false;
+        auto parseLine = [](const std::string& line) {
+            std::string key, value;
+            bool quoted = false, foundEquals = false;
+            for (const char c : line)
+            {
+                auto& target = foundEquals ? value : key;
+                if (quoted)
+                {
+                    if (c == '"') quoted = false;
+                    else target += c;
+                    continue;
+                }
+                if (c == '#') break;
+                if (c == '"') quoted = true;
+                else if (c == '=') foundEquals = true;
+                else if (c != ' ' && c != '\t') target += c;
+            }
+            return std::make_pair(std::move(key), std::move(value));
+        };
+        std::vector<std::string> original;
+        std::map<std::string, std::string> effectPaths;
+        std::vector<std::string> effects;
+        std::vector<std::string> disabledEffects;
+        const std::set<std::string> builtinTypes = {"cas", "dls", "fxaa", "smaa", "deband", "lut"};
+        std::string line;
+        while (std::getline(source, line))
+        {
+            original.push_back(line);
+            auto [key, value] = parseLine(line);
+            if (key.empty()) continue;
+            if (key == "effects" || key == "disabledEffects")
+            {
+                std::stringstream values(value);
+                std::string entry;
+                while (std::getline(values, entry, ':'))
+                {
+                    if (!entry.empty())
+                        (key == "effects" ? effects : disabledEffects).push_back(entry);
+                }
+            }
+            else if (key.find('@') == std::string::npos &&
+                     (std::filesystem::path(value).extension() == ".fx" || builtinTypes.count(value)))
+                effectPaths[key] = value;
+        }
+        if (source.bad())
+            return false;
+        for (auto it = effectPaths.begin(); it != effectPaths.end();)
+        {
+            if (std::find(effects.begin(), effects.end(), it->first) == effects.end())
+                it = effectPaths.erase(it);
+            else
+                ++it;
+        }
+        std::vector<std::string> kept;
+        std::vector<ConfigParam> moved;
+        for (const auto& sourceLine : original)
+        {
+            line = sourceLine;
+            auto [key, value] = parseLine(line);
+            if (!key.empty())
+            {
+                auto effect = effectPaths.end();
+                size_t separator = std::string::npos;
+                for (auto candidate = effectPaths.begin(); candidate != effectPaths.end(); ++candidate)
+                {
+                    if (key.size() > candidate->first.size() && key.compare(0, candidate->first.size(), candidate->first) == 0 &&
+                        (key[candidate->first.size()] == '.' || key[candidate->first.size()] == '@') &&
+                        (effect == effectPaths.end() || candidate->first.size() > effect->first.size()))
+                    {
+                        effect = candidate;
+                        separator = candidate->first.size();
+                    }
+                }
+                if (effect != effectPaths.end())
+                {
+                    const std::string suffix = key.substr(separator + 1);
+                    if (!suffix.empty() && !value.empty())
+                    {
+                        const std::string section = std::filesystem::path(effect->second).extension() == ".fx"
+                            ? std::filesystem::path(effect->second).filename().string() : effect->first;
+                        moved.push_back({section, key[separator] == '@' ? "@" + suffix : suffix, value});
+                        continue;
+                    }
+                }
+            }
+            kept.push_back(line);
+        }
+        if (moved.empty())
+            return true;
+        const std::string iniPath = getShaderProfilePath(gameName, "default");
+        auto existing = loadShaderProfile(iniPath);
+        std::map<std::pair<std::string, std::string>, std::string> values;
+        for (const auto& p : existing) values[{p.effectName, p.paramName}] = p.value;
+        for (const auto& p : moved) values[{p.effectName, p.paramName}] = p.value;
+        existing.clear();
+        for (const auto& [key, value] : values) existing.push_back({key.first, key.second, value});
+        if (!saveShaderProfile(iniPath, existing, effects, disabledEffects, effectPaths))
+            return false;
+        std::ostringstream output;
+        for (const auto& keptLine : kept) output << keptLine << '\n';
+        return output.good() && writeAtomically(profilePath, output.str());
     }
 
     ProfileSettings ConfigSerializer::loadProfileSettings(const std::string& filePath)

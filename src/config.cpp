@@ -323,7 +323,9 @@ namespace VKIntox
 
     std::unordered_map<std::string, std::string> Config::getEffectDefinitions() const
     {
-        std::unordered_map<std::string, std::string> effects;
+        std::unordered_map<std::string, std::string> effects = pFallback
+            ? pFallback->getEffectDefinitions()
+            : std::unordered_map<std::string, std::string>{};
         for (const auto& [key, value] : options)
         {
             if (value.size() >= 3 && value.substr(value.size() - 3) == ".fx")

@@ -42,6 +42,7 @@ namespace VKIntox
         std::string label;       // Display label (from ui_label or name)
         std::string tooltip;     // ui_tooltip - hover description
         std::string uiType;      // ui_type - "slider", "drag", "combo", etc.
+        bool noSave = false;
 
         virtual ParamType getType() const = 0;
         virtual const char* getTypeName() const = 0;
@@ -81,6 +82,7 @@ namespace VKIntox
             p->label = label;
             p->tooltip = tooltip;
             p->uiType = uiType;
+            p->noSave = noSave;
             p->value = value;
             p->defaultValue = defaultValue;
             p->minValue = minValue;
@@ -141,6 +143,7 @@ namespace VKIntox
             p->label = label;
             p->tooltip = tooltip;
             p->uiType = uiType;
+            p->noSave = noSave;
             p->componentCount = componentCount;
             for (uint32_t i = 0; i < 4; i++)
             {
@@ -185,6 +188,7 @@ namespace VKIntox
             p->label = label;
             p->tooltip = tooltip;
             p->uiType = uiType;
+            p->noSave = noSave;
             p->value = value;
             p->defaultValue = defaultValue;
             p->minValue = minValue;
@@ -246,6 +250,7 @@ namespace VKIntox
             p->label = label;
             p->tooltip = tooltip;
             p->uiType = uiType;
+            p->noSave = noSave;
             p->componentCount = componentCount;
             for (uint32_t i = 0; i < 4; i++)
             {
@@ -289,6 +294,7 @@ namespace VKIntox
             p->label = label;
             p->tooltip = tooltip;
             p->uiType = uiType;
+            p->noSave = noSave;
             p->value = value;
             p->defaultValue = defaultValue;
             p->minValue = minValue;
@@ -349,6 +355,7 @@ namespace VKIntox
             p->label = label;
             p->tooltip = tooltip;
             p->uiType = uiType;
+            p->noSave = noSave;
             p->componentCount = componentCount;
             for (uint32_t i = 0; i < 4; i++)
             {
@@ -378,7 +385,7 @@ namespace VKIntox
 
         std::vector<std::pair<std::string, std::string>> serialize() const override
         {
-            return {{"", value ? "true" : "false"}};
+            return {{"", value ? "1" : "0"}};
         }
 
         std::unique_ptr<EffectParam> clone() const override
@@ -389,6 +396,7 @@ namespace VKIntox
             p->label = label;
             p->tooltip = tooltip;
             p->uiType = uiType;
+            p->noSave = noSave;
             p->value = value;
             p->defaultValue = defaultValue;
             return p;

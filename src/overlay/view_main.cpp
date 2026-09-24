@@ -19,15 +19,19 @@ namespace VKIntox
         constexpr const char* kEffectReorderPayload = "VKINTOX_EFFECT_REORDER";
 
         // Render a single preprocessor definition input, returns true if value changed
-        void renderPreprocessorDef(PreprocessorDefinition& def, EffectRegistry* registry, const std::string& effectName)
+        bool renderPreprocessorDef(PreprocessorDefinition& def, EffectRegistry* registry, const std::string& effectName)
         {
+            bool changed = false;
             char valueBuf[64];
             strncpy(valueBuf, def.value.c_str(), sizeof(valueBuf) - 1);
             valueBuf[sizeof(valueBuf) - 1] = '\0';
 
             ImGui::SetNextItemWidth(80);
             if (ImGui::InputText(def.name.c_str(), valueBuf, sizeof(valueBuf)))
+            {
                 registry->setPreprocessorDefValue(effectName, def.name, valueBuf);
+                changed = true;
+            }
 
             if (def.value != def.defaultValue)
             {
@@ -38,12 +42,16 @@ namespace VKIntox
             if (ImGui::BeginPopupContextItem("##preproc_reset"))
             {
                 if (ImGui::MenuItem("Reset to default"))
+                {
                     registry->setPreprocessorDefValue(effectName, def.name, def.defaultValue);
+                    changed = true;
+                }
                 ImGui::EndPopup();
             }
 
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Default: %s\nRight-click to reset", def.defaultValue.c_str());
+            return changed;
         }
 
     } // anonymous namespace
@@ -97,9 +105,6 @@ namespace VKIntox
         if (!activeGameName.empty())
         {
             ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", activeGameName.c_str());
-            ImGui::SameLine();
-            ImGui::TextDisabled("|");
-            ImGui::SameLine();
 
             // Profile dropdown
             static std::vector<std::string> profileList;
@@ -111,7 +116,7 @@ namespace VKIntox
             }
 
             ImGui::Text("Profile:");
-            ImGui::SameLine();
+            ImGui::SameLine(100.0f);
             ImGui::SetNextItemWidth(120);
             if (ImGui::BeginCombo("##profile", activeProfileName.c_str()))
             {
@@ -123,8 +128,11 @@ namespace VKIntox
                         if (profile != activeProfileName)
                         {
                             // Save current profile before switching
-                            if (profileDirty)
-                                autoSaveProfile();
+                            if (!autoSaveProfile())
+                            {
+                                pushToast(LogLevel::Error, "Could not save the active profile.");
+                                continue;
+                            }
 
                             // Switch to new profile
                             activeProfileName = profile;
@@ -159,6 +167,112 @@ namespace VKIntox
                     ImGui::OpenPopup("DeleteProfilePopup");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Delete this profile");
+            }
+
+            static std::vector<std::string> shaderProfiles;
+            static bool shaderProfilesStale = true;
+            if (shaderProfilesStale)
+            {
+                shaderProfiles = ConfigSerializer::listShaderProfilesForGame(activeGameName);
+                shaderProfilesStale = false;
+                if (activeShaderProfileName.empty() && !shaderProfiles.empty())
+                    activeShaderProfileName = std::find(shaderProfiles.begin(), shaderProfiles.end(), "default") != shaderProfiles.end()
+                        ? "default" : shaderProfiles.front();
+                activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
+            }
+            ImGui::Text("Shader INI:");
+            ImGui::SameLine(100.0f);
+            ImGui::SetNextItemWidth(120);
+            const char* shaderLabel = activeShaderProfileName.empty() ? "None" : activeShaderProfileName.c_str();
+            if (ImGui::BeginCombo("##shaderprofile", shaderLabel))
+            {
+                for (const auto& profile : shaderProfiles)
+                {
+                    const bool selected = profile == activeShaderProfileName;
+                    if (ImGui::Selectable(profile.c_str(), selected) && !selected)
+                    {
+                        if (!autoSaveProfile())
+                            pushToast(LogLevel::Error, "Could not save the active shader profile.");
+                        else
+                        {
+                            activeShaderProfileName = profile;
+                            activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, profile);
+                            pendingShaderProfilePath = activeShaderProfilePath;
+                            pendingShaderProfile = true;
+                            applyRequested = true;
+                        }
+                    }
+                    if (selected)
+                        ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("+##newshaderprofile"))
+                ImGui::OpenPopup("NewShaderProfilePopup");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Create shader INI profile");
+            if (!activeShaderProfileName.empty())
+            {
+                ImGui::SameLine();
+                if (ImGui::Button("-##delshaderprofile"))
+                {
+                    if (!autoSaveProfile())
+                        pushToast(LogLevel::Error, "Could not save the active shader profile.");
+                    else if (!ConfigSerializer::deleteShaderProfile(activeGameName, activeShaderProfileName))
+                        pushToast(LogLevel::Error, "Could not delete the shader profile.");
+                    else
+                    {
+                        shaderProfiles = ConfigSerializer::listShaderProfilesForGame(activeGameName);
+                        shaderProfilesStale = false;
+                        if (!shaderProfiles.empty())
+                        {
+                            activeShaderProfileName = std::find(shaderProfiles.begin(), shaderProfiles.end(), "default") != shaderProfiles.end()
+                                ? "default" : shaderProfiles.front();
+                            activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
+                            pendingShaderProfilePath = activeShaderProfilePath;
+                            pendingShaderProfile = true;
+                            applyRequested = true;
+                        }
+                        else
+                        {
+                            activeShaderProfileName.clear();
+                            activeShaderProfilePath.clear();
+                            pendingShaderProfilePath.clear();
+                            pendingShaderProfile = true;
+                            applyRequested = true;
+                        }
+                    }
+                }
+            }
+            if (ImGui::BeginPopup("NewShaderProfilePopup"))
+            {
+                static char newShaderProfileName[64] = "";
+                ImGui::Text("New shader INI profile:");
+                ImGui::SetNextItemWidth(150);
+                ImGui::InputText("##newshaderprofilename", newShaderProfileName, sizeof(newShaderProfileName));
+                ImGui::SameLine();
+                ImGui::BeginDisabled(newShaderProfileName[0] == '\0');
+                if (ImGui::Button("Create"))
+                {
+                    if (!autoSaveProfile())
+                        pushToast(LogLevel::Error, "Could not save the active shader profile.");
+                    else if (ConfigSerializer::createShaderProfile(activeGameName, newShaderProfileName))
+                    {
+                        activeShaderProfileName = newShaderProfileName;
+                        activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
+                        shaderProfilesStale = true;
+                        pendingShaderProfilePath = activeShaderProfilePath;
+                        pendingShaderProfile = true;
+                        applyRequested = true;
+                        newShaderProfileName[0] = '\0';
+                        ImGui::CloseCurrentPopup();
+                    }
+                    else
+                        pushToast(LogLevel::Error, "Could not create the shader profile.");
+                }
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
             }
 
             // New profile popup
@@ -497,7 +611,12 @@ namespace VKIntox
                         for (size_t defIdx = 0; defIdx < defs.size(); defIdx++)
                         {
                             ImGui::PushID(static_cast<int>(defIdx + 1000));
-                            renderPreprocessorDef(defs[defIdx], pEffectRegistry, effectName);
+                            if (renderPreprocessorDef(defs[defIdx], pEffectRegistry, effectName))
+                            {
+                                paramsDirty = true;
+                                profileDirty = true;
+                                lastChangeTime = std::chrono::steady_clock::now();
+                            }
                             ImGui::PopID();
                         }
                         ImGui::TreePop();
@@ -523,6 +642,7 @@ namespace VKIntox
                 if (renderFieldEditor(*effectParams[paramIdx]))
                 {
                     paramsDirty = true;
+                    profileDirty = true;
                     lastChangeTime = std::chrono::steady_clock::now();
                 }
                 ImGui::PopID();

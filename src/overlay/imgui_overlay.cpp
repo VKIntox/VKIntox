@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <filesystem>
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h"
@@ -262,7 +263,7 @@ namespace VKIntox
         if (!initialized) return;
 
         // Auto-save profile on shutdown (before GPU cleanup)
-        if (profileDirty && !activeProfilePath.empty())
+        if ((profileDirty || paramsDirty) && (!activeProfilePath.empty() || !activeShaderProfilePath.empty()))
             autoSaveProfile();
 
         pLogicalDevice->vkd.QueueWaitIdle(pLogicalDevice->queue);
@@ -500,9 +501,8 @@ namespace VKIntox
         {
             for (auto* p : pEffectRegistry->getParametersForEffect(effectName))
             {
-                if (!p->hasChanged())
+                if (p->noSave)
                     continue;
-
                 auto serialized = p->serialize();
                 for (const auto& [suffix, value] : serialized)
                 {
@@ -551,10 +551,12 @@ namespace VKIntox
         profileDirty = false;
     }
 
-    void ImGuiOverlay::autoSaveProfile()
+    bool ImGuiOverlay::autoSaveProfile()
     {
-        if (!pEffectRegistry || activeProfilePath.empty())
-            return;
+        if (!pEffectRegistry)
+            return false;
+        if (activeProfilePath.empty() && activeShaderProfilePath.empty())
+            return true;
 
         std::vector<std::string> effects, disabledEffects;
         std::vector<ConfigParam> params;
@@ -565,11 +567,45 @@ namespace VKIntox
         ProfileSettings profileSettings;
         // safeAntiCheat removed
 
-        if (ConfigSerializer::saveToPath(activeProfilePath, effects, disabledEffects, params, effectPaths, allDefs, profileSettings))
+        bool shaderSaved = true;
+        if (!activeShaderProfilePath.empty())
+        {
+            std::vector<ConfigParam> shaderParams = params;
+            for (const auto& def : allDefs)
+                shaderParams.push_back({def.effectName, "@" + def.name, def.value});
+            std::vector<std::string> enabledTechniques;
+            std::vector<std::string> techniqueSorting;
+            const auto& selected = pEffectRegistry->getSelectedEffects();
+            const auto& allEffects = pEffectRegistry->getAllEffects();
+            for (const auto& name : selected)
+            {
+                auto effect = std::find_if(allEffects.begin(), allEffects.end(), [&name](const EffectConfig& item) {
+                    return item.name == name;
+                });
+                if (effect == allEffects.end() || effect->type != EffectType::ReShade || effect->filePath.empty())
+                    continue;
+                const std::string filename = std::filesystem::path(effect->filePath).filename().string();
+                for (const auto& technique : effect->techniqueNames)
+                {
+                    const std::string entry = technique + "@" + filename;
+                    techniqueSorting.push_back(entry);
+                    if (pEffectRegistry->isEffectEnabled(name))
+                        enabledTechniques.push_back(entry);
+                }
+            }
+            shaderSaved = ConfigSerializer::saveShaderProfile(activeShaderProfilePath, shaderParams, effects, disabledEffects,
+                                                               effectPaths, enabledTechniques, techniqueSorting);
+        }
+
+        const bool configSaved = activeProfilePath.empty() ||
+            ConfigSerializer::saveToPath(activeProfilePath, effects, disabledEffects, {}, effectPaths, {}, profileSettings);
+        if (shaderSaved && configSaved)
         {
             profileDirty = false;
-            Logger::debug("Auto-saved profile: " + activeProfilePath);
+            if (!activeProfilePath.empty())
+                Logger::debug("Auto-saved profile: " + activeProfilePath);
         }
+        return shaderSaved && configSaved;
     }
 
     void ImGuiOverlay::setSelectedEffects(const std::vector<std::string>& effects,

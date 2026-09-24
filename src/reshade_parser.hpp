@@ -28,7 +28,8 @@ namespace VKIntox
     std::vector<std::unique_ptr<EffectParam>> parseReshadeEffect(
         const std::string& effectName,
         const std::string& effectPath,
-        Config* pConfig);
+        Config* pConfig,
+        std::vector<std::string>* techniqueNames = nullptr);
 
     // Test a ReShade .fx shader for compilation errors without creating Vulkan resources.
     // Returns a ShaderTestResult with success status and any error messages.
