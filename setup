@@ -116,6 +116,7 @@ if [[ "$MODE" != "system" ]]; then
 else
     need_cmd meson
     need_cmd ninja
+    need_cmd sudo
 fi
 
 if [[ "$MODE" == "system" ]]; then
@@ -124,7 +125,9 @@ if [[ "$MODE" == "system" ]]; then
 
     run_progress "compiled" just build
 
-    run_progress "installed to system" sudo ninja -C build install
+    say "authenticating for system install"
+    sudo -v || die "could not authenticate for system install"
+    run_progress "installed to system" sudo -n ninja -C build install
     exit 0
 fi
 
