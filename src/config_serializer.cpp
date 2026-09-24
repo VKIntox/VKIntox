@@ -10,6 +10,8 @@
 #include <dirent.h>
 #include <algorithm>
 #include <array>
+#include <set>
+#include <sstream>
 #include <unistd.h>
 #include <climits>
 
@@ -477,8 +479,66 @@ namespace VKIntox
 
     ShaderManagerConfig ConfigSerializer::loadShaderManagerConfig()
     {
+        static ShaderManagerConfig cachedConfig;
+        static std::filesystem::file_time_type cachedModifiedTime;
+        static std::string cachedConfigPath;
+        static bool cacheValid = false;
+
         ShaderManagerConfig config;
         std::string configPath = getBaseConfigDir() + "/shader_manager.conf";
+
+        std::error_code timestampError;
+        auto modifiedTime = std::filesystem::last_write_time(configPath, timestampError);
+        if (cacheValid && !timestampError && configPath == cachedConfigPath &&
+            modifiedTime == cachedModifiedTime)
+            return cachedConfig;
+
+        auto rememberConfig = [&]() {
+            std::error_code ec;
+            auto time = std::filesystem::last_write_time(configPath, ec);
+            if (!ec)
+            {
+                cachedConfig = config;
+                cachedConfigPath = configPath;
+                cachedModifiedTime = time;
+                cacheValid = true;
+            }
+        };
+
+        auto refreshDiscoveredPaths = [&]() {
+            std::set<std::string> shaderPaths;
+            std::set<std::string> texturePaths;
+
+            auto addExistingPaths = [](const std::vector<std::string>& paths, std::set<std::string>& output) {
+                for (const auto& path : paths)
+                {
+                    std::error_code ec;
+                    if (std::filesystem::is_directory(path, ec))
+                        output.insert(std::filesystem::path(path).lexically_normal().string());
+                }
+            };
+
+            addExistingPaths(config.discoveredShaderPaths, shaderPaths);
+            addExistingPaths(config.discoveredTexturePaths, texturePaths);
+
+            // Refresh paths on load so newly installed or moved shader packs
+            // are available immediately, without requiring the UI rescan.
+            for (const auto& parentDir : config.parentDirectories)
+            {
+                std::error_code ec;
+                if (!std::filesystem::is_directory(parentDir, ec))
+                    continue;
+
+                std::vector<std::string> foundShaders;
+                std::vector<std::string> foundTextures;
+                scanDirectoryForShaders(parentDir, foundShaders, foundTextures);
+                addExistingPaths(foundShaders, shaderPaths);
+                addExistingPaths(foundTextures, texturePaths);
+            }
+
+            config.discoveredShaderPaths.assign(shaderPaths.begin(), shaderPaths.end());
+            config.discoveredTexturePaths.assign(texturePaths.begin(), texturePaths.end());
+        };
 
         std::ifstream file(configPath);
         if (!file.is_open())
@@ -497,13 +557,30 @@ namespace VKIntox
             scanDirectoryForShaders(defaultReshadeDir,
                 config.discoveredShaderPaths, config.discoveredTexturePaths);
 
+            refreshDiscoveredPaths();
+
             // Save the config so it persists
             saveShaderManagerConfig(config);
             Logger::info("Created default shader manager config with reshade directory");
+            rememberConfig();
             return config;
         }
 
-        // File exists - parse it (respect user's choices, even if empty)
+        // File exists - parse it. Older setup versions wrote all discovered
+        // paths on one comma-separated line, so accept both that format and
+        // the current one-path-per-line format.
+        auto appendPathList = [](const std::string& value, std::vector<std::string>& paths) {
+            std::stringstream stream(value);
+            std::string path;
+            while (std::getline(stream, path, ','))
+            {
+                size_t start = path.find_first_not_of(" \t");
+                size_t end = path.find_last_not_of(" \t");
+                if (start != std::string::npos)
+                    paths.push_back(path.substr(start, end - start + 1));
+            }
+        };
+
         std::string line;
         while (std::getline(file, line))
         {
@@ -531,11 +608,22 @@ namespace VKIntox
             if (key == "parentDir" && !value.empty())
                 config.parentDirectories.push_back(value);
             else if (key == "shaderPath" && !value.empty())
-                config.discoveredShaderPaths.push_back(value);
+                appendPathList(value, config.discoveredShaderPaths);
             else if (key == "texturePath" && !value.empty())
-                config.discoveredTexturePaths.push_back(value);
+                appendPathList(value, config.discoveredTexturePaths);
         }
 
+        const auto previousShaderPaths = config.discoveredShaderPaths;
+        const auto previousTexturePaths = config.discoveredTexturePaths;
+        refreshDiscoveredPaths();
+        if (config.discoveredShaderPaths != previousShaderPaths ||
+            config.discoveredTexturePaths != previousTexturePaths)
+        {
+            saveShaderManagerConfig(config);
+            Logger::info("ShaderManager: refreshed discovered shader and texture paths");
+        }
+
+        rememberConfig();
         return config;
     }
 
