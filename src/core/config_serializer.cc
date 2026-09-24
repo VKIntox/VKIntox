@@ -1274,10 +1274,20 @@ namespace VKIntox
             }
             return std::make_pair(std::move(key), std::move(value));
         };
+        auto splitList = [](const std::string& text) {
+            std::vector<std::string> values;
+            std::stringstream stream(text);
+            std::string item;
+            while (std::getline(stream, item, ','))
+                if (!item.empty()) values.push_back(item);
+            return values;
+        };
         std::vector<std::string> original;
         std::map<std::string, std::string> effectPaths;
         std::vector<std::string> effects;
         std::vector<std::string> disabledEffects;
+        std::vector<std::string> techniques;
+        std::vector<std::string> techniqueSorting;
         const std::set<std::string> builtinTypes = {"cas", "dls", "fxaa", "smaa", "deband", "lut"};
         std::string line;
         while (std::getline(source, line))
@@ -1295,6 +1305,10 @@ namespace VKIntox
                         (key == "effects" ? effects : disabledEffects).push_back(entry);
                 }
             }
+            else if (key == "Techniques")
+                techniques = splitList(value);
+            else if (key == "TechniqueSorting")
+                techniqueSorting = splitList(value);
             else if (key.find('@') == std::string::npos &&
                      (std::filesystem::path(value).extension() == ".fx" || builtinTypes.count(value)))
                 effectPaths[key] = value;
@@ -1316,6 +1330,8 @@ namespace VKIntox
             auto [key, value] = parseLine(line);
             if (!key.empty())
             {
+                if (key == "Techniques" || key == "TechniqueSorting")
+                    continue;
                 auto effect = effectPaths.end();
                 size_t separator = std::string::npos;
                 for (auto candidate = effectPaths.begin(); candidate != effectPaths.end(); ++candidate)
@@ -1342,16 +1358,49 @@ namespace VKIntox
             }
             kept.push_back(line);
         }
-        if (moved.empty())
+        if (moved.empty() && techniques.empty() && techniqueSorting.empty() && effects.empty() && disabledEffects.empty())
             return true;
-        const std::string iniPath = getShaderProfilePath(gameName, "default");
+        // The shader preset follows the profile filename: <game>.conf maps to
+        // <game>@default.ini and <game>@<profile>.conf maps to
+        // <game>@<profile>.ini. Never route named profiles into default.
+        const std::string filename = std::filesystem::path(profilePath).filename().string();
+        const std::string defaultFilename = gameName + ".conf";
+        std::string profileName;
+        if (filename == defaultFilename)
+            profileName = "default";
+        else
+        {
+            const std::string prefix = gameName + "@";
+            if (filename.size() <= prefix.size() + 5 || filename.compare(0, prefix.size(), prefix) != 0 ||
+                filename.substr(filename.size() - 5) != ".conf")
+                return false;
+            profileName = filename.substr(prefix.size(), filename.size() - prefix.size() - 5);
+            if (profileName.empty())
+                return false;
+        }
+        const std::string iniPath = getShaderProfilePath(gameName, profileName);
+        if (iniPath.empty())
+            return false;
         auto existing = loadShaderProfile(iniPath);
         std::map<std::pair<std::string, std::string>, std::string> values;
         for (const auto& p : existing) values[{p.effectName, p.paramName}] = p.value;
         for (const auto& p : moved) values[{p.effectName, p.paramName}] = p.value;
         existing.clear();
         for (const auto& [key, value] : values) existing.push_back({key.first, key.second, value});
-        if (!saveShaderProfile(iniPath, existing, effects, disabledEffects, effectPaths))
+        // Keep the first pristine source as a recovery copy. Do not replace an
+        // existing backup on subsequent launches.
+        const std::string backupPath = profilePath + ".bak";
+        std::error_code backupError;
+        if (!std::filesystem::exists(backupPath, backupError))
+        {
+            backupError.clear();
+            std::filesystem::copy_file(profilePath, backupPath, std::filesystem::copy_options::none, backupError);
+            if (backupError)
+                return false;
+        }
+        if (backupError)
+            return false;
+        if (!saveShaderProfile(iniPath, existing, effects, disabledEffects, effectPaths, techniques, techniqueSorting))
             return false;
         std::ostringstream output;
         for (const auto& keptLine : kept) output << keptLine << '\n';
