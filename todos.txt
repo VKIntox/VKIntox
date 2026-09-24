@@ -19,7 +19,7 @@ TODOS for v0.1.1
 * Maybe even switch to it fully
 
 4. Switch the compiler from G++ to Clang++; PROPERLY utilise ccache (especially for flatpak builds, PLEASE!!!
-for the flatpak builds maybe just build natively and transfer to .flatpak-build/files ?)
+for the flatpak builds maybe just build natively and transfer to .flatpak-build/files ?) DONE, but ccache for flatpak building isn't possible
 
 5. Improve setup script:
 

@@ -41,7 +41,7 @@ vkintox operates as a vulkan layer that sits between the game and the driver.
 
 *   **gpu:** vulkan-capable hardware with recent drivers.
 *   **sober setup:** python3, curl, unzip.
-*   **native build:** gcc 9+, meson, ninja, glslangValidator, wayland/x11 development libraries.
+*   **native build:** Clang/Clang++, ccache, Meson, Ninja, glslangValidator, Wayland/X11 development libraries.
 
 > [!IMPORTANT]
 > some anti-cheat systems or games using dxvk/vkd3d may conflict with vulkan layers. if you experience crashes, try disabling `ENABLE_VKINTOX=1` for that specific title.
@@ -63,7 +63,7 @@ build and install system-wide.
 ```bash
 git clone https://github.com/buwryme/VKIntox.git
 cd VKIntox
-meson setup --buildtype=release --prefix=/usr build-release
+CC='ccache clang' CXX='ccache clang++' meson setup --buildtype=release --prefix=/usr build-release
 ninja -C build-release
 sudo ninja -C build-release install
 ```
@@ -119,6 +119,7 @@ flatpak upgrade org.vinegarhq.Sober
 
 *   **sober freezes on launch:** i suggest trying a simple restart... 1-2 times.
 *   **sober freezes inside the catalog!:** opening the catalog re-builds graphics constantly that leads to freezes... don't use it
+*   **my effects are off on launch?:** press F1 (or whatever you have it set to, if you changed). effects are OFF on launch by default for more stable startups
 
 ---
 
