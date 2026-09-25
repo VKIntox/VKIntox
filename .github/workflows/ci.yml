@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  syntax-check:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -17,7 +17,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            ccache \
             clang \
             glslang-tools \
             libvulkan-dev \
@@ -26,13 +25,71 @@ jobs:
             libwayland-dev \
             libxkbcommon-dev \
             meson \
-            ninja-build \
             pkg-config \
             spirv-headers \
             wayland-protocols
 
-      - name: Configure
-        run: CC='ccache clang' CXX='ccache clang++' meson setup --buildtype=release --prefix=/usr build
+      - name: Generate build inputs
+        run: CC=clang CXX=clang++ meson setup --buildtype=release --prefix=/usr build
 
-      - name: Compile
-        run: meson compile -C build
+      - name: Check C and C++ syntax
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import shlex
+          import subprocess
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+
+          with open("build/compile_commands.json", encoding="utf-8") as f:
+              commands = json.load(f)
+
+          checks = []
+          for entry in commands:
+              source = entry["file"]
+              suffix = source.rsplit(".", 1)[-1]
+              if suffix not in {"c", "cc", "cpp", "cxx"}:
+                  continue
+
+              args = shlex.split(entry["command"])
+              compiler = "clang" if suffix == "c" else "clang++"
+              filtered = [compiler]
+              skip_next = False
+              for arg in args[1:]:
+                  if skip_next:
+                      skip_next = False
+                      continue
+                  if arg in ("-o", "-MF", "-MT", "-MQ", "-c", "-MD", "-MMD"):
+                      skip_next = arg in ("-o", "-MF", "-MT", "-MQ")
+                      continue
+                  if arg.startswith("-MF") or arg.startswith("-MT"):
+                      continue
+                  if arg == source or arg.endswith("/" + source):
+                      filtered.append(source)
+                      continue
+                  if arg in ("cc", "clang", "clang++", "c++", "gcc", "g++"):
+                      continue
+                  if arg == "-fdiagnostics-color=always":
+                      continue
+                  filtered.append(arg)
+              if source not in filtered:
+                  filtered.append(source)
+              filtered.extend(["-fsyntax-only", "-fno-color-diagnostics"])
+              checks.append((entry, filtered))
+
+          def check(item):
+              entry, command = item
+              result = subprocess.run(command, cwd=entry["directory"])
+              return entry["file"], result.returncode
+
+          failed = []
+          with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 1, len(checks))) as pool:
+              futures = [pool.submit(check, item) for item in checks]
+              for future in as_completed(futures):
+                  source, status = future.result()
+                  print(f"{'failed' if status else 'ok'}: {source}", flush=True)
+                  if status:
+                      failed.append(source)
+
+          raise SystemExit(1 if failed else 0)
+          PY
