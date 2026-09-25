@@ -32,6 +32,13 @@ jobs:
       - name: Generate build inputs
         run: CC=clang CXX=clang++ meson setup --buildtype=release --prefix=/usr build
 
+      - name: Generate syntax-check inputs
+        run: |
+          ninja -C build \
+            src/pointer-constraints-unstable-v1-client-protocol.h \
+            src/pointer-constraints-unstable-v1-protocol.c \
+            $(ninja -C build -t targets all | sed -n 's/^\(src\/libvkintox\.so\.p\/[^:]*\.h\): CUSTOM_COMMAND$/\1/p')
+
       - name: Check C and C++ syntax
         run: |
           python3 - <<'PY'
