@@ -35,13 +35,13 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 fetches latest binary, config, and shaders automatically.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup)
+bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script)
 ```
 
 for other flatpak apps, append the app id:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup) com.target.app
+bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script) com.target.app
 ```
 
 > [!IMPORTANT]
