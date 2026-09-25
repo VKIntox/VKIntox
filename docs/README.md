@@ -10,17 +10,19 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 
 ## install for Sober
 
-This repo is primarily focused on Sober. The quick installer downloads the latest prebuilt Flatpak library from GitHub Actions, installs the Vulkan layer and ReShade packages, and enables VKIntox for Sober. It does **not** compile from source, and you don’t need to clone the repo:
+this repo is primarily focused on Sober. this quick installer fetches the latest binary and installs it directly, alongside the configuration setup and shaders
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup)
 ```
 
-To use the same prebuilt library with another Flatpak app, pass its app ID:
+to use the same prebuilt library with another Flatpak app, pass its app ID:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup) com.target.app
 ```
+
+VKIntox, for now, doesn't offer any pre-built binaries for system installations (dependencies vary!)
 
 ---
 
