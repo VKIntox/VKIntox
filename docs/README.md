@@ -1,157 +1,130 @@
 <div align="center">
 
+<img src="assets/icon.svg" width="128" height="128" alt="VKIntox Icon">
+
 # vkintox
 
 vulkan post-processing layer with advanced depth buffer resolve for linux.
 
-[![License](https://img.shields.io/badge/license-zlib-green?style=flat-square)](./LICENSE) ![Version](https://img.shields.io/badge/version-0.1.1--release--candidate--1-blue?style=flat-square)
+[![License: zlib](https://img.shields.io/badge/license-zlib-green?style=flat-square)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.1--release--candidate--1-blue?style=flat-square)](#)
 
 </div>
 
-## install for Sober
+---
 
-this repo is primarily focused on Sober. this quick installer fetches the latest binary and installs it directly, alongside the configuration setup and shaders
+## requirements
+
+-   **gpu:** vulkan-capable hardware + recent drivers
+-   **flatpak setup:** flatpak, curl, jq, unzip, python3, readelf
+-   **local build:** just, clang/clang++, ccache, meson, ninja, glslangvalidator, wayland/x11 dev libs
+
+## quick install (sober)
+
+fetches latest binary, config, and shaders automatically.
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup)
 ```
 
-to use the same prebuilt library with another Flatpak app, pass its app ID:
+for other flatpak apps, append the app id:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup) com.target.app
 ```
 
-VKIntox, for now, doesn't offer any pre-built binaries for system installations (dependencies vary!)
-
----
-
-an independent fork of **vkShade** that fixes the depth buffer issues inherent to vkBasalt. it provides a robust, reshade-like experience for native linux games and flatpak runtimes like [Sober](https://vinegarhq.org/Home/index.html).
-
-### as shown here:
-
-<div align="center">
-
-<img src="assets/showcase_screenshot1.png" width="45%" alt="VKIntox in action"> <img src="assets/showcase_screenshot2.png" width="45%" alt="VKIntox UI">
-
-<img src="assets/showcase_screenshot3.png" width="90%" alt="Depth resolve modes">
-
-</div>
+> [!IMPORTANT]
+> no system prebuilts exist yet due to dependency variance. use local compilation for native installs.
 
 ## features
 
-*   **advanced depth resolve:** automatically picks the correct depth buffer or allows manual selection (Reverse-Z, etc).
-*   **in-game overlay:** a native gui toggled via `HOME` to manage effects on the fly.
-*   **reshade compatibility:** supports `.fx` files by compiling them to spir-v at runtime.
-*   **unified setup:** one script for Sober, Flatpak games, and native system installs.
+-   **depth resolve:** auto-detects or manually selects correct depth buffer (reverse-z supported). fixes z-fighting in ao/dof.
+-   **overlay gui:** native in-game menu toggled via `home`.
+-   **reshade compat:** runtime compilation of `.fx` shaders to spir-v.
+-   **unified setup:** single script handles sober, flatpak, and native targets.
 
 ## how it works
 
-vkintox operates as a vulkan layer that sits between the game and the driver.
+vkintox intercepts vulkan swapchain calls as a layer between game and driver.
 
-1.  **interception:** it captures vulkan swapchain calls.
-2.  **depth management:** unlike standard implementations, it actively resolves depth buffers to prevent z-fighting in effects like ambient occlusion.
-3.  **shader injection:** it compiles reshade shaders locally and injects them into the render pipeline without requiring game restarts for config changes.
+1.  captures render pipeline without game restarts.
+2.  actively resolves depth buffers to prevent artifacts common in vkbasalt.
+3.  compiles reshade shaders locally and injects them into the pipeline.
 
-## requirements
+## installation methods
 
-*   **gpu:** vulkan-capable hardware with recent drivers.
-*   **prebuilt Flatpak setup:** Flatpak, curl, jq, unzip, Python 3, and readelf.
-*   **local compilation:** `just`, Clang/Clang++, ccache, Meson, Ninja, glslangValidator, Wayland/X11 development libraries. System installation also uses sudo.
+| method | command | notes |
+| :--- | :--- | :--- |
+| **sober** | `bash <(curl ...)` | prebuilt binary, recommended |
+| **flatpak** | `./setup flatpak com.app.id` | requires local compilation |
+| **native** | `./setup system` | uses sudo, system-wide install |
 
-> [!IMPORTANT]
-> some anti-cheat systems or games using dxvk/vkd3d may conflict with vulkan layers. if you experience crashes, try disabling `ENABLE_VKINTOX=1` for that specific title.
+enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 
-## installation
-
-### for Sober (Flatpak)
-Use the remote prebuilt installer shown at the top of this README. It downloads the latest Flatpak binary and does not compile locally.
-
-### for another Flatpak game
-To compile locally and configure a Flatpak app, clone the repository and run:
-
-```bash
-./setup flatpak com.target.app
-```
-
-### for native games
-Compile locally and install VKIntox system-wide (the script uses `sudo` for installation):
-
-```bash
-./setup system
-```
-
-to enable for a specific game, launch it with:
-```bash
-ENABLE_VKINTOX=1 your_game_command
-```
-
-## usage & keybinds
+## keybinds
 
 | key | action |
 | :--- | :--- |
-| `Home` | toggle the overlay gui |
-| `End` | enable/disable all active effects |
-| `F10` | reload configuration and recompile shaders |
+| `home` | toggle overlay gui |
+| `end` | enable/disable all effects |
+| `f10` | reload config & recompile shaders |
 
-### configuring depth
-
-if depth-dependent effects (like DOF) look incorrect:
-
-1.  try hitting your config reload keybind (default: `F10`)
-2.  restart your game
+> [!TIP]
+> if depth effects (dof/ao) look wrong, hit `f10`. if that doesn't help, restart the game.
 
 ## known issues
 
-*   **initial startup:** a restart may be required after the first launch for stability
-*   **graphics switching:** changing quality settings in-game often leads to crashes
-*   **performance:** shader compilation on first load may cause a brief stutter.
-*   **stability:** stability in the catalog is *very* poor. it's best to not use it
+-   **catalog stability:** extremely poor in sober. avoid opening it.
+-   **startup:** may require 1-2 restarts for initial stability.
+-   **settings:** changing in-game graphics quality often causes crashes.
+-   **stutter:** brief shader compilation stutter on first load is normal.
+-   **anti-cheat:** dxvk/vkd3d titles may conflict. disable `ENABLE_VKINTOX=1` if crashing.
 
-## troubleshooting / FAQ
+## troubleshooting
 
-*   **logs:** vkintox saves logs to `/path/to/config/VKIntox/vkintox.log`. to capture diagnostics, run sober with debug logging enabled:
+### logs & diagnostics
+
+logs save to `/path/to/config/VKIntox/vkintox.log`. for sober debug output:
 
 ```bash
 flatpak run --env=VKINTOX_LOG_LEVEL=debug org.vinegarhq.Sober
 ```
 
-you can then inspect the log file at `~/.var/app/org.vinegarhq.Sober/config/VKIntox/vkintox.log`. (in the case of specifically Sober)
+sober-specific log path: `~/.var/app/org.vinegarhq.Sober/config/VKIntox/vkintox.log`
 
-*   **sober uses software rendering, the wrong GPU, or fails to launch:** update Sober and its Flatpak graphics runtimes first:
+### gpu / rendering fixes
 
-```bash
-flatpak update
-```
+1.  update sober and flatpak runtimes: `flatpak update`
+2.  clear stale overrides:
+    ```bash
+    flatpak override --user --unset-env=VK_ICD_FILENAMES \
+      --unset-env=VK_LOADER_DRIVERS_DISABLE \
+      --unset-env=__NV_PRIME_RENDER_OFFLOAD \
+      --unset-env=__GLX_VENDOR_LIBRARY_NAME org.vinegarhq.Sober
+    ```
+3.  force nvidia on hybrid laptops:
+    ```bash
+    flatpak override --user --env=__NV_PRIME_RENDER_OFFLOAD=1 \
+      --env=__GLX_VENDOR_LIBRARY_NAME=nvidia org.vinegarhq.Sober
+    ```
 
-Remove old GPU overrides that can force a vendor-specific ICD or disable the wrong driver:
+verify active drivers with `flatpak --gl-drivers`. host and flatpak nvidia runtime versions must match.
 
-```bash
-flatpak override --user --unset-env=VK_ICD_FILENAMES --unset-env=VK_LOADER_DRIVERS_DISABLE --unset-env=__NV_PRIME_RENDER_OFFLOAD --unset-env=__GLX_VENDOR_LIBRARY_NAME org.vinegarhq.Sober
-```
+### common fixes
 
-Flatpak selects the graphics driver for AMD and Intel GPUs automatically. On a hybrid NVIDIA laptop, force Sober onto the NVIDIA GPU with:
-
-```bash
-flatpak override --user --env=__NV_PRIME_RENDER_OFFLOAD=1 --env=__GLX_VENDOR_LIBRARY_NAME=nvidia org.vinegarhq.Sober
-```
-
-To check which Flatpak graphics drivers are active, run `flatpak --gl-drivers`. For NVIDIA, the host driver and Flatpak NVIDIA runtime versions must match. See the [Sober GPU troubleshooting guide](https://vinegarhq.org/Sober/Troubleshooting.html#sober-does-not-launch-to-my-dedicated-gpu) and [Flatpak graphics driver documentation](https://docs.flatpak.org/en/latest/extension.html#extension-points).
-
-*   **sober freezes on launch:** i suggest trying a simple restart... 1-2 times.
-*   **sober freezes inside the catalog!:** opening the catalog re-builds graphics constantly that leads to freezes... don't use it
-*   **my effects are off on launch?:** press F1 (or whatever you have it set to, if you changed). effects are OFF on launch by default for more stable startups
-*   **my 3d effects look frozen!:** press your reload keybind (default: `F10`) to reload depth
-*   **i just added an .ini preset from ReShade, how do I use it?:** reload your config once you've put your .ini file in the right directory (`/path/to/config/VKIntox/configs/shaders/`), and it will appear on the Shader INI dropdown
+-   **effects off at launch:** press `f10` (or custom reload key). effects default to off for stability.
+-   **3d effects frozen:** press reload keybind (`f10`) to refresh depth buffer.
+-   **reshade presets:** drop `.ini` into `/path/to/config/VKIntox/configs/shaders/`, then reload config. appears in shader ini dropdown.
+-   **freezes:** restart sober 1-2 times. catalog freezes are expected; avoid it.
 
 ---
 
-> experimental software. use at your own risk.
+> experimental software. use at your own risk. works as of sep 2026.
 
-special thanks to **slobodaapl** (vkShade), **DadSchoorse** (vkBasalt), **Daaboulex** (Wayland overlay), **crosire** (ReShade), and **ocornut** (Dear ImGui).
+special thanks to **slobodaapl** (vkshade), **dadschoorse** (vkbasalt), **daaboulex** (wayland overlay), **crosire** (reshade), and **ocornut** (dear imgui).
 
 <div align="center">
 
-**maintained by [buwryme](https://github.com/buwryme)**
+**maintained with ♥ by [buwryme](https://github.com/buwryme)**
 
 </div>
