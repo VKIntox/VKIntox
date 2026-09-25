@@ -43,6 +43,9 @@ cleanup() {
         rm -rf -- "$TMP_DIR"
     fi
     if [[ -n "${BUILD_ROOT:-}" && -d "$BUILD_ROOT" ]]; then
+        flatpak remote-delete --user --force vkintox-local >/dev/null 2>&1 || true
+    fi
+    if [[ -n "${BUILD_ROOT:-}" && -d "$BUILD_ROOT" ]]; then
         rm -rf -- "$BUILD_ROOT"
     fi
     exit "$status"
