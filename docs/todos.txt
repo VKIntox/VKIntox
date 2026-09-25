@@ -6,7 +6,8 @@ Current version: v0.1.1-release-candidate-1
 TODOS for v0.1.2
 ================================================
 1. Implement unit tests for CI workflow and include them inside README
-2. Other cool stuff
+2. Possibly remove .conf -> .ini migration
+3. Other cool stuff
 
 ================================================
 TODOS for v0.2.0
