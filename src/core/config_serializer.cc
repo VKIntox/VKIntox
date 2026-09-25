@@ -809,7 +809,10 @@ namespace VKIntox
         if (gameName.empty())
             return "default";
 
-        std::string activePath = getConfigsDir() + "/.active_profiles";
+        const std::string configsDir = getConfigsDir();
+        if (configsDir.empty())
+            return "default";
+        std::string activePath = configsDir + "/.active_profiles";
         std::ifstream file(activePath);
         if (!file.is_open())
             return "default";
@@ -834,7 +837,11 @@ namespace VKIntox
         if (gameName.empty())
             return;
 
-        std::string activePath = getConfigsDir() + "/.active_profiles";
+        const std::string configsDir = getConfigsDir();
+        if (configsDir.empty())
+            return;
+
+        std::string activePath = configsDir + "/.active_profiles";
 
         // Read existing entries
         std::map<std::string, std::string> entries;
