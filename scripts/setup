@@ -109,8 +109,11 @@ LIBRARY="$TMP_DIR/$(basename "$ASSET_URL")"
 say "downloading $(basename "$ASSET_URL")"
 curl -fsSL "$ASSET_URL" -o "$LIBRARY" || die "couldn't download the latest Flatpak library"
 [[ -s "$LIBRARY" ]] || die "downloaded Flatpak library is empty"
-readelf -h "$LIBRARY" | grep -Eq 'Class:[[:space:]]+ELF64' || die "downloaded file is not an ELF64 library"
-readelf -h "$LIBRARY" | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' || die "downloaded library is not x86_64"
+if ! ELF_HEADER=$(LC_ALL=C readelf -h "$LIBRARY" 2>/dev/null); then
+    die "downloaded file is not a readable ELF library"
+fi
+grep -Eq 'Class:[[:space:]]+ELF64' <<<"$ELF_HEADER" || die "downloaded file is not an ELF64 library"
+grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' <<<"$ELF_HEADER" || die "downloaded library is not x86_64"
 ok "downloaded binary"
 
 section "installing layer"
