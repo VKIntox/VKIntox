@@ -7,7 +7,9 @@ TODOS for v0.1.2
 ================================================
 1. Implement unit tests for CI workflow and include them inside README
 2. Possibly remove .conf -> .ini migration
-3. Other cool stuff
+3. Move Profile dropdown to Settings tab instead of Main tab
+4. Other cool stuff
+5. Fix compiler warnings (if any) & global audit check, push RC 1
 
 ================================================
 TODOS for v0.2.0
