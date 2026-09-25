@@ -1,53 +1,12 @@
 vkintox TODO
 
-Current version: v0.1.0
+Current version: v0.1.1-release-candidate-1
 
 ================================================
-TODOS for v0.1.1
+TODOS for v0.1.2
 ================================================
-
-0. stability changes DONE
-
-1. Fix warning errors when compiling (do last AFTER all other changes for this version)... DONE
-
-2. Overlay:
-
-* Add tick button for the overlay to close it instead of hotkey DONE
-
-3. Add native .INI support for profiles/presets... PARTIALLY DONE, still buggy
-
-* Maybe even switch to it fully
-
-4. Switch the compiler from G++ to Clang++; PROPERLY utilise ccache (especially for flatpak builds, PLEASE!!!
-for the flatpak builds maybe just build natively and transfer to .flatpak-build/files ?) DONE, but ccache for flatpak building isn't possible
-
-5. Improve setup script:
-
-* Make removing the layer when already installed not need user confirmation. (maybe yes > flatpak remove ...) DONE
-* Stop re-installing effect packages when already installed & up to date (copy EffectPackages.ini sha256hash as .vkintox_effects_hash to installation dir and verify it matches on run) DONE
-* Do similar thing as above but for the layer itself (store build-input sha256 under ~/.local/share/VKIntox and check on setup) DONE
-* Improve output styling, make the script more pleasing to the eye, and use more commonly used styling? DONE
-* Move shader dynamic paths from setup script to C++ effect loading logic. Make path verbosity stay inside logs, but not clutter the UI DONE (the C++ loader already discovers folders recursively; setup no longer writes absolute paths) DONE
-* And also in addition to what's above, make re-running the setup script (re-installing .fx files) not break effects like AdaptiveFog DONE (managed packages no longer erase the user's whole ReShade directory)... DONE?
-* Possibly, merge setup into one unified script for all: Sober, native games, Flatpak games... DONE
-
-6. Organize source folder into a more hierarchial, organized structure instead of stuffing everything into one big root... DONE
-
-7. Manage versioning:
-
-* Add version of VKIntox to Diagnostics, clean up and add more acknowledgements DONE
-* Install version from project root to config dir, and read it from there on RUNTIME, otherwise fallback to unknown DONE
-
-8. Setup GitHub Actions builds:
-
-* It should compile for x86_64, output livbkintox.so DONE
-* Then, update setup script to fetch the latest version from GitHub releases with summary confirmation before beginning install DONE
-* Change script to remote one kept inside scripts/setup DONE
-
-9. Finally, run a global audit check and release 0.1.1-release-candidate-1 as preview release
-
-* If no issues are found, release 0.1.1-release-candidate-1 as v0.1.1, stable release
-* Otherwise, fix issues and release v0.1.1, stable release
+1. Implement unit tests for CI workflow and include them inside README
+2. Other cool stuff
 
 ================================================
 TODOS for v0.2.0
