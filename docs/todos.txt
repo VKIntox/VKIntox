@@ -40,7 +40,7 @@ for the flatpak builds maybe just build natively and transfer to .flatpak-build/
 
 8. Setup GitHub Actions builds:
 
-* It should compile for x86_64, output livbkintox.so
+* It should compile for x86_64, output livbkintox.so DONE
 * Then, update setup script to fetch the latest version from GitHub releases with summary confirmation before beginning install
 * Change script to remote one kept inside scripts/setup
 * Optionally, fallback to local compilation (fetches the whole repo, the script is supposed to be standalone)
