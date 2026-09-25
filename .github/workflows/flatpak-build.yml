@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -46,3 +46,18 @@ jobs:
           path: libvkintox_flatpak_*.so
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish latest library release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view flatpak-build >/dev/null 2>&1; then
+            gh release upload flatpak-build libvkintox_flatpak_*.so --clobber
+            gh release edit flatpak-build \
+              --title "Latest Flatpak build" \
+              --notes "Latest manually triggered build. $(date -u +'%d/%m/%Y')"
+          else
+            gh release create flatpak-build libvkintox_flatpak_*.so \
+              --title "Latest Flatpak build" \
+              --notes "Latest manually triggered build. $(date -u +'%d/%m/%Y')"
+          fi

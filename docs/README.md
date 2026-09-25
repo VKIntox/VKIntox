@@ -8,6 +8,20 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 
 </div>
 
+## install for Sober
+
+This repo is primarily focused on Sober. The quick installer downloads the latest prebuilt Flatpak library from GitHub Actions, installs the Vulkan layer and ReShade packages, and enables VKIntox for Sober. It does **not** compile from source, and you don’t need to clone the repo:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup)
+```
+
+To use the same prebuilt library with another Flatpak app, pass its app ID:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup) com.target.app
+```
+
 ---
 
 an independent fork of **vkShade** that fixes the depth buffer issues inherent to vkBasalt. it provides a robust, reshade-like experience for native linux games and flatpak runtimes like [Sober](https://vinegarhq.org/Home/index.html).
@@ -40,8 +54,8 @@ vkintox operates as a vulkan layer that sits between the game and the driver.
 ## requirements
 
 *   **gpu:** vulkan-capable hardware with recent drivers.
-*   **setup:** `just`; Sober setup also uses Flatpak, Python 3, curl, and unzip. System installation uses Meson, Ninja, and sudo.
-*   **native build:** Clang/Clang++, ccache, Meson, Ninja, glslangValidator, Wayland/X11 development libraries.
+*   **prebuilt Flatpak setup:** Flatpak, curl, jq, unzip, Python 3, and readelf.
+*   **local compilation:** `just`, Clang/Clang++, ccache, Meson, Ninja, glslangValidator, Wayland/X11 development libraries. System installation also uses sudo.
 
 > [!IMPORTANT]
 > some anti-cheat systems or games using dxvk/vkd3d may conflict with vulkan layers. if you experience crashes, try disabling `ENABLE_VKINTOX=1` for that specific title.
@@ -49,23 +63,17 @@ vkintox operates as a vulkan layer that sits between the game and the driver.
 ## installation
 
 ### for Sober (Flatpak)
-This builds VKIntox as a Flatpak Vulkan layer, installs the ReShade packages listed in `../assets/EffectPackages.ini`, and enables the layer in Sober. Re-running it skips the build and package download when their inputs have not changed.
-
-```bash
-git clone https://github.com/buwryme/VKIntox.git
-cd VKIntox
-./setup sober
-```
+Use the remote prebuilt installer shown at the top of this README. It downloads the latest Flatpak binary and does not compile locally.
 
 ### for another Flatpak game
-This runs the same build, package installation, and configuration steps as Sober, targeting the selected app ID and its Flatpak config directory:
+To compile locally and configure a Flatpak app, clone the repository and run:
 
 ```bash
 ./setup flatpak com.target.app
 ```
 
 ### for native games
-Build and install VKIntox system-wide (the script uses `sudo` for installation):
+Compile locally and install VKIntox system-wide (the script uses `sudo` for installation):
 
 ```bash
 ./setup system
