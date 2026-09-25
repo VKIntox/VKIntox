@@ -13,6 +13,17 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 
 ---
 
+## showcase
+
+<div align="center">
+  <img src="assets/showcase_screenshot1.png" width="45%" alt="VKIntox in action">&nbsp;&nbsp;
+  <img src="assets/showcase_screenshot2.png" width="45%" alt="VKIntox UI">
+</div>
+
+<div align="center">
+  <img src="assets/showcase_screenshot3.png" width="90%" alt="Depth resolve modes">
+</div>
+
 ## requirements
 
 -   **gpu:** vulkan-capable hardware + recent drivers
@@ -79,11 +90,11 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 -   **wine:** games utilizing dxvk/vkd3d might break and anti-cheat could get you moderated.
 
 > [!NOTE]
-> for people who have used VKIntox before, previously versioned v1.0.2, please back up your configs (.conf files) before updating.
-> it tries to convert your shaders from .conf -> .ini (native cross-compatible reshade format), but MAY fail and malform your shader values; in which case, you'd unfortunately have to manually convert your shaders.
-> this particular migration issue will not be open to resolution, as migration by itself is going to be removed soon
+> upgrading from v1.0.2? back up your `.conf` files first.
+> auto-migration to `.ini` (native reshade format) may fail and malform values. manual conversion required if broken.
+> migration logic will be removed soon; this issue is wontfix.
 
-you are welcome to open issues!!!
+issues are welcome!
 
 ## troubleshooting
 
