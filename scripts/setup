@@ -118,14 +118,15 @@ cat >"$TMP_DIR/VKIntox.json" <<'JSON'
 {
   "id": "org.freedesktop.Platform.VulkanLayer.VKIntox",
   "branch": "25.08",
-  "runtime": "org.freedesktop.Platform.VulkanLayer.VKIntox",
+  "runtime": "org.freedesktop.Platform",
   "runtime-version": "25.08",
   "sdk": "org.freedesktop.Sdk",
+  "build-extension": true,
   "modules": [{
     "name": "vkintox",
     "buildsystem": "simple",
     "build-commands": [
-      "install -Dm755 libvkintox.so ${FLATPAK_DEST}/lib/extensions/vulkan/VKIntox/lib/libvkintox.so",
+      "install -Dm755 libvkintox.so ${FLATPAK_DEST}/lib/libvkintox.so",
       "install -Dm644 VKIntox.json ${FLATPAK_DEST}/share/vulkan/implicit_layer.d/VKIntox.json"
     ],
     "sources": [
