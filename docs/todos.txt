@@ -38,6 +38,18 @@ for the flatpak builds maybe just build natively and transfer to .flatpak-build/
 * Add version of VKIntox to Diagnostics, clean up and add more acknowledgements DONE
 * Install version from project root to config dir, and read it from there on RUNTIME, otherwise fallback to unknown DONE
 
+8. Setup GitHub Actions builds:
+
+* It should compile for x86_64, output livbkintox.so
+* Then, update setup script to fetch the latest version from GitHub releases with summary confirmation before beginning install
+* Change script to remote one kept inside scripts/setup
+* Optionally, fallback to local compilation (fetches the whole repo, the script is supposed to be standalone)
+
+9. Finally, run a global audit check and release 0.1.1-release-candidate-1 as preview release
+
+* If no issues are found, release 0.1.1-release-candidate-1 as v0.1.1, stable release
+* Otherwise, fix issues and release v0.1.1, stable release
+
 ================================================
 TODOS for v0.2.0
 ================================================
