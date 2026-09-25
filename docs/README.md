@@ -78,7 +78,7 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 -   **startup:** may require 1-2 restarts for initial stability.
 -   **settings:** changing in-game graphics quality often causes crashes.
 -   **stutter:** brief shader compilation stutter on first load is normal.
--   **anti-cheat:** dxvk/vkd3d titles may conflict. disable `ENABLE_VKINTOX=1` if crashing.
+-   **wine:** games utilizing dxvk/vkd3d might break and anti-cheat could get you moderated.
 
 ## troubleshooting
 
@@ -119,12 +119,12 @@ verify active drivers with `flatpak --gl-drivers`. host and flatpak nvidia runti
 
 ---
 
-> experimental software. use at your own risk. works as of sep 2026.
+> experimental software. not yet stable; use responsibly.
 
 special thanks to **slobodaapl** (vkshade), **dadschoorse** (vkbasalt), **daaboulex** (wayland overlay), **crosire** (reshade), and **ocornut** (dear imgui).
 
 <div align="center">
 
-**maintained with ♥ by [buwryme](https://github.com/buwryme)**
+**maintained by [buwryme](https://github.com/buwryme)**
 
 </div>
