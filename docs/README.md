@@ -75,10 +75,15 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 ## known issues
 
 -   **catalog stability:** extremely poor in sober. avoid opening it.
--   **startup:** may require 1-2 restarts for initial stability.
 -   **settings:** changing in-game graphics quality often causes crashes.
--   **stutter:** brief shader compilation stutter on first load is normal.
 -   **wine:** games utilizing dxvk/vkd3d might break and anti-cheat could get you moderated.
+
+> [!NOTE]
+> for people who have used VKIntox before, previously versioned v1.0.2, please back up your configs (.conf files) before updating.
+> it tries to convert your shaders from .conf -> .ini (native cross-compatible reshade format), but MAY fail and malform your shader values; in which case, you'd unfortunately have to manually convert your shaders.
+> this particular migration issue will not be open to resolution, as migration by itself is going to be removed soon
+
+you are welcome to open issues!!!
 
 ## troubleshooting
 
