@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# VKIntox Flatpak installer. Intended to be fetched and run directly from GitHub.
-# Usage: bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup) [sober|APP_ID]
+# vkintox flatpak installer
+# usage: bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup) [APP_ID]
 
 set -euo pipefail
 
 REPO="buwryme/VKIntox"
 WORKFLOW="flatpak-build.yml"
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
+EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/main/assets/EffectPackages.ini}"
 
 if [[ -t 1 ]]; then
     B='\033[1m'; BLUE='\033[34m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; DIM='\033[2m'; NC='\033[0m'
@@ -23,11 +24,8 @@ need_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing $1 — install it f
 
 usage() {
     cat <<'EOF'
-Usage:
-  bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup) [sober|APP_ID]
-
-With no argument (or 'sober'), configures Sober. Pass another Flatpak app ID
-to configure that app instead.
+usage:
+  bash <(curl -fsSL https://raw.githubusercontent.com/buwryme/VKIntox/main/scripts/setup) [APP_ID]
 EOF
 }
 
@@ -37,19 +35,18 @@ APP_ID="${1:-sober}"
 
 for cmd in curl jq unzip flatpak python3 sha256sum readelf grep install; do need_cmd "$cmd"; done
 TMP_DIR=$(mktemp -d)
+BUILD_ROOT="$HOME/.local/share/flatpak-builder/vkintox-remote-setup"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 section "dependencies"
 if ! flatpak remote-list --user 2>/dev/null | grep -q '^flathub'; then
     flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    ok "added flathub remote"
+else
+    ok "flathub remote exists"
 fi
-flatpak install --user --noninteractive -y flathub \
-    runtime/org.gnome.Sdk/x86_64/50 \
-    runtime/org.freedesktop.Sdk/x86_64/25.08 \
-    runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/25.08
-ok "Flatpak SDKs and LLVM 21 are installed"
 
-section "latest VKIntox build"
+section "fetching latest vkintox build"
 API="https://api.github.com/repos/$REPO"
 curl -fsSL -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
     "$API/releases/tags/flatpak-build" -o "$TMP_DIR/release.json" ||
@@ -58,13 +55,14 @@ RUN_ID=$(jq -er '.target_commitish // "latest"' "$TMP_DIR/release.json")
 ASSET_URL=$(jq -er '[.assets[] | select(.name | test("^libvkintox_flatpak_[0-9]{8}\\.so$"))] | sort_by(.created_at) | last | .browser_download_url // empty' \
     "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
 LIBRARY="$TMP_DIR/$(basename "$ASSET_URL")"
+say "downloading $(basename "$ASSET_URL")"
 curl -fsSL "$ASSET_URL" -o "$LIBRARY" || die "couldn't download the latest Flatpak library"
 [[ -s "$LIBRARY" ]] || die "downloaded Flatpak library is empty"
 readelf -h "$LIBRARY" | grep -Eq 'Class:[[:space:]]+ELF64' || die "downloaded file is not an ELF64 library"
 readelf -h "$LIBRARY" | grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' || die "downloaded library is not x86_64"
-ok "downloaded latest x86_64 Flatpak library ($RUN_ID)"
+ok "downloaded binary"
 
-section "install layer"
+section "installing layer"
 cat >"$TMP_DIR/VKIntox.json" <<'JSON'
 {
   "id": "org.freedesktop.Platform.VulkanLayer.VKIntox",
@@ -111,24 +109,30 @@ cat >"$TMP_DIR/layer-manifest.json" <<'JSON'
 }
 JSON
 
+mkdir -p "$BUILD_ROOT"
+say "preparing flatpak package"
 flatpak-builder --user --force-clean --disable-rofiles-fuse \
-    --repo="$TMP_DIR/repo" "$TMP_DIR/build" "$TMP_DIR/VKIntox.json"
-flatpak remote-add --user --if-not-exists vkintox-local "$TMP_DIR/repo" --no-gpg-verify
-flatpak remote-modify --user --url="file://$TMP_DIR/repo" --no-gpg-verify vkintox-local
+    --state-dir="$BUILD_ROOT/state" \
+    --repo="$BUILD_ROOT/repo" "$BUILD_ROOT/build" "$TMP_DIR/VKIntox.json"
+flatpak remote-add --user --if-not-exists vkintox-local "$BUILD_ROOT/repo" --no-gpg-verify
+flatpak remote-modify --user --url="file://$BUILD_ROOT/repo" --no-gpg-verify vkintox-local
+say "installing layer"
 flatpak install --user --or-update -y vkintox-local "$LAYER_ID"
+ok "layer installed"
 
-section "configure app"
+section "config dirs"
 APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
 PACKAGE_DIR="$APP_CONFIG/reshade/packages"
 mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$APP_CONFIG/font"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/font/font.ttf" -o "$APP_CONFIG/font/font.ttf"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/font/LICENSE" -o "$APP_CONFIG/font/LICENSE"
-curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/EffectPackages.ini" -o "$TMP_DIR/EffectPackages.ini"
+curl -fsSL "$EFFECT_PACKAGES_URL" -o "$TMP_DIR/EffectPackages.ini"
 
 EFFECTS_HASH=$(sha256sum "$TMP_DIR/EffectPackages.ini" | cut -d' ' -f1)
 EFFECTS_MARKER="$PACKAGE_DIR/.vkintox_effects_hash"
 if [[ ! -f "$EFFECTS_MARKER" || "$(cat "$EFFECTS_MARKER")" != "$EFFECTS_HASH" ]]; then
+    say "downloading + extracting packages"
     rm -rf "$PACKAGE_DIR"
     mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures"
     python3 - "$TMP_DIR" "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$TMP_DIR/EffectPackages.ini" <<'PYEOF'
@@ -196,10 +200,13 @@ if failed:
     raise SystemExit(1)
 PYEOF
     printf '%s\n' "$EFFECTS_HASH" > "$EFFECTS_MARKER"
+else
+    ok "effects up to date"
 fi
 
+section "enable layer"
 if ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
     warn "couldn't set ENABLE_VKINTOX; if the app is not installed yet, run:"
     printf '    flatpak override --user %s --env=ENABLE_VKINTOX=1\n' "$APP_ID"
 fi
-ok "VKIntox configured for $APP_ID"
+ok "setup finished for $APP_ID"
