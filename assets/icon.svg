@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     xmlns:x="adobe:ns:meta/"
+     xmlns:i="http://ns.adobe.com/AdobeIllustrator/10.0/"
+     xmlns:graph="http://ns.adobe.com/Graphs/1.0/"
+     version="1.1"
+     id="Layer_1"
+     x="0px" y="0px"
+     width="256px" height="256px"
+     viewBox="0 0 256 256"
+     enable-background="new 0 0 256 256"
+     xml:space="preserve">
+  <metadata>
+    <x:xmpmeta x:xmptk="Adobe XMP Core 5.6-c148 79.164036, 2019/08/13-01:06:57        ">
+      <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+        <rdf:Description rdf:about=""
+            xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+            xmlns:xmpGImg="http://ns.adobe.com/xap/1.0/g/img/"
+            xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/"
+            xmlns:stRef="http://ns.adobe.com/xap/1.0/sType/ResourceRef#"
+            xmlns:stEvt="http://ns.adobe.com/xap/1.0/sType/ResourceEvent#"
+            xmlns:illustrator="http://ns.adobe.com/illustrator/1.0/"
+            xmlns:dc="http://purl.org/dc/elements/1.1/"
+            xmlns:pdf="http://ns.adobe.com/pdf/1.3/">
+          <dc:format>image/svg+xml</dc:format>
+          <xmp:CreatorTool>Adobe Illustrator 24.0 (Macintosh)</xmp:CreatorTool>
+          <xmp:CreateDate>2026-09-24T18:17:23+01:00</xmp:CreateDate>
+          <xmp:ModifyDate>2026-09-24T18:17:48+01:00</xmp:ModifyDate>
+          <xmp:MetadataDate>2026-09-24T18:17:48+01:00</xmp:MetadataDate>
+          <xmpMM:DocumentID>xmp.did:40776bcf-341e-450a-9d9e-13115456fef3</xmpMM:DocumentID>
+          <xmpMM:InstanceID>xmp.iid:40776bcf-341e-450a-9d9e-13115456fef3</xmpMM:InstanceID>
+          <xmpMM:OriginalDocumentID>xmp.did:40776bcf-341e-450a-9d9e-13115456fef3</xmpMM:OriginalDocumentID>
+          <xmpMM:RenditionClass>default</xmpMM:RenditionClass>
+          <illustrator:StartupProfile>Print</illustrator:StartupProfile>
+        </rdf:Description>
+      </rdf:RDF>
+    </x:xmpmeta>
+  </metadata>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#46101a"/>
+      <stop offset="60%" stop-color="#2c0911"/>
+      <stop offset="100%" stop-color="#180408"/>
+    </linearGradient>
+
+    <linearGradient id="wine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#b52336"/>
+      <stop offset="50%" stop-color="#801221"/>
+      <stop offset="100%" stop-color="#4f0813"/>
+    </linearGradient>
+
+    <linearGradient id="wine-surface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff7e93" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#b52336" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <clipPath id="squircle">
+      <rect x="8" y="8" width="240" height="240" rx="58"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect width="256" height="256" fill="url(#bg)"/>
+
+    <g transform="translate(162 135) rotate(-14) translate(-162 -135)">
+      <path
+        d="M157 32
+           H167
+           V78
+           C167 96 193 108 193 130
+           V256
+           H131
+           V130
+           C131 108 157 96 157 78
+           Z"
+        fill="#0f2217"
+      />
+    </g>
+
+    <g transform="translate(-7 20)" fill="#f3dddd" opacity="0.65">
+      <path
+        d="M48 67
+           C47 64 50 61 54 61
+           H63
+           C68 61 71 64 73 69
+           L91 126
+           L113 72
+           C115 67 118 64 123 64
+           H138
+           C143 64 146 68 144 73
+           L119 137
+           C116 145 110 150 102 150
+           H91
+           C83 150 77 145 74 137
+           L48 72
+           C47 70 47 68 48 67
+           Z"
+      />
+
+      <path
+        d="M145 47
+           H156
+           C161 47 164 50 164 55
+           V88
+           L190 51
+           C193 47 197 45 202 45
+           H211
+           C217 45 220 51 216 56
+           L187 96
+           L218 133
+           C222 138 219 144 213 144
+           H200
+           C196 144 193 142 190 138
+           L164 108
+           V135
+           C164 140 161 143 156 143
+           H145
+           C140 143 137 140 137 135
+           V55
+           C137 50 140 47 145 47
+           Z"
+      />
+    </g>
+
+    <path
+      d="M0 198
+         C32 191 60 193 92 199
+         C124 205 152 203 182 196
+         C208 190 232 192 256 197
+         V256
+         H0
+         Z"
+      fill="url(#wine)"
+    />
+
+    <path
+      d="M0 198
+         C32 191 60 193 92 199
+         C124 205 152 203 182 196
+         C208 190 232 192 256 197
+         V204
+         C232 199 208 197 182 203
+         C152 210 124 212 92 206
+         C60 200 32 198 0 205
+         Z"
+      fill="url(#wine-surface)"
+    />
+
+    <g fill="#e79ca9" opacity="0.55">
+      <circle cx="12"  cy="234" r="2.8"/>
+      <circle cx="34"  cy="226" r="2.2"/>
+      <circle cx="49"  cy="241" r="3.4"/>
+      <circle cx="78"  cy="232" r="2.5"/>
+      <circle cx="103" cy="244" r="3.1"/>
+      <circle cx="127" cy="227" r="2.4"/>
+      <circle cx="152" cy="239" r="3.3"/>
+      <circle cx="174" cy="224" r="2.2"/>
+      <circle cx="197" cy="242" r="3.2"/>
+      <circle cx="218" cy="229" r="2.6"/>
+      <circle cx="242" cy="238" r="3.4"/>
+    </g>
+
+    <g fill="#fde5e8" opacity="0.75">
+      <circle cx="18"  cy="214" r="2.6"/>
+      <circle cx="25"  cy="204" r="1.8"/>
+      <circle cx="43"  cy="216" r="3.0"/>
+      <circle cx="61"  cy="208" r="2.2"/>
+      <circle cx="73"  cy="218" r="2.9"/>
+      <circle cx="91"  cy="206" r="2.0"/>
+      <circle cx="112" cy="217" r="3.2"/>
+      <circle cx="122" cy="207" r="2.1"/>
+      <circle cx="141" cy="215" r="2.7"/>
+      <circle cx="163" cy="210" r="3.1"/>
+      <circle cx="184" cy="216" r="2.4"/>
+      <circle cx="204" cy="209" r="3.0"/>
+      <circle cx="227" cy="216" r="2.5"/>
+      <circle cx="247" cy="211" r="2.8"/>
+    </g>
+
+    <g fill="#fff2f4" opacity="0.82">
+      <circle cx="15"  cy="196" r="2.2"/>
+      <circle cx="38"  cy="192" r="2.7"/>
+      <circle cx="68"  cy="195" r="1.9"/>
+      <circle cx="99"  cy="198" r="2.8"/>
+      <circle cx="132" cy="197" r="2.1"/>
+      <circle cx="158" cy="193" r="2.6"/>
+      <circle cx="189" cy="192" r="2.0"/>
+      <circle cx="212" cy="194" r="2.7"/>
+      <circle cx="238" cy="193" r="2.2"/>
+    </g>
+
+    <g fill="#ffe2e7" opacity="0.65">
+      <circle cx="28"  cy="182" r="1.7"/>
+      <circle cx="56"  cy="176" r="2.3"/>
+      <circle cx="88"  cy="184" r="1.6"/>
+      <circle cx="119" cy="178" r="2.1"/>
+      <circle cx="147" cy="183" r="1.5"/>
+      <circle cx="178" cy="177" r="2.2"/>
+      <circle cx="202" cy="185" r="1.8"/>
+      <circle cx="229" cy="179" r="2.0"/>
+    </g>
+  </g>
+
+  <rect
+    x="8"
+    y="8"
+    width="240"
+    height="240"
+    rx="58"
+    fill="none"
+    stroke="#681622"
+    stroke-width="2"
+  />
+</svg>
