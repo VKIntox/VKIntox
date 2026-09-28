@@ -1249,6 +1249,23 @@ namespace VKIntox
         const ImVec2 buttonCenter(buttonMin.x + closeButtonSize * 0.5f,
                                   buttonMin.y + closeButtonSize * 0.5f);
         const bool buttonHovered = ImGui::IsMouseHoveringRect(buttonMin, buttonMax, false);
+        const ImVec2 mousePos = ImGui::GetIO().MousePos;
+        const bool pointerInTitleBar = mousePos.x >= windowPos.x && mousePos.x < windowPos.x + windowSize.x &&
+                                       mousePos.y >= windowPos.y && mousePos.y < windowPos.y + titleBarHeight;
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && pointerInTitleBar && !buttonHovered)
+        {
+            titleRightDragging = true;
+            titleRightDragOffsetX = mousePos.x - windowPos.x;
+            titleRightDragOffsetY = mousePos.y - windowPos.y;
+        }
+        if (titleRightDragging)
+        {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Right))
+                ImGui::SetWindowPos(ImVec2(mousePos.x - titleRightDragOffsetX,
+                                           mousePos.y - titleRightDragOffsetY));
+            else
+                titleRightDragging = false;
+        }
         const bool closeRequested = buttonHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         ImDrawList* drawList = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
         ImVec4 surfaceColor = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];

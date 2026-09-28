@@ -268,6 +268,9 @@ namespace VKIntox
         bool initialized = false;
         bool backendInitialized = false;
         bool resetLayoutRequested = false;  // When true, reset window position/size next frame
+        bool titleRightDragging = false;
+        float titleRightDragOffsetX = 0.0f;
+        float titleRightDragOffsetY = 0.0f;
         uint32_t currentWidth = 1920;   // Current swapchain resolution for VRAM estimates
         uint32_t currentHeight = 1080;
         char saveConfigName[64] = "";
