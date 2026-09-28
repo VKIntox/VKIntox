@@ -180,7 +180,8 @@ namespace VKIntox
                 {
                     if (!autoSaveProfile())
                         pushToast(LogLevel::Error, "Could not save the active shader profile.");
-                    else if (ConfigSerializer::createShaderProfile(activeGameName, newShaderProfileName))
+                    else if (ConfigSerializer::createShaderProfile(activeGameName, newShaderProfileName,
+                                                                   activeShaderProfileName))
                     {
                         activeShaderProfileName = newShaderProfileName;
                         refreshShaderProfiles();

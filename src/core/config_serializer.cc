@@ -802,7 +802,8 @@ namespace VKIntox
         return profiles;
     }
 
-    bool ConfigSerializer::createShaderProfile(const std::string& gameName, const std::string& profileName)
+    bool ConfigSerializer::createShaderProfile(const std::string& gameName, const std::string& profileName,
+                                               const std::string& copyFromProfile)
     {
         const std::string path = getShaderProfilePath(gameName, profileName);
         if (path.empty() || profileName.find('/') != std::string::npos || profileName.find('\\') != std::string::npos)
@@ -811,13 +812,38 @@ namespace VKIntox
         std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
         if (ec)
             return false;
+
+        std::string contents = "Techniques=\nTechniqueSorting=\nVKIntoxEffects=\nVKIntoxDisabledEffects=\n";
+        if (!copyFromProfile.empty())
+        {
+            const std::string sourcePath = getShaderProfilePath(gameName, copyFromProfile);
+            std::ifstream source(sourcePath, std::ios::binary);
+            if (sourcePath.empty() || !source)
+                return false;
+            contents.assign(std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>());
+            if (source.bad())
+                return false;
+        }
+
         const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644);
         if (fd < 0)
             return false;
-        static constexpr char emptyPreset[] = "Techniques=\nTechniqueSorting=\nVKIntoxEffects=\nVKIntoxDisabledEffects=\n";
-        const ssize_t written = write(fd, emptyPreset, sizeof(emptyPreset) - 1);
+        size_t offset = 0;
+        bool success = true;
+        while (offset < contents.size())
+        {
+            const ssize_t written = write(fd, contents.data() + offset, contents.size() - offset);
+            if (written < 0 && errno == EINTR)
+                continue;
+            if (written <= 0)
+            {
+                success = false;
+                break;
+            }
+            offset += static_cast<size_t>(written);
+        }
         const int closeResult = close(fd);
-        const bool success = written == static_cast<ssize_t>(sizeof(emptyPreset) - 1) && closeResult == 0;
+        success = success && closeResult == 0;
         if (!success)
         {
             unlink(path.c_str());
