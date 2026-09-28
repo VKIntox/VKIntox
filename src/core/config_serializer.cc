@@ -816,6 +816,30 @@ namespace VKIntox
         return profiles;
     }
 
+    bool ConfigSerializer::setLastShaderProfile(const std::string& gameName, const std::string& profileName)
+    {
+        if (gameName.empty() || profileName.empty() || gameName.find('/') != std::string::npos ||
+            gameName.find('\\') != std::string::npos || profileName.find('/') != std::string::npos ||
+            profileName.find('\\') != std::string::npos)
+            return false;
+        const auto path = getBaseConfigDir() + "/configs/shaders/" + gameName + ".last-profile";
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+        if (ec)
+            return false;
+        return writeAtomically(path, profileName + "\n");
+    }
+
+    std::string ConfigSerializer::getLastShaderProfile(const std::string& gameName)
+    {
+        if (gameName.empty() || gameName.find('/') != std::string::npos || gameName.find('\\') != std::string::npos)
+            return "";
+        std::ifstream file(getBaseConfigDir() + "/configs/shaders/" + gameName + ".last-profile");
+        std::string profileName;
+        std::getline(file, profileName);
+        return profileName;
+    }
+
     bool ConfigSerializer::createShaderProfile(const std::string& gameName, const std::string& profileName,
                                                const std::string& copyFromProfile)
     {

@@ -2439,6 +2439,11 @@ namespace VKIntox
                 {
                     if (ConfigSerializer::listShaderProfilesForGame(detectedGameName).empty())
                         ConfigSerializer::createShaderProfile(detectedGameName, "default");
+                    const auto shaderProfiles = ConfigSerializer::listShaderProfilesForGame(detectedGameName);
+                    std::string lastShaderProfile = ConfigSerializer::getLastShaderProfile(detectedGameName);
+                    if (std::find(shaderProfiles.begin(), shaderProfiles.end(), lastShaderProfile) == shaderProfiles.end())
+                        lastShaderProfile = "default";
+                    activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(detectedGameName, lastShaderProfile);
                     currentConfigPath = activeProfilePath;
                     Logger::info("game: " + detectedGameName + " | config: " + activeProfilePath);
                 }
@@ -2462,7 +2467,6 @@ namespace VKIntox
                     pConfig->setFallback(pBaseConfig.get());
                     if (!detectedGameName.empty())
                     {
-                        activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(detectedGameName, "default");
                         applyShaderProfile(pConfig.get(), activeShaderProfilePath);
                     }
                     Logger::info("current config: " + currentConfigPath);

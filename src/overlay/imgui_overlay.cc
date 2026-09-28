@@ -314,6 +314,12 @@ namespace VKIntox
     void ImGuiOverlay::refreshShaderProfiles()
     {
         shaderProfiles = ConfigSerializer::listShaderProfilesForGame(activeGameName);
+        if (activeShaderProfileName.empty())
+        {
+            const auto lastUsedProfile = ConfigSerializer::getLastShaderProfile(activeGameName);
+            if (std::find(shaderProfiles.begin(), shaderProfiles.end(), lastUsedProfile) != shaderProfiles.end())
+                activeShaderProfileName = lastUsedProfile;
+        }
         if (activeShaderProfileName.empty() ||
             std::find(shaderProfiles.begin(), shaderProfiles.end(), activeShaderProfileName) == shaderProfiles.end())
         {
@@ -323,6 +329,16 @@ namespace VKIntox
                 : (shaderProfiles.empty() ? std::string() : shaderProfiles.front());
         }
         activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
+        if (!activeGameName.empty() && !activeShaderProfileName.empty())
+            ConfigSerializer::setLastShaderProfile(activeGameName, activeShaderProfileName);
+    }
+
+    void ImGuiOverlay::setActiveShaderProfile(const std::string& profileName)
+    {
+        activeShaderProfileName = profileName;
+        activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
+        if (!activeGameName.empty() && !activeShaderProfileName.empty())
+            ConfigSerializer::setLastShaderProfile(activeGameName, activeShaderProfileName);
     }
 
     void ImGuiOverlay::pushToast(LogLevel level, const std::string& message)

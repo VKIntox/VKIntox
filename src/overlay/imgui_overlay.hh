@@ -138,6 +138,7 @@ namespace VKIntox
         }
 
         void refreshShaderProfiles();
+        void setActiveShaderProfile(const std::string& profileName);
 
         // Trigger debounced reload (for config switch)
         void markDirty() { paramsDirty = true; lastChangeTime = std::chrono::steady_clock::now(); }

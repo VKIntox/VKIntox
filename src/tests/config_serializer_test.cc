@@ -190,6 +190,9 @@ int main()
     const auto listedProfiles = VKIntox::ConfigSerializer::listShaderProfilesForGame("roundtrip-game");
     expect(std::find(listedProfiles.begin(), listedProfiles.end(), "reshade-import") != listedProfiles.end(),
            "unprefixed ReShade preset appears in the profile list");
+    expect(VKIntox::ConfigSerializer::setLastShaderProfile("roundtrip-game", "reshade-import") &&
+               VKIntox::ConfigSerializer::getLastShaderProfile("roundtrip-game") == "reshade-import",
+           "last shader profile persists by game name");
     expect(VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "reshade-import") == importedPath,
            "unprefixed ReShade preset resolves to its imported path");
     const auto importedData = VKIntox::ConfigSerializer::loadShaderProfileData(importedPath);

@@ -121,8 +121,7 @@ namespace VKIntox
                             pushToast(LogLevel::Error, "Could not save the active shader profile.");
                         else
                         {
-                            activeShaderProfileName = profile;
-                            activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, profile);
+                            setActiveShaderProfile(profile);
                             pendingShaderProfilePath = activeShaderProfilePath;
                             pendingShaderProfile = true;
                             applyRequested = true;
@@ -183,7 +182,7 @@ namespace VKIntox
                     else if (ConfigSerializer::createShaderProfile(activeGameName, newShaderProfileName,
                                                                    activeShaderProfileName))
                     {
-                        activeShaderProfileName = newShaderProfileName;
+                        setActiveShaderProfile(newShaderProfileName);
                         refreshShaderProfiles();
                         pendingShaderProfilePath = activeShaderProfilePath;
                         pendingShaderProfile = true;

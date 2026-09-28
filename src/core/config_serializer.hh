@@ -152,6 +152,8 @@ namespace VKIntox
 
         static std::string getShaderProfilePath(const std::string& gameName, const std::string& profileName);
         static std::vector<std::string> listShaderProfilesForGame(const std::string& gameName);
+        static bool setLastShaderProfile(const std::string& gameName, const std::string& profileName);
+        static std::string getLastShaderProfile(const std::string& gameName);
         static bool createShaderProfile(const std::string& gameName, const std::string& profileName,
                                         const std::string& copyFromProfile = "");
         static bool deleteShaderProfile(const std::string& gameName, const std::string& profileName);
