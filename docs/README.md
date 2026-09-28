@@ -13,6 +13,8 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 
 ---
 
+# ⚠ THIS IS AN EXPERIMENTAL BRANCH! Expect critical breakages, and active development.
+
 ## showcase
 
 <div align="center">
