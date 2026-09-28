@@ -450,6 +450,10 @@ namespace VKIntox
         float fps = avgFrameTime > 0 ? 1000.0f / avgFrameTime : 0;
         float fps1Low = frameTimeHistory.max() > 0 ? 1000.0f / frameTimeHistory.max() : 0;
 
+        const float brandSize = std::min(512.0f, ImGui::GetContentRegionAvail().x * 0.288f);
+        renderCenteredBrandIcon(brandSize);
+        ImGui::Spacing();
+
         ImGui::Text("Performance");
         ImGui::Separator();
 
@@ -461,9 +465,6 @@ namespace VKIntox
         ImGui::SameLine();
         ImGui::TextDisabled("(1%% low: %.0f)", fps1Low);
 
-        ImGui::Spacing();
-
-        renderCenteredBrandIcon(56.0f);
         ImGui::Spacing();
 
         // Frame time graph

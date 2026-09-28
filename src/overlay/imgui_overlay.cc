@@ -370,6 +370,7 @@ namespace VKIntox
     {
         if (titleIconDescriptor == VK_NULL_HANDLE || size <= 0.0f)
             return;
+        size = std::min(size, 512.0f);
         const float contentWidth = ImGui::GetContentRegionAvail().x;
         const float x = ImGui::GetCursorPosX() + std::max(0.0f, (contentWidth - size) * 0.5f);
         ImGui::SetCursorPosX(x);
@@ -378,11 +379,14 @@ namespace VKIntox
             ImGui::GetCursorScreenPos(),
             ImVec2(ImGui::GetCursorScreenPos().x + size, ImGui::GetCursorScreenPos().y + size));
         ImGui::Dummy(ImVec2(size, size));
-        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        ImGui::Dummy(ImVec2(0.0f, std::max(6.0f, size * 0.035f)));
         const char* brandText = "VKIntox";
+        ImFont* font = ImGui::GetIO().Fonts->Fonts[0];
+        ImGui::PushFont(font, std::max(font->LegacySize, size * 0.14f));
         const float textWidth = ImGui::CalcTextSize(brandText).x;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (contentWidth - textWidth) * 0.5f));
         ImGui::TextUnformatted(brandText);
+        ImGui::PopFont();
     }
 
     void ImGuiOverlay::pushToast(LogLevel level, const std::string& message)
