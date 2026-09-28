@@ -75,6 +75,8 @@ namespace VKIntox
         // previous frame's work.  Without this, UpdateDescriptorSets modifies a
         // descriptor set that's still bound to an in-flight CB → VK_ERROR_DEVICE_LOST.
         std::vector<VkFence>                  effectSubmitFences;
+        std::vector<bool>                     effectSubmitFenceUsed;
+        bool                                  depthReallocPending = false;
         bool                                  rebuildEffectsOnNextPresent = false;
 
         void destroy();
