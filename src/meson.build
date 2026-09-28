@@ -211,6 +211,14 @@ executable('vkintox-shader-check',
     dependencies : [reshade_dep],
     install : true)
 
+config_serializer_tests = executable('vkintox-config-serializer-tests',
+    'tests/config_serializer_test.cc',
+    'core/config_serializer.cc',
+    'core/config.cc',
+    'core/logger.cc',
+    include_directories : [core_inc, render_inc, effects_inc, effects_params_inc, vendor_inc, source_inc])
+test('config serializer', config_serializer_tests)
+
 # LD_AUDIT library for Wine Wayland input interposition.
 # Redirects wl_proxy_add_listener bindings from dlopen(RTLD_LOCAL) scopes
 # (e.g. Wine's winewayland.so) to our wrapper in libvkintox.so.

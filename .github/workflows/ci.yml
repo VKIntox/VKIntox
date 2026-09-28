@@ -100,3 +100,12 @@ jobs:
 
           raise SystemExit(1 if failed else 0)
           PY
+
+      - name: Build project and tests
+        run: meson compile -C build
+
+      - name: Run config serialization tests
+        run: meson test -C build --print-errorlogs
+
+      - name: Compile ReShade EffectPackages shaders
+        run: python3 src/tests/test_reshade_shaders.py --shader-check build/src/vkintox-shader-check

@@ -135,6 +135,10 @@ verify active drivers with `flatpak --gl-drivers`. host and flatpak nvidia runti
 -   **reshade presets:** drop `.ini` into `/path/to/config/VKIntox/configs/shaders/`, then reload config. appears in shader ini dropdown.
 -   **freezes:** restart sober 1-2 times. catalog freezes are expected; avoid it.
 
+### test units
+
+test units are documented at `docs/WORKFLOWS.md`.
+
 ---
 
 > experimental software. not yet stable; use responsibly.

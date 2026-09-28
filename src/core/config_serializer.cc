@@ -366,8 +366,8 @@ namespace VKIntox
         file << "overlayKey = " << settings.overlayKey << "\n";
 
         file << "\n# Startup behavior\n";
-        file << "enableOnLaunch = false\n";
-        file << "depthCapture = on\n";
+        file << "enableOnLaunch = " << (settings.enableOnLaunch ? "true" : "false") << "\n";
+        file << "depthCapture = " << (settings.depthCapture ? "on" : "off") << "\n";
 
         file << "\n# Debug\n";
         file << "showDebugWindow = " << (settings.showDebugWindow ? "true" : "false") << "\n";
@@ -389,9 +389,9 @@ namespace VKIntox
         file << "#   4 = View-space Z (raw view-space Z)\n";
         file << "#   5 = NDC (Normalized Device Coordinates)\n";
         file << "#   6 = Reversed-Z (inverted for precision)\n";
-        file << "depthSourceChannel = 6\n";
+        file << "depthSourceChannel = " << settings.depthSourceChannel << "\n";
         file << "# depthInvert: invert depth values (flips near/far planes)\n";
-        file << "depthInvert = true\n";
+        file << "depthInvert = " << (settings.depthInvert ? "true" : "false") << "\n";
 
         file.close();
         Logger::info("Saved settings to: " + configPath);

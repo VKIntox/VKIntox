@@ -1,0 +1,172 @@
+#include "config.hh"
+#include "config_serializer.hh"
+
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <unistd.h>
+
+namespace
+{
+    int failures = 0;
+
+    void expect(bool condition, const std::string& message)
+    {
+        if (condition)
+            return;
+        std::cerr << "FAIL: " << message << '\n';
+        ++failures;
+    }
+
+    std::string readFile(const std::string& path)
+    {
+        std::ifstream file(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    }
+}
+
+int main()
+{
+    char temporary[] = "/tmp/vkintox-config-tests-XXXXXX";
+    char* tempDir = mkdtemp(temporary);
+    if (!tempDir)
+    {
+        std::cerr << "Could not create temporary config directory\n";
+        return 1;
+    }
+
+    const std::filesystem::path root(tempDir);
+    setenv("XDG_CONFIG_HOME", root.c_str(), 1);
+    setenv("HOME", root.c_str(), 1);
+
+    // Settings are read back from an isolated XDG config directory.
+    VKIntox::VkBasaltSettings settings;
+    settings.maxEffects = 23;
+    settings.overlayBlockInput = false;
+    settings.toggleKey = "F8";
+    settings.reloadKey = "F9";
+    settings.overlayKey = "F11";
+    settings.enableOnLaunch = true;
+    settings.depthCapture = true;
+    settings.autoApply = false;
+    settings.autoApplyDelay = 375;
+    settings.showDebugWindow = true;
+    settings.depthResolveMode = 1;
+    settings.depthManualPin = "image-view-42";
+    settings.depthTransientWorkaround = false;
+    settings.depthCaptureMethod = 1;
+    settings.depthSourceChannel = 4;
+    settings.depthInvert = false;
+
+    expect(VKIntox::ConfigSerializer::saveSettings(settings), "save global settings");
+    const auto loaded = VKIntox::ConfigSerializer::loadSettings();
+    expect(loaded.maxEffects == settings.maxEffects, "settings preserve maxEffects");
+    expect(loaded.overlayBlockInput == settings.overlayBlockInput, "settings preserve overlayBlockInput");
+    expect(loaded.toggleKey == settings.toggleKey && loaded.reloadKey == settings.reloadKey &&
+               loaded.overlayKey == settings.overlayKey,
+           "settings preserve key bindings");
+    expect(loaded.enableOnLaunch == settings.enableOnLaunch, "settings preserve enableOnLaunch");
+    expect(loaded.depthCapture == settings.depthCapture, "settings preserve depthCapture");
+    expect(loaded.autoApply == settings.autoApply && loaded.autoApplyDelay == settings.autoApplyDelay,
+           "settings preserve auto-apply options");
+    expect(loaded.showDebugWindow == settings.showDebugWindow, "settings preserve showDebugWindow");
+    expect(loaded.depthResolveMode == settings.depthResolveMode && loaded.depthManualPin == settings.depthManualPin &&
+               loaded.depthTransientWorkaround == settings.depthTransientWorkaround &&
+               loaded.depthCaptureMethod == settings.depthCaptureMethod &&
+               loaded.depthSourceChannel == settings.depthSourceChannel && loaded.depthInvert == settings.depthInvert,
+           "settings preserve depth options");
+
+    // Saving a per-game config and loading it through Config preserves options.
+    std::filesystem::create_directories(VKIntox::ConfigSerializer::getConfigsDir());
+    const std::string configPath = VKIntox::ConfigSerializer::getConfigsDir() + "/serialization-test.conf";
+    const std::vector<std::string> effects = {"Simple", "Custom"};
+    const std::vector<std::string> disabled = {"Custom"};
+    const std::vector<VKIntox::ConfigParam> params = {
+        {"Simple", "Strength", "0.75"},
+        {"Custom", "@QUALITY", "high"},
+    };
+    const std::map<std::string, std::string> effectPaths = {
+        {"Simple", "simple.fx"},
+        {"Custom", "/shaders/custom.fx"},
+    };
+    const std::vector<VKIntox::PreprocessorDefinition> definitions = {
+        {"QUALITY", "high", "low", "Custom"},
+    };
+    VKIntox::ProfileSettings profileSettings;
+    expect(VKIntox::ConfigSerializer::saveToPath(configPath, effects, disabled, params,
+                                                  effectPaths, definitions, profileSettings),
+           "save game config");
+    VKIntox::Config config(configPath);
+    expect(config.getOption<std::string>("Simple") == "simple.fx", "config preserves effect paths");
+    expect(config.getOption<std::string>("Simple.Strength") == "0.75", "config preserves effect parameters");
+    expect(config.getOption<std::string>("Custom@QUALITY") == "high", "config preserves preprocessor definitions");
+    expect(config.getOption<std::vector<std::string>>("effects") == effects, "config preserves enabled effect list");
+    expect(config.getOption<std::vector<std::string>>("disabledEffects") == disabled,
+           "config preserves disabled effect list");
+
+    // The experimental @default config name is migrated to the fixed game path.
+    const std::string gamePath = VKIntox::ConfigSerializer::getProfilePath("migration-game");
+    const std::string oldGamePath = VKIntox::ConfigSerializer::getConfigsDir() + "/migration-game@default.conf";
+    std::filesystem::create_directories(VKIntox::ConfigSerializer::getConfigsDir());
+    {
+        std::ofstream legacy(oldGamePath);
+        legacy << "effects = Legacy\n";
+    }
+    expect(VKIntox::ConfigSerializer::ensureGameProfile("migration-game") == gamePath,
+           "game config migration returns canonical path");
+    expect(std::filesystem::exists(gamePath) && !std::filesystem::exists(oldGamePath),
+           "game config migration renames legacy path");
+    expect(readFile(gamePath) == "effects = Legacy\n", "game config migration preserves contents");
+
+    // Shader-profile serialization covers lists, scalar/vector params, and macros.
+    const std::string shaderPath = VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "source");
+    const std::vector<VKIntox::ConfigParam> shaderParams = {
+        {"Simple", "Strength", "0.75"},
+        {"Simple", "Tint[0]", "0.1"},
+        {"Simple", "Tint[1]", "0.2"},
+        {"Simple", "@QUALITY", "high,fast"},
+    };
+    const std::vector<std::string> shaderEffects = {"Simple", "Custom"};
+    const std::vector<std::string> shaderDisabled = {"Custom"};
+    const std::vector<std::string> techniques = {"SimplePass@simple.fx"};
+    const std::vector<std::string> sorting = {"SimplePass@simple.fx", "CustomPass@custom.fx"};
+    expect(VKIntox::ConfigSerializer::saveShaderProfile(shaderPath, shaderParams, shaderEffects, shaderDisabled,
+                                                         effectPaths, techniques, sorting),
+           "save shader profile");
+    const auto shaderData = VKIntox::ConfigSerializer::loadShaderProfileData(shaderPath);
+    expect(shaderData.hasTechniques && shaderData.techniques == techniques && shaderData.techniqueSorting == sorting,
+           "shader profile preserves ReShade techniques");
+    expect(shaderData.hasEffectList && shaderData.effects == shaderEffects && shaderData.disabledEffects == shaderDisabled,
+           "shader profile preserves VKIntox effect lists");
+    expect(shaderData.params.size() == shaderParams.size(), "shader profile preserves parameter count");
+    bool foundMacro = false, foundStrength = false, foundVector0 = false, foundVector1 = false;
+    for (const auto& param : shaderData.params)
+    {
+        foundMacro |= param.paramName == "@QUALITY" && param.value == "high,fast";
+        foundStrength |= param.paramName == "Strength" && param.value == "0.75";
+        foundVector0 |= param.paramName == "Tint[0]" && param.value == "0.1";
+        foundVector1 |= param.paramName == "Tint[1]" && param.value == "0.2";
+    }
+    expect(foundMacro, "shader profile preserves comma-containing preprocessor values");
+    expect(foundStrength && foundVector0 && foundVector1, "shader profile preserves scalar and vector values");
+
+    // New shader profiles inherit the exact active profile contents.
+    const std::string inheritedPath = VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "inherited");
+    expect(VKIntox::ConfigSerializer::createShaderProfile("roundtrip-game", "inherited", "source"),
+           "create shader profile from active profile");
+    expect(readFile(inheritedPath) == readFile(shaderPath), "new shader profile inherits source contents");
+    expect(!VKIntox::ConfigSerializer::createShaderProfile("roundtrip-game", "inherited", "source"),
+           "duplicate shader profile creation fails");
+
+    std::filesystem::remove_all(root);
+    if (failures != 0)
+    {
+        std::cerr << failures << " config serializer test(s) failed\n";
+        return 1;
+    }
+
+    std::cout << "Config serializer tests passed\n";
+    return 0;
+}
