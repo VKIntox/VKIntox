@@ -776,7 +776,16 @@ namespace VKIntox
             gameName == "." || gameName == ".." || profileName.find('/') != std::string::npos ||
             profileName.find('\\') != std::string::npos || profileName == "." || profileName == "..")
             return "";
-        return base + "/configs/shaders/" + gameName + "@" + profileName + ".ini";
+        const std::string shaderDir = base + "/configs/shaders/";
+        const std::string gameProfilePath = shaderDir + gameName + "@" + profileName + ".ini";
+        const std::string importedPresetPath = shaderDir + profileName + ".ini";
+        std::error_code ec;
+        if (std::filesystem::exists(gameProfilePath, ec))
+            return gameProfilePath;
+        ec.clear();
+        if (std::filesystem::exists(importedPresetPath, ec))
+            return importedPresetPath;
+        return gameProfilePath;
     }
 
     std::vector<std::string> ConfigSerializer::listShaderProfilesForGame(const std::string& gameName)
@@ -794,11 +803,16 @@ namespace VKIntox
         while ((entry = readdir(d)) != nullptr)
         {
             const std::string name = entry->d_name;
-            if (name.size() > prefix.size() + 4 && name.compare(0, prefix.size(), prefix) == 0 && name.substr(name.size() - 4) == ".ini")
+            if (name.size() <= 4 || name.substr(name.size() - 4) != ".ini")
+                continue;
+            if (name.compare(0, prefix.size(), prefix) == 0)
                 profiles.push_back(name.substr(prefix.size(), name.size() - prefix.size() - 4));
+            else if (name.find('@') == std::string::npos)
+                profiles.push_back(name.substr(0, name.size() - 4));
         }
         closedir(d);
         std::sort(profiles.begin(), profiles.end());
+        profiles.erase(std::unique(profiles.begin(), profiles.end()), profiles.end());
         return profiles;
     }
 
@@ -813,7 +827,7 @@ namespace VKIntox
         if (ec)
             return false;
 
-        std::string contents = "Techniques=\nTechniqueSorting=\nVKIntoxEffects=\nVKIntoxDisabledEffects=\n";
+        std::string contents = "Techniques=\nTechniqueSorting=\n";
         if (!copyFromProfile.empty())
         {
             const std::string sourcePath = getShaderProfilePath(gameName, copyFromProfile);
@@ -875,18 +889,10 @@ namespace VKIntox
         auto sectionFor = [&effectPaths](const std::string& effectName) {
             const auto it = effectPaths.find(effectName);
             if (it != effectPaths.end() && std::filesystem::path(it->second).extension() == ".fx")
-            {
-                const std::string filename = std::filesystem::path(it->second).filename().string();
-                size_t matches = 0;
-                for (const auto& [name, path] : effectPaths)
-                    if (std::filesystem::path(path).extension() == ".fx" &&
-                        std::filesystem::path(path).filename() == filename)
-                        ++matches;
-                // ReShade sections are keyed by shader filename. VKIntox can
-                // additionally key by effect name, which is needed when a
-                // profile uses the same shader more than once.
-                return matches > 1 ? effectName : filename;
-            }
+                // ReShade looks up preset sections by the shader filename.
+                // Using VKIntox instance names here makes imported presets lose
+                // their parameter values in ReShade.
+                return std::filesystem::path(it->second).filename().string();
             return effectName;
         };
         std::map<std::pair<std::string, std::string>, std::string> merged;
@@ -929,19 +935,7 @@ namespace VKIntox
             if (i) file << ',';
             file << sortedTechniques[i];
         }
-        file << "\nVKIntoxEffects=";
-        for (size_t i = 0; i < effects.size(); ++i)
-        {
-            if (i) file << ':';
-            file << effects[i];
-        }
-        file << "\nVKIntoxDisabledEffects=";
-        for (size_t i = 0; i < disabledEffects.size(); ++i)
-        {
-            if (i) file << ':';
-            file << disabledEffects[i];
-        }
-        file << "\n\n";
+        file << "\n";
         std::map<std::pair<std::string, std::string>, std::string> outputValues;
         std::map<std::pair<std::string, std::string>, std::map<size_t, std::string>> vectorValues;
         for (const auto& [key, value] : merged)
@@ -1013,10 +1007,13 @@ namespace VKIntox
             }
             file << key.second << "=" << value << "\n";
         }
+        if (!current.empty())
+            file << "\n";
         for (const auto& [section, macros] : preprocessorValues)
         {
             file << "[" << section << "]\n";
             writePreprocessorDefinitions(macros);
+            file << "\n";
         }
         return file.good() && writeAtomically(path, file.str());
     }

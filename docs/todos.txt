@@ -11,11 +11,11 @@ Release 0.1.1!!!!
 ================================================
 TODOS for v0.1.2
 ================================================
-1. Implement unit tests for github workflows, use in CI and document them inside docs/WORKFLOWS.md
+1. Implement unit tests for github workflows, use in CI and document them inside docs/WORKFLOWS.md DONE
 2. Possibly remove .conf -> .ini migration DONE
 3. Move Profile dropdown to Settings tab instead of Main tab DONE, removed dropdown instead
 4. Fix Issue#1 -> Make VKIntox .ini fully cross-compatible with ReShade .ini
-Most likely has to do with spacing
+Most likely has to do with spacing DONE
 5. Other cool stuff
 6. Fix compiler warnings (if any) & global audit check, push RC 1
 7. Creating a new INI profile should inherit the active profile. DONE

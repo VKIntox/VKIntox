@@ -1,12 +1,15 @@
 #include "config.hh"
 #include "config_serializer.hh"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <string>
 #include <unistd.h>
+#include <vector>
 
 namespace
 {
@@ -138,8 +141,13 @@ int main()
     const auto shaderData = VKIntox::ConfigSerializer::loadShaderProfileData(shaderPath);
     expect(shaderData.hasTechniques && shaderData.techniques == techniques && shaderData.techniqueSorting == sorting,
            "shader profile preserves ReShade techniques");
-    expect(shaderData.hasEffectList && shaderData.effects == shaderEffects && shaderData.disabledEffects == shaderDisabled,
-           "shader profile preserves VKIntox effect lists");
+    expect(!shaderData.hasEffectList, "shader profile does not require VKIntox-only effect-list keys");
+    const std::string shaderText = readFile(shaderPath);
+    expect(shaderText.find("VKIntoxEffects=") == std::string::npos &&
+               shaderText.find("VKIntoxDisabledEffects=") == std::string::npos,
+           "shader profile only writes ReShade-compatible keys");
+    expect(shaderText.find("[simple.fx]\n") != std::string::npos,
+           "shader parameters use ReShade shader-filename section names");
     expect(shaderData.params.size() == shaderParams.size(), "shader profile preserves parameter count");
     bool foundMacro = false, foundStrength = false, foundVector0 = false, foundVector1 = false;
     for (const auto& param : shaderData.params)
@@ -151,6 +159,36 @@ int main()
     }
     expect(foundMacro, "shader profile preserves comma-containing preprocessor values");
     expect(foundStrength && foundVector0 && foundVector1, "shader profile preserves scalar and vector values");
+
+    // Imported, unprefixed ReShade presets should be discoverable and readable.
+    const std::string importedPath = VKIntox::ConfigSerializer::getBaseConfigDir() +
+                                     "/configs/shaders/reshade-import.ini";
+    std::filesystem::create_directories(std::filesystem::path(importedPath).parent_path());
+    {
+        std::ofstream imported(importedPath);
+        imported << "Techniques=BloomPass@Example.fx,ColorPass@Example.fx\n"
+                    "TechniqueSorting=BloomPass@Example.fx, ColorPass@Example.fx\n\n"
+                    "[Example.fx]\n"
+                    "PreprocessorDefinitions=QUALITY=2,,4\n"
+                    "Strength = 0.5\n";
+    }
+    const auto listedProfiles = VKIntox::ConfigSerializer::listShaderProfilesForGame("roundtrip-game");
+    expect(std::find(listedProfiles.begin(), listedProfiles.end(), "reshade-import") != listedProfiles.end(),
+           "unprefixed ReShade preset appears in the profile list");
+    expect(VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "reshade-import") == importedPath,
+           "unprefixed ReShade preset resolves to its imported path");
+    const auto importedData = VKIntox::ConfigSerializer::loadShaderProfileData(importedPath);
+    expect(importedData.hasTechniques && importedData.techniques.size() == 2 &&
+               importedData.techniqueSorting.size() == 2,
+           "ReShade preset lists parse with standard comma-separated spacing");
+    expect(std::find_if(importedData.params.begin(), importedData.params.end(), [](const auto& param) {
+               return param.effectName == "Example.fx" && param.paramName == "Strength" && param.value == "0.5";
+           }) != importedData.params.end(),
+           "ReShade shader-filename sections parse");
+    expect(std::find_if(importedData.params.begin(), importedData.params.end(), [](const auto& param) {
+               return param.effectName == "Example.fx" && param.paramName == "@QUALITY" && param.value == "2,4";
+           }) != importedData.params.end(),
+           "ReShade preprocessor definitions preserve escaped commas");
 
     // New shader profiles inherit the exact active profile contents.
     const std::string inheritedPath = VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "inherited");

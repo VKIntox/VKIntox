@@ -2226,16 +2226,29 @@ namespace VKIntox
             const auto definitions = config->getEffectDefinitions();
             std::map<std::string, std::vector<std::string>> namesByFile;
             for (const auto& [name, effectPath] : definitions)
-                namesByFile[std::filesystem::path(effectPath).filename().string()].push_back(name);
+            {
+                std::string filename = std::filesystem::path(effectPath).filename().string();
+                std::transform(filename.begin(), filename.end(), filename.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                namesByFile[filename].push_back(name);
+            }
             const auto profile = ConfigSerializer::loadShaderProfileData(path);
             for (const auto& param : profile.params)
             {
                 std::vector<std::string> effectNames;
-                const auto it = namesByFile.find(param.effectName);
+                std::string section = param.effectName;
+                std::transform(section.begin(), section.end(), section.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                const auto it = namesByFile.find(section);
                 if (it != namesByFile.end())
                     effectNames = it->second;
                 else if (!param.effectName.empty())
-                    effectNames.push_back(param.effectName);
+                {
+                    const std::filesystem::path sectionPath(param.effectName);
+                    effectNames.push_back(sectionPath.extension() == ".fx"
+                                              ? sectionPath.stem().string()
+                                              : param.effectName);
+                }
                 if (!param.paramName.empty() && param.paramName.front() == '@')
                 {
                     const std::string macroName = param.paramName.substr(1);
@@ -2270,25 +2283,68 @@ namespace VKIntox
             }
             else if (profile.hasTechniques)
             {
-                std::set<std::string> selectedTechniques(profile.techniques.begin(), profile.techniques.end());
-                std::set<std::string> sortedTechniques(profile.techniqueSorting.begin(), profile.techniqueSorting.end());
+                const auto currentEffects = config->getOption<std::vector<std::string>>("effects", {});
+                const auto currentDisabled = config->getOption<std::vector<std::string>>("disabledEffects", {});
+                std::set<std::string> currentDisabledSet(currentDisabled.begin(), currentDisabled.end());
                 std::vector<std::string> effects, disabled;
-                for (const auto& [name, effectPath] : definitions)
+
+                // Non-ReShade effects are stored in the game's .conf file;
+                // keep them while standard ReShade techniques select the .fx files.
+                for (const auto& name : currentEffects)
                 {
-                    const std::string filename = std::filesystem::path(effectPath).filename().string();
-                    if (std::filesystem::path(filename).extension() != ".fx")
-                        continue;
-                    bool inSorting = false, enabled = false;
-                    for (const auto& technique : profile.techniqueSorting)
-                        if (technique.size() > filename.size() && technique.compare(technique.size() - filename.size(), filename.size(), filename) == 0 && technique[technique.size() - filename.size() - 1] == '@') inSorting = true;
-                    for (const auto& technique : profile.techniques)
-                        if (technique.size() > filename.size() && technique.compare(technique.size() - filename.size(), filename.size(), filename) == 0 && technique[technique.size() - filename.size() - 1] == '@') enabled = true;
-                    if (inSorting || enabled)
+                    const auto configuredType = config->getOption<std::string>(name, "");
+                    if (BuiltInEffects::instance().isBuiltIn(name) ||
+                        BuiltInEffects::instance().isBuiltIn(configuredType))
                     {
                         effects.push_back(name);
-                        if (!enabled) disabled.push_back(name);
+                        if (currentDisabledSet.count(name))
+                            disabled.push_back(name);
                     }
                 }
+
+                const auto& sortedTechniques = profile.techniqueSorting.empty()
+                    ? profile.techniques
+                    : profile.techniqueSorting;
+                std::set<std::string> enabledFiles;
+                for (const auto& technique : profile.techniques)
+                {
+                    const size_t separator = technique.rfind('@');
+                    if (separator == std::string::npos || separator + 1 >= technique.size())
+                        continue;
+                    std::string filename = technique.substr(separator + 1);
+                    std::transform(filename.begin(), filename.end(), filename.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    enabledFiles.insert(std::move(filename));
+                }
+                std::set<std::string> addedEffects;
+                for (const auto& technique : sortedTechniques)
+                {
+                    const size_t separator = technique.rfind('@');
+                    if (separator == std::string::npos || separator + 1 >= technique.size())
+                        continue;
+
+                    const std::string filename = technique.substr(separator + 1);
+                    std::string normalizedFilename = filename;
+                    std::transform(normalizedFilename.begin(), normalizedFilename.end(), normalizedFilename.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    std::vector<std::string> effectNames;
+                    const auto configuredNames = namesByFile.find(normalizedFilename);
+                    if (configuredNames != namesByFile.end())
+                        effectNames = configuredNames->second;
+                    else
+                        effectNames.push_back(std::filesystem::path(filename).stem().string());
+
+                    const bool enabled = enabledFiles.count(normalizedFilename) != 0;
+                    for (const auto& name : effectNames)
+                    {
+                        if (!addedEffects.insert(name).second)
+                            continue;
+                        effects.push_back(name);
+                        if (!enabled)
+                            disabled.push_back(name);
+                    }
+                }
+
                 auto join = [](const std::vector<std::string>& values) {
                     std::string result;
                     for (const auto& value : values) { if (!result.empty()) result += ':'; result += value; }
