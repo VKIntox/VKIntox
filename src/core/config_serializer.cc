@@ -702,21 +702,15 @@ namespace VKIntox
 
     // --- Per-app profile system ---
 
-    std::string ConfigSerializer::getProfilePath(const std::string& gameName,
-                                                  const std::string& profileName)
+    std::string ConfigSerializer::getProfilePath(const std::string& gameName)
     {
         std::string configsDir = getConfigsDir();
         if (configsDir.empty() || gameName.empty() ||
             gameName.find('/') != std::string::npos || gameName.find('\\') != std::string::npos ||
-            gameName == "." || gameName == ".." ||
-            profileName.find('/') != std::string::npos || profileName.find('\\') != std::string::npos ||
-            profileName == "." || profileName == "..")
+            gameName == "." || gameName == "..")
             return "";
 
-        if (profileName.empty() || profileName == "default")
-            return configsDir + "/" + gameName + ".conf";
-
-        return configsDir + "/" + gameName + "@" + profileName + ".conf";
+        return configsDir + "/" + gameName + ".conf";
     }
 
     std::string ConfigSerializer::ensureGameProfile(const std::string& gameName)
@@ -730,12 +724,29 @@ namespace VKIntox
 
         mkdir(configsDir.c_str(), 0755);
 
-        std::string profilePath = getProfilePath(gameName);
+        const std::string profilePath = getProfilePath(gameName);
+        if (profilePath.empty())
+            return "";
 
         struct stat st;
         if (stat(profilePath.c_str(), &st) == 0)
         {
             Logger::info("Found existing profile for " + gameName);
+            return profilePath;
+        }
+
+        // Move configs created by the experimental <game>@default.conf naming
+        // to the canonical <game>.conf path. Both files are in the same
+        // directory, so rename is atomic on the filesystem.
+        const std::string previousPath = configsDir + "/" + gameName + "@default.conf";
+        if (stat(previousPath.c_str(), &st) == 0)
+        {
+            if (std::rename(previousPath.c_str(), profilePath.c_str()) != 0)
+            {
+                Logger::err("Could not rename game config " + previousPath + " to " + profilePath);
+                return previousPath;
+            }
+            Logger::info("Renamed game config " + previousPath + " to " + profilePath);
             return profilePath;
         }
 
@@ -754,196 +765,7 @@ namespace VKIntox
         file.close();
         Logger::info("Created default profile for " + gameName + ": " + profilePath);
 
-        // Also set as active profile
-        setActiveProfile(gameName, "default");
-
         return profilePath;
-    }
-
-    std::vector<std::string> ConfigSerializer::listProfilesForGame(const std::string& gameName)
-    {
-        std::vector<std::string> profiles;
-        if (gameName.empty())
-            return profiles;
-
-        std::string configsDir = getConfigsDir();
-        if (configsDir.empty())
-            return profiles;
-
-        // Check for default profile: <gameName>.conf
-        struct stat st;
-        std::string defaultPath = configsDir + "/" + gameName + ".conf";
-        if (stat(defaultPath.c_str(), &st) == 0)
-            profiles.push_back("default");
-
-        // Check for named profiles: <gameName>@<name>.conf
-        std::string prefix = gameName + "@";
-        DIR* d = opendir(configsDir.c_str());
-        if (!d)
-            return profiles;
-
-        struct dirent* entry;
-        while ((entry = readdir(d)) != nullptr)
-        {
-            std::string name = entry->d_name;
-            if (name.size() <= 5)
-                continue;
-            if (name.substr(name.size() - 5) != ".conf")
-                continue;
-            if (name.substr(0, prefix.size()) != prefix)
-                continue;
-
-            // Extract profile name: <gameName>@<profileName>.conf
-            std::string profileName = name.substr(prefix.size(), name.size() - prefix.size() - 5);
-            if (!profileName.empty())
-                profiles.push_back(profileName);
-        }
-        closedir(d);
-
-        std::sort(profiles.begin() + (profiles.empty() ? 0 : 1), profiles.end());
-        return profiles;
-    }
-
-    std::string ConfigSerializer::getActiveProfile(const std::string& gameName)
-    {
-        if (gameName.empty())
-            return "default";
-
-        const std::string configsDir = getConfigsDir();
-        if (configsDir.empty())
-            return "default";
-        std::string activePath = configsDir + "/.active_profiles";
-        std::ifstream file(activePath);
-        if (!file.is_open())
-            return "default";
-
-        std::string line;
-        while (std::getline(file, line))
-        {
-            size_t eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-            std::string key = line.substr(0, eq);
-            if (key == gameName)
-                return line.substr(eq + 1);
-        }
-
-        return "default";
-    }
-
-    void ConfigSerializer::setActiveProfile(const std::string& gameName,
-                                             const std::string& profileName)
-    {
-        if (gameName.empty())
-            return;
-
-        const std::string configsDir = getConfigsDir();
-        if (configsDir.empty())
-            return;
-
-        std::string activePath = configsDir + "/.active_profiles";
-
-        // Read existing entries
-        std::map<std::string, std::string> entries;
-        {
-            std::ifstream file(activePath);
-            if (file.is_open())
-            {
-                std::string line;
-                while (std::getline(file, line))
-                {
-                    size_t eq = line.find('=');
-                    if (eq != std::string::npos)
-                        entries[line.substr(0, eq)] = line.substr(eq + 1);
-                }
-            }
-        }
-
-        entries[gameName] = profileName;
-
-        // Write back atomically
-        std::string tmpPath = activePath + ".tmp";
-        std::ofstream file(tmpPath);
-        if (!file.is_open())
-            return;
-
-        for (const auto& [key, value] : entries)
-            file << key << "=" << value << "\n";
-
-        file.close();
-        if (!file.fail())
-            std::rename(tmpPath.c_str(), activePath.c_str());
-    }
-
-    bool ConfigSerializer::createProfile(const std::string& gameName,
-                                          const std::string& profileName,
-                                          const std::string& copyFromProfile)
-    {
-        if (gameName.empty() || profileName.empty() || profileName == "default" ||
-            gameName.find('/') != std::string::npos || gameName.find('\\') != std::string::npos ||
-            profileName.find('/') != std::string::npos || profileName.find('\\') != std::string::npos ||
-            profileName == "." || profileName == "..")
-            return false;
-
-        std::string newPath = getProfilePath(gameName, profileName);
-        if (newPath.empty())
-            return false;
-
-        // Check if already exists
-        struct stat st;
-        if (stat(newPath.c_str(), &st) == 0)
-            return false;  // Already exists
-
-        // Copy from source profile or create empty
-        if (!copyFromProfile.empty())
-        {
-            std::string srcPath = getProfilePath(gameName, copyFromProfile);
-            std::ifstream src(srcPath, std::ios::binary);
-            if (src.is_open())
-            {
-                std::ofstream dst(newPath, std::ios::binary);
-                dst << src.rdbuf();
-                Logger::info("Created profile " + profileName + " for " + gameName + " (copied from " + copyFromProfile + ")");
-                return true;
-            }
-        }
-
-        // Create empty profile
-        std::ofstream file(newPath);
-        if (!file.is_open())
-            return false;
-
-        file << "# VKIntox profile '" << profileName << "' for " << gameName << "\n\n";
-        file << "effects = \n";
-        file.close();
-
-        Logger::info("Created profile " + profileName + " for " + gameName);
-        return true;
-    }
-
-    bool ConfigSerializer::deleteProfile(const std::string& gameName,
-                                          const std::string& profileName)
-    {
-        // Prevent deleting default profile
-        if (profileName.empty() || profileName == "default")
-            return false;
-
-        std::string path = getProfilePath(gameName, profileName);
-        if (path.empty())
-            return false;
-
-        if (std::remove(path.c_str()) == 0)
-        {
-            Logger::info("Deleted profile " + profileName + " for " + gameName);
-
-            // If this was the active profile, switch back to default
-            if (getActiveProfile(gameName) == profileName)
-                setActiveProfile(gameName, "default");
-
-            return true;
-        }
-
-        return false;
     }
 
     std::string ConfigSerializer::getShaderProfilePath(const std::string& gameName, const std::string& profileName)

@@ -2338,8 +2338,8 @@ namespace VKIntox
             else if (!detectedGameName.empty())
             {
                 // Auto-create profile for this game if needed, then load it
-                activeProfileName = ConfigSerializer::getActiveProfile(detectedGameName);
-                activeProfilePath = ConfigSerializer::getProfilePath(detectedGameName, activeProfileName);
+                activeProfileName = "default";
+                activeProfilePath = ConfigSerializer::getProfilePath(detectedGameName);
 
                 // Ensure the profile file exists
                 struct stat st;
@@ -2354,7 +2354,7 @@ namespace VKIntox
                     if (ConfigSerializer::listShaderProfilesForGame(detectedGameName).empty())
                         ConfigSerializer::createShaderProfile(detectedGameName, "default");
                     currentConfigPath = activeProfilePath;
-                    Logger::info("game: " + detectedGameName + " | profile: " + activeProfileName);
+                    Logger::info("game: " + detectedGameName + " | config: " + activeProfilePath);
                 }
             }
 

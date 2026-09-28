@@ -101,73 +101,10 @@ namespace VKIntox
 
         // Normal mode - show profile and effect controls
 
-        // Profile section — auto-detected game with profile selector
+        // Profile section — auto-detected game with fixed config and shader INI selector
         if (!activeGameName.empty())
         {
             ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", activeGameName.c_str());
-
-            // Profile dropdown
-            static std::vector<std::string> profileList;
-            static bool profileListStale = true;
-            if (profileListStale)
-            {
-                profileList = ConfigSerializer::listProfilesForGame(activeGameName);
-                profileListStale = false;
-            }
-
-            ImGui::Text("Profile:");
-            ImGui::SameLine(100.0f);
-            ImGui::SetNextItemWidth(120);
-            if (ImGui::BeginCombo("##profile", activeProfileName.c_str()))
-            {
-                for (const auto& profile : profileList)
-                {
-                    bool selected = (profile == activeProfileName);
-                    if (ImGui::Selectable(profile.c_str(), selected))
-                    {
-                        if (profile != activeProfileName)
-                        {
-                            // Save current profile before switching
-                            if (!autoSaveProfile())
-                            {
-                                pushToast(LogLevel::Error, "Could not save the active profile.");
-                                continue;
-                            }
-
-                            // Switch to new profile
-                            activeProfileName = profile;
-                            activeProfilePath = ConfigSerializer::getProfilePath(activeGameName, profile);
-                            ConfigSerializer::setActiveProfile(activeGameName, profile);
-                            pendingConfigPath = activeProfilePath;
-                            applyRequested = true;
-                            profileListStale = true;
-
-                            // Load per-profile settings for the new profile
-                            static_cast<void>(ConfigSerializer::loadProfileSettings(activeProfilePath));
-                            // Profile settings loaded (safeAntiCheat removed)
-                        }
-                    }
-                    if (selected)
-                        ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndCombo();
-            }
-
-            ImGui::SameLine();
-            if (ImGui::Button("+##newprofile"))
-                ImGui::OpenPopup("NewProfilePopup");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Create new profile");
-
-            // Only allow deleting non-default profiles
-            if (activeProfileName != "default")
-            {
-                ImGui::SameLine();
-                if (ImGui::Button("-##delprofile"))
-                    ImGui::OpenPopup("DeleteProfilePopup");
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Delete this profile");
-            }
 
             ImGui::Text("Shader INI:");
             ImGui::SameLine(100.0f);
@@ -259,63 +196,6 @@ namespace VKIntox
                 ImGui::EndDisabled();
                 ImGui::EndPopup();
             }
-
-            // New profile popup
-            if (ImGui::BeginPopup("NewProfilePopup"))
-            {
-                static char newProfileName[64] = "";
-                ImGui::Text("New profile name:");
-                ImGui::SetNextItemWidth(150);
-                ImGui::InputText("##newprofname", newProfileName, sizeof(newProfileName));
-                ImGui::SameLine();
-                ImGui::BeginDisabled(newProfileName[0] == '\0');
-                if (ImGui::Button("Create"))
-                {
-                    if (ConfigSerializer::createProfile(activeGameName, newProfileName, activeProfileName))
-                    {
-                        // Save current state before switching, then switch
-                        if (profileDirty)
-                            autoSaveProfile();
-
-                        activeProfileName = newProfileName;
-                        activeProfilePath = ConfigSerializer::getProfilePath(activeGameName, newProfileName);
-                        ConfigSerializer::setActiveProfile(activeGameName, newProfileName);
-                        profileListStale = true;
-                        newProfileName[0] = '\0';
-                        ImGui::CloseCurrentPopup();
-                    }
-                }
-                ImGui::EndDisabled();
-                ImGui::EndPopup();
-            }
-
-            // Delete profile confirmation
-            if (ImGui::BeginPopup("DeleteProfilePopup"))
-            {
-                ImGui::Text("Delete profile '%s'?", activeProfileName.c_str());
-                if (ImGui::Button("Yes, delete"))
-                {
-                    if (ConfigSerializer::deleteProfile(activeGameName, activeProfileName))
-                    {
-                        profileDirty = false;
-                        paramsDirty = false;
-                        activeProfileName = "default";
-                        activeProfilePath = ConfigSerializer::getProfilePath(activeGameName, "default");
-                        ConfigSerializer::setActiveProfile(activeGameName, "default");
-                        pendingConfigPath = activeProfilePath;
-                        applyRequested = true;
-                        profileListStale = true;
-                    }
-                    else
-                        pushToast(LogLevel::Error, "Could not delete the profile.");
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Cancel"))
-                    ImGui::CloseCurrentPopup();
-                ImGui::EndPopup();
-            }
-
 
         }
         else
