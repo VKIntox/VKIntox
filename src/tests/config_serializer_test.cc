@@ -44,6 +44,23 @@ int main()
     setenv("XDG_CONFIG_HOME", root.c_str(), 1);
     setenv("HOME", root.c_str(), 1);
 
+    // A missing global config inherits launch effects enabled and writes that default.
+    VKIntox::ConfigSerializer::ensureConfigExists();
+    expect(VKIntox::ConfigSerializer::loadSettings().enableOnLaunch,
+           "missing global config defaults enableOnLaunch to true");
+    expect(readFile(VKIntox::ConfigSerializer::getBaseConfigDir() + "/VKIntox.conf")
+                   .find("enableOnLaunch = true") != std::string::npos,
+           "generated global config writes enableOnLaunch as true");
+
+    // Accept the capitalized boolean spelling used by older bundled configs.
+    {
+        std::ofstream legacy(VKIntox::ConfigSerializer::getBaseConfigDir() + "/VKIntox.conf");
+        legacy << "enableOnLaunch = True\n";
+    }
+    expect(VKIntox::ConfigSerializer::loadSettings().enableOnLaunch,
+           "settings load capitalized True for enableOnLaunch");
+    std::filesystem::remove(VKIntox::ConfigSerializer::getBaseConfigDir() + "/VKIntox.conf");
+
     // Settings are read back from an isolated XDG config directory.
     VKIntox::VkBasaltSettings settings;
     settings.maxEffects = 23;

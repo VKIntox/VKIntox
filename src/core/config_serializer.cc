@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <climits>
 #include <cerrno>
+#include <cctype>
 
 namespace VKIntox
 {
@@ -284,7 +285,12 @@ namespace VKIntox
             else if (key == "overlayKey")
                 settings.overlayKey = value;
             else if (key == "enableOnLaunch")
-                settings.enableOnLaunch = (value == "true" || value == "1");
+            {
+                std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                settings.enableOnLaunch = (value == "true" || value == "1" || value == "on");
+            }
             else if (key == "depthCapture")
                 settings.depthCapture = (value == "on");
             else if (key == "autoApply")
