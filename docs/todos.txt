@@ -20,6 +20,8 @@ Most likely has to do with spacing DONE
 6. Fix compiler warnings (if any) & global audit check, push RC 1
 7. Creating a new INI profile should inherit the active profile. DONE
 8. Resizing the overlay should also accept right clicks, as traditional DONE
+9. Entering a custom value shouldn't require right clicking and clicking Enter custom value (but keep that, don't remove) but rather double clicking the value itself should open the popup to the bottom right of the cursor; dynamic position.
+10. Slider values should pad by 0.01 instead of 0.1
 
 ================================================
 TODOS for v0.2.0

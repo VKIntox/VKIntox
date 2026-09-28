@@ -30,7 +30,7 @@ namespace VKIntox
             // === Render the slider ===
             if (ImGui::SliderFloat(p.label.c_str(), &p.value, p.minValue, p.maxValue))
             {
-                const float step = p.step > 0.0f ? p.step : 0.1f;
+                const float step = p.step > 0.0f ? p.step : 0.01f;
                 p.value = std::round(p.value / step) * step;
                 changed = true;
             }
@@ -44,6 +44,8 @@ namespace VKIntox
                     m_activeModalParam = paramAddr;
                     snprintf(m_customValueBuf, sizeof(m_customValueBuf), "%.6g", p.value);
                     // Don't call OpenPopup here - defer to after context menu closes
+                    m_popupPosition = ImGui::GetMousePos();
+                    m_focusCustomValueInput = true;
                     m_modalOpenRequested = true;
                 }
                 if (ImGui::MenuItem("Reset to default"))
@@ -54,16 +56,23 @@ namespace VKIntox
                 ImGui::EndPopup();
             }
 
+            bool popupOpenedThisFrame = false;
             // === Deferred modal opening (must happen outside any popup context) ===
             if (m_modalOpenRequested && m_activeModalParam == paramAddr)
             {
                 m_modalOpenRequested = false;
+                const ImGuiViewport* viewport = ImGui::GetMainViewport();
+                const ImVec2 popupSize = ImVec2(320.0f, 190.0f);
+                ImGui::SetNextWindowPos(customValuePopupPosition(
+                    m_popupPosition, viewport->Pos, viewport->Size, popupSize), ImGuiCond_Appearing);
+                ImGui::SetNextWindowSize(popupSize, ImGuiCond_Appearing);
                 ImGui::OpenPopup(modalId);
+                popupOpenedThisFrame = true;
             }
 
-            // === Render modal popup for THIS parameter only ===
+            // === Render custom value popup for THIS parameter only ===
             if (m_activeModalParam == paramAddr && 
-                ImGui::BeginPopupModal(modalId, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+                !popupOpenedThisFrame && ImGui::BeginPopup(modalId))
             {
                 ImGui::Text("Custom value: %s", p.label.c_str());
                 ImGui::Separator();
@@ -72,6 +81,11 @@ namespace VKIntox
                 ImGui::Spacing();
                 
                 ImGui::SetNextItemWidth(220.0f);
+                if (m_focusCustomValueInput)
+                {
+                    ImGui::SetKeyboardFocusHere();
+                    m_focusCustomValueInput = false;
+                }
                 bool submit = ImGui::InputText(inputId, m_customValueBuf, 
                     sizeof(m_customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue);
 
@@ -115,7 +129,9 @@ namespace VKIntox
         static constexpr size_t BUF_SIZE = 128;
         char m_customValueBuf[BUF_SIZE] = "";
         const void* m_activeModalParam = nullptr;  // Which param has modal open
-        bool m_modalOpenRequested = false;         // Deferred open flag
+        bool m_modalOpenRequested = false;
+        bool m_focusCustomValueInput = false;
+        ImVec2 m_popupPosition = ImVec2(0.0f, 0.0f);
     };
 
     REGISTER_FIELD_EDITOR(ParamType::Float, FloatFieldEditor)
