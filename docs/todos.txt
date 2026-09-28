@@ -5,7 +5,8 @@ Current version: v0.1.1-release-candidate-1
 ================================================
 TODOS for v0.1.1 (release)
 ================================================
-1. Targeted depth fixes: for some reason we need to reload for depth to register (sometimes)
+1. Targeted depth fixes: for some reason we need to reload for depth to register (sometimes) DONE
+Release 0.1.1!!!!
 
 ================================================
 TODOS for v0.1.2
