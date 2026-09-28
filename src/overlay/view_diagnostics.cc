@@ -587,7 +587,7 @@ namespace VKIntox
         }();
         ImGui::TextDisabled("VKIntox version %s", runtimeVersion.c_str());
         ImGui::TextDisabled("Report issues:");
-        ImGui::TextLinkOpenURL("github.com/Daaboulex/vkBasalt_overlay_wayland/issues", "https://github.com/Daaboulex/vkBasalt_overlay_wayland/issues");
+        ImGui::TextLinkOpenURL("github.com/buwryme/VKIntox/issues", "https://github.com/buwryme/VKIntox/issues");
 
         ImGui::EndChild();
     }
