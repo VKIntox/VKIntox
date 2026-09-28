@@ -182,8 +182,6 @@ namespace VKIntox
                                       const std::vector<std::string>& techniqueSorting = {});
         static std::vector<ConfigParam> loadShaderProfile(const std::string& path);
         static ShaderProfileData loadShaderProfileData(const std::string& path);
-        static bool migrateProfileShaderSettings(const std::string& profilePath, const std::string& gameName);
-
         // Load per-profile settings from a config file
         static ProfileSettings loadProfileSettings(const std::string& filePath);
 

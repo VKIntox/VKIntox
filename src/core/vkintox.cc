@@ -2351,12 +2351,6 @@ namespace VKIntox
 
                 if (!activeProfilePath.empty())
                 {
-                    for (const auto& profile : ConfigSerializer::listProfilesForGame(detectedGameName))
-                    {
-                        const std::string legacyPath = ConfigSerializer::getProfilePath(detectedGameName, profile);
-                        if (!ConfigSerializer::migrateProfileShaderSettings(legacyPath, detectedGameName))
-                            Logger::err("Could not migrate shader settings from " + legacyPath);
-                    }
                     if (ConfigSerializer::listShaderProfilesForGame(detectedGameName).empty())
                         ConfigSerializer::createShaderProfile(detectedGameName, "default");
                     currentConfigPath = activeProfilePath;
