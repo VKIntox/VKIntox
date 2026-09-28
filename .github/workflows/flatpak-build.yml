@@ -33,11 +33,12 @@ jobs:
             "$RUNNER_TEMP/vkintox-flatpak-build" \
             packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json
 
-      - name: Name library with build date
+      - name: Name library with version and build date
         run: |
           lib="$RUNNER_TEMP/vkintox-flatpak-build/files/lib/libvkintox.so"
           test -s "$lib"
-          cp "$lib" "libvkintox_flatpak_$(date -u +'%d%m%Y').so"
+          version=$(tr -d '\n' < VERSION)
+          cp "$lib" "libvkintox_flatpak_${version}_$(date -u +'%d%m%Y').so"
 
       - name: Upload library
         uses: actions/upload-artifact@v4
