@@ -19,7 +19,7 @@ Most likely has to do with spacing
 5. Other cool stuff
 6. Fix compiler warnings (if any) & global audit check, push RC 1
 7. Creating a new INI profile should inherit the active profile. DONE
-8. Resizing the overlay should also accept right clicks, as traditional
+8. Resizing the overlay should also accept right clicks, as traditional DONE
 
 ================================================
 TODOS for v0.2.0

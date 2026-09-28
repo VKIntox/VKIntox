@@ -1144,11 +1144,11 @@ namespace VKIntox
         {
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastChangeTime).count();
-            const bool leftMouseDown = ImGui::GetIO().MouseDown[0];
+            const bool mouseButtonDown = ImGui::GetIO().MouseDown[0] || ImGui::GetIO().MouseDown[1];
 
-            // Defer auto-apply while left mouse is held (dragging/resizing/sliders).
+            // Defer auto-apply while either mouse button is held (dragging/resizing/sliders).
             // Apply on the first frame after release once delay has already elapsed.
-            if (elapsed >= settingsManager.getAutoApplyDelay() && !leftMouseDown)
+            if (elapsed >= settingsManager.getAutoApplyDelay() && !mouseButtonDown)
             {
                 applyRequested = true;
                 paramsDirty = false;
