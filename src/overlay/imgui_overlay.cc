@@ -1157,7 +1157,8 @@ namespace VKIntox
         }
 
         // Auto-save profile when changes are applied
-        if (profileDirty && !paramsDirty && !activeProfilePath.empty())
+        if (profileDirty && !paramsDirty &&
+            (!activeProfilePath.empty() || !activeShaderProfilePath.empty()))
             autoSaveProfile();
 
         // Focus Effects window on first frame of the session
