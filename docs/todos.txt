@@ -22,7 +22,7 @@ Most likely has to do with spacing DONE?
 8. Entering a custom value shouldn't require right clicking and clicking Enter custom value (but keep that, don't remove) but rather double clicking the value itself should open the popup to the bottom right of the cursor; dynamic position. DONE
 9. Slider values should pad by 0.01 instead of 0.1 DONE
 10. Allow dragging titlebar with right click too DONE
-11. Add icon to titlebar and in diagnostics, centered. Change report issues link to actual link
+11. Add icon to titlebar and in diagnostics, centered. Change report issues link to actual link DONE
 12. Fix compiler warnings (if any) & global audit check, push RC 1
 
 ================================================
