@@ -965,7 +965,7 @@ namespace VKIntox
             if (i) file << ',';
             file << sortedTechniques[i];
         }
-        file << "\n";
+        file << "\n\n";
         std::map<std::pair<std::string, std::string>, std::string> outputValues;
         std::map<std::pair<std::string, std::string>, std::map<size_t, std::string>> vectorValues;
         for (const auto& [key, value] : merged)
@@ -990,7 +990,7 @@ namespace VKIntox
             std::string value;
             for (const auto& [index, component] : components)
             {
-                if (!value.empty()) value += ',';
+                if (!value.empty()) value += ", ";
                 value += component;
             }
             outputValues[key] = value;
@@ -1004,12 +1004,13 @@ namespace VKIntox
             bool first = true;
             for (const auto& [name, macroValue] : macros)
             {
-                if (!first) file << ',';
+                if (!first) file << ", ";
                 file << name << '=';
                 for (const char c : macroValue)
                 {
                     file << c;
-                    if (c == ',') file << ',';
+                    if (c == ',')
+                        file << ',';
                 }
                 first = false;
             }
@@ -1026,6 +1027,7 @@ namespace VKIntox
         {
             if (key.first != current)
             {
+                file << '\n';
                 current = key.first;
                 file << "[" << current << "]\n";
                 const auto macros = preprocessorValues.find(current);
@@ -1062,7 +1064,15 @@ namespace VKIntox
 
         std::ostringstream disabledFile;
         for (const auto& [key, value] : mergedDisabledParams)
-            disabledFile << '[' << key.first << "]\n" << key.second << '=' << value << "\n";
+        {
+            if (!key.second.empty() && key.second.front() == '@')
+            {
+                disabledFile << '[' << key.first << "]\nPreprocessorDefinitions="
+                             << key.second.substr(1) << '=' << value << "\n\n";
+            }
+            else
+                disabledFile << '[' << key.first << "]\n" << key.second << '=' << value << "\n\n";
+        }
         return disabledFile.good() && writeAtomically(disabledValuesPath, disabledFile.str());
     }
 

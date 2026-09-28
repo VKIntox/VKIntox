@@ -147,6 +147,9 @@ int main()
            "shader profile preserves ReShade techniques");
     expect(!shaderData.hasEffectList, "shader profile does not require VKIntox-only effect-list keys");
     const std::string shaderText = readFile(shaderPath);
+    expect(shaderText.find("[simple.fx]\n") != std::string::npos &&
+               shaderText.find("\n\n[simple.fx]\n") != std::string::npos,
+           "shader preset separates parameter sections with a blank line");
     expect(shaderText.find("VKIntoxEffects=") == std::string::npos &&
                shaderText.find("VKIntoxDisabledEffects=") == std::string::npos,
            "shader profile only writes ReShade-compatible keys");
@@ -158,6 +161,10 @@ int main()
         ("." + presetPath.filename().string() + "_disabled-effectvalues")).string();
     const auto savedDisabledParams = VKIntox::ConfigSerializer::loadShaderProfile(disabledProfilePath);
     expect(savedDisabledParams.size() == disabledParams.size(), "disabled effect values saved in sidecar");
+    expect(readFile(disabledProfilePath).find("PreprocessorDefinitions=QUALITY=low") != std::string::npos,
+           "disabled sidecar writes preprocessor definitions in normal INI syntax");
+    expect(readFile(shaderPath).find("PreprocessorDefinitions=QUALITY=high,,fast") != std::string::npos,
+           "escaped commas in macro values retain ReShade syntax");
     expect(readFile(shaderPath).find("Strength=0.25") == std::string::npos,
            "disabled effect values are omitted from main preset");
     expect(std::find_if(savedDisabledParams.begin(), savedDisabledParams.end(), [](const auto& param) {
