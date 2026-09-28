@@ -463,6 +463,9 @@ namespace VKIntox
 
         ImGui::Spacing();
 
+        renderCenteredBrandIcon(56.0f);
+        ImGui::Spacing();
+
         // Frame time graph
         drawGraph("Frame Time", "##frametime", frameTimeHistory, 0.0f, 50.0f, "%.1f ms",
                   ImVec4(0.4f, 0.8f, 0.4f, 1.0f));

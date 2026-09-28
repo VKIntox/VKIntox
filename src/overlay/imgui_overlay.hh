@@ -139,6 +139,7 @@ namespace VKIntox
 
         void refreshShaderProfiles();
         void setActiveShaderProfile(const std::string& profileName);
+        void renderCenteredBrandIcon(float size);
 
         // Trigger debounced reload (for config switch)
         void markDirty() { paramsDirty = true; lastChangeTime = std::chrono::steady_clock::now(); }
@@ -200,6 +201,11 @@ namespace VKIntox
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
         VkRenderPass renderPass = VK_NULL_HANDLE;
         VkCommandPool commandPool = VK_NULL_HANDLE;
+        VkImage titleIconImage = VK_NULL_HANDLE;
+        VkDeviceMemory titleIconMemory = VK_NULL_HANDLE;
+        VkImageView titleIconView = VK_NULL_HANDLE;
+        VkSampler titleIconSampler = VK_NULL_HANDLE;
+        VkDescriptorSet titleIconDescriptor = VK_NULL_HANDLE;
         std::vector<VkCommandBuffer> commandBuffers;
         std::vector<VkFence> commandBufferFences;  // Fences to track command buffer completion
         std::vector<VkFramebuffer> framebuffers;    // Pre-created per swapchain image

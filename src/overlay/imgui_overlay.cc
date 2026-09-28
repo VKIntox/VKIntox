@@ -7,6 +7,10 @@
 #include "keyboard_input.hh"
 #include "input_blocker.hh"
 #include "config_serializer.hh"
+#include "image.hh"
+#include "memory.hh"
+#include "overlay/vkintox_icon_png.hh"
+#include "stb_image.h"
 #include "wayland_display.hh"
 #include "wayland_pointer_constraints.hh"
 #include "wayland_input_common.hh"
@@ -23,6 +27,16 @@
 
 namespace VKIntox
 {
+    namespace
+    {
+        constexpr float kOverlayTitleBarHeight = 36.0f;
+
+        void overlayTitleHeightConstraint(ImGuiSizeCallbackData* data)
+        {
+            data->DesiredSize.y = std::max(data->DesiredSize.y, kOverlayTitleBarHeight + 1.0f);
+        }
+    }
+
     // No-op dummy for Vulkan functions ImGui requests but VKIntox doesn't intercept.
     // ImGui's LoadFunctions treats nullptr returns as failures, so we need a valid pointer.
     static void VKAPI_CALL dummyVulkanFunc() {}
@@ -275,6 +289,17 @@ namespace VKIntox
         std::string iniPath = ConfigSerializer::getBaseConfigDir() + "/imgui.ini";
         ImGui::SaveIniSettingsToDisk(iniPath.c_str());
 
+        if (titleIconDescriptor != VK_NULL_HANDLE)
+            ImGui_ImplVulkan_RemoveTexture(titleIconDescriptor);
+        if (titleIconSampler != VK_NULL_HANDLE)
+            pLogicalDevice->vkd.DestroySampler(pLogicalDevice->device, titleIconSampler, nullptr);
+        if (titleIconView != VK_NULL_HANDLE)
+            pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, titleIconView, nullptr);
+        if (titleIconImage != VK_NULL_HANDLE)
+            pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, titleIconImage, nullptr);
+        if (titleIconMemory != VK_NULL_HANDLE)
+            pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, titleIconMemory, nullptr);
+
         if (backendInitialized)
             ImGui_ImplVulkan_Shutdown();
         ImGui::DestroyContext();
@@ -339,6 +364,25 @@ namespace VKIntox
         activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
         if (!activeGameName.empty() && !activeShaderProfileName.empty())
             ConfigSerializer::setLastShaderProfile(activeGameName, activeShaderProfileName);
+    }
+
+    void ImGuiOverlay::renderCenteredBrandIcon(float size)
+    {
+        if (titleIconDescriptor == VK_NULL_HANDLE || size <= 0.0f)
+            return;
+        const float contentWidth = ImGui::GetContentRegionAvail().x;
+        const float x = ImGui::GetCursorPosX() + std::max(0.0f, (contentWidth - size) * 0.5f);
+        ImGui::SetCursorPosX(x);
+        ImGui::GetWindowDrawList()->AddImage(
+            ImTextureRef(reinterpret_cast<ImTextureID>(titleIconDescriptor)),
+            ImGui::GetCursorScreenPos(),
+            ImVec2(ImGui::GetCursorScreenPos().x + size, ImGui::GetCursorScreenPos().y + size));
+        ImGui::Dummy(ImVec2(size, size));
+        ImGui::Dummy(ImVec2(0.0f, 4.0f));
+        const char* brandText = "VKIntox";
+        const float textWidth = ImGui::CalcTextSize(brandText).x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (contentWidth - textWidth) * 0.5f));
+        ImGui::TextUnformatted(brandText);
     }
 
     void ImGuiOverlay::pushToast(LogLevel level, const std::string& message)
@@ -824,6 +868,81 @@ namespace VKIntox
 
         ImGui_ImplVulkan_Init(&initInfo);
 
+        VkImageCreateInfo iconInfo{};
+        iconInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        iconInfo.imageType = VK_IMAGE_TYPE_2D;
+        iconInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+        iconInfo.extent = {512, 512, 1};
+        iconInfo.mipLevels = 1;
+        iconInfo.arrayLayers = 1;
+        iconInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        iconInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        iconInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        iconInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        iconInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkResult iconResult = pLogicalDevice->vkd.CreateImage(pLogicalDevice->device, &iconInfo, nullptr, &titleIconImage);
+        if (iconResult == VK_SUCCESS)
+        {
+            VkMemoryRequirements requirements{};
+            pLogicalDevice->vkd.GetImageMemoryRequirements(pLogicalDevice->device, titleIconImage, &requirements);
+            VkMemoryAllocateInfo allocation{};
+            allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocation.allocationSize = requirements.size;
+            allocation.memoryTypeIndex = findMemoryTypeIndex(pLogicalDevice, requirements.memoryTypeBits,
+                                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            iconResult = pLogicalDevice->vkd.AllocateMemory(pLogicalDevice->device, &allocation, nullptr, &titleIconMemory);
+            if (iconResult == VK_SUCCESS)
+                iconResult = pLogicalDevice->vkd.BindImageMemory(pLogicalDevice->device, titleIconImage, titleIconMemory, 0);
+        }
+        if (iconResult == VK_SUCCESS)
+        {
+            int iconWidth = 0, iconHeight = 0, iconChannels = 0;
+            stbi_uc* iconPixels = stbi_load_from_memory(kOverlayIconPng, sizeof(kOverlayIconPng),
+                                                        &iconWidth, &iconHeight, &iconChannels, STBI_rgb_alpha);
+            if (!iconPixels || iconWidth != 512 || iconHeight != 512)
+            {
+                if (iconPixels)
+                    stbi_image_free(iconPixels);
+                iconResult = VK_ERROR_FORMAT_NOT_SUPPORTED;
+                Logger::warn("Could not decode embedded VKIntox icon");
+            }
+            else
+            {
+                uploadToImage(pLogicalDevice, titleIconImage,
+                              {static_cast<uint32_t>(iconWidth), static_cast<uint32_t>(iconHeight), 1},
+                              static_cast<uint32_t>(iconWidth * iconHeight * 4), iconPixels);
+                stbi_image_free(iconPixels);
+            }
+        }
+        if (iconResult == VK_SUCCESS)
+        {
+            VkImageViewCreateInfo viewInfo{};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = titleIconImage;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            iconResult = pLogicalDevice->vkd.CreateImageView(pLogicalDevice->device, &viewInfo, nullptr, &titleIconView);
+        }
+        if (iconResult == VK_SUCCESS)
+        {
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.maxLod = 0.0f;
+            iconResult = pLogicalDevice->vkd.CreateSampler(pLogicalDevice->device, &samplerInfo, nullptr, &titleIconSampler);
+        }
+        if (iconResult == VK_SUCCESS)
+            titleIconDescriptor = ImGui_ImplVulkan_AddTexture(titleIconSampler, titleIconView,
+                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        else
+            Logger::warn("Could not create VKIntox title bar icon: " + std::to_string(iconResult));
+
         this->swapchainFormat = swapchainFormat;
         this->imageCount = imageCount;
         bool commandBuffersAllocated = false;
@@ -1112,7 +1231,12 @@ namespace VKIntox
             ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
         }
 
+        const float previousFramePaddingY = ImGui::GetStyle().FramePadding.y;
+        ImGui::GetStyle().FramePadding.y = std::max(0.0f, (kOverlayTitleBarHeight - ImGui::GetFontSize()) * 0.5f);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(300, 200), ImVec2(screenMax.x - screenMin.x, screenMax.y - screenMin.y),
+                                            overlayTitleHeightConstraint);
         ImGui::Begin("VKIntox Overlay", nullptr, ImGuiWindowFlags_NoCollapse);
+        ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
 
         const ImVec2 windowPos = ImGui::GetWindowPos();
         const ImVec2 windowSize = ImGui::GetWindowSize();
