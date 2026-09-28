@@ -876,7 +876,8 @@ namespace VKIntox
                                              const std::vector<std::string>& disabledEffects,
                                              const std::map<std::string, std::string>& effectPaths,
                                              const std::vector<std::string>& enabledTechniques,
-                                             const std::vector<std::string>& techniqueSorting)
+                                             const std::vector<std::string>& techniqueSorting,
+                                             const std::vector<ConfigParam>& disabledEffectParams)
     {
         if (path.empty())
             return false;
@@ -895,9 +896,14 @@ namespace VKIntox
                 return std::filesystem::path(it->second).filename().string();
             return effectName;
         };
-        std::map<std::pair<std::string, std::string>, std::string> merged;
-        for (const auto& p : params)
-            merged[{sectionFor(p.effectName), p.paramName}] = p.value;
+        auto mergeParams = [&sectionFor](const std::vector<ConfigParam>& source) {
+            std::map<std::pair<std::string, std::string>, std::string> merged;
+            for (const auto& p : source)
+                merged[{sectionFor(p.effectName), p.paramName}] = p.value;
+            return merged;
+        };
+        const auto merged = mergeParams(params);
+        const auto mergedDisabledParams = mergeParams(disabledEffectParams);
         std::set<std::string> disabled(disabledEffects.begin(), disabledEffects.end());
         std::vector<std::string> techniques = enabledTechniques;
         std::vector<std::string> sortedTechniques = techniqueSorting;
@@ -1015,7 +1021,25 @@ namespace VKIntox
             writePreprocessorDefinitions(macros);
             file << "\n";
         }
-        return file.good() && writeAtomically(path, file.str());
+        if (!file.good() || !writeAtomically(path, file.str()))
+            return false;
+
+        // Preserve values for unchecked effects separately from the preset
+        // ReShade consumes. Appending to the original filename keeps the
+        // sidecar adjacent and stable even for presets with non-INI extensions.
+        const auto presetPath = std::filesystem::path(path);
+        const std::string disabledValuesPath = (presetPath.parent_path() /
+            ("." + presetPath.filename().string() + "_disabled-effectvalues")).string();
+        if (mergedDisabledParams.empty())
+        {
+            std::remove(disabledValuesPath.c_str());
+            return true;
+        }
+
+        std::ostringstream disabledFile;
+        for (const auto& [key, value] : mergedDisabledParams)
+            disabledFile << '[' << key.first << "]\n" << key.second << '=' << value << "\n";
+        return disabledFile.good() && writeAtomically(disabledValuesPath, disabledFile.str());
     }
 
     ShaderProfileData ConfigSerializer::loadShaderProfileData(const std::string& path)

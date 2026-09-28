@@ -80,6 +80,9 @@ namespace VKIntox
         // Get all effect definitions (keys whose values are .fx file paths)
         std::unordered_map<std::string, std::string> getEffectDefinitions() const;
 
+        // Whether this config or its fallback defines the given option.
+        bool hasOption(const std::string& option) const { return hasOptionKey(option); }
+
     private:
         std::unordered_map<std::string, std::string> options;
         std::unordered_map<std::string, std::string> overrides;  // In-memory overrides

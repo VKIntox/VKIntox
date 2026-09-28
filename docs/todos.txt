@@ -15,13 +15,23 @@ TODOS for v0.1.2
 2. Possibly remove .conf -> .ini migration DONE
 3. Move Profile dropdown to Settings tab instead of Main tab DONE, removed dropdown instead
 4. Fix Issue#1 -> Make VKIntox .ini fully cross-compatible with ReShade .ini
-Most likely has to do with spacing DONE
+Most likely has to do with spacing WIP
 5. Other cool stuff
 6. Fix compiler warnings (if any) & global audit check, push RC 1
 7. Creating a new INI profile should inherit the active profile. DONE
 8. Resizing the overlay should also accept right clicks, as traditional DONE
-9. Entering a custom value shouldn't require right clicking and clicking Enter custom value (but keep that, don't remove) but rather double clicking the value itself should open the popup to the bottom right of the cursor; dynamic position.
-10. Slider values should pad by 0.01 instead of 0.1
+9. Entering a custom value shouldn't require right clicking and clicking Enter custom value (but keep that, don't remove) but rather double clicking the value itself should open the popup to the bottom right of the cursor; dynamic position. DONE
+10. Slider values should pad by 0.01 instead of 0.1 DONE
+
+================================================
+TODOS for v0.1.3
+================================================
+This version will be mostly backend focused.
+1. Enforce RAII for all resources
+2. Run deep global audit for memory leaks, resource leaks, etc... and bugs
+3. Port built-in effects into ReShade .fx files
+... or stop using them? Remove them fully? idk
+4. Fix compiler warnings (if any) & small audit check, push RC 1
 
 ================================================
 TODOS for v0.2.0

@@ -504,7 +504,8 @@ namespace VKIntox
         std::vector<std::string>& disabledEffects,
         std::vector<ConfigParam>& params,
         std::map<std::string, std::string>& effectPaths,
-        std::vector<PreprocessorDefinition>& allDefs)
+        std::vector<PreprocessorDefinition>& allDefs,
+        std::vector<ConfigParam>& disabledEffectParams)
     {
         if (!pEffectRegistry)
             return;
@@ -513,6 +514,7 @@ namespace VKIntox
 
         for (const auto& effectName : effects)
         {
+            const bool effectEnabled = pEffectRegistry->isEffectEnabled(effectName);
             for (auto* p : pEffectRegistry->getParametersForEffect(effectName))
             {
                 if (p->noSave)
@@ -525,10 +527,12 @@ namespace VKIntox
                     cp.paramName = suffix.empty() ? p->name : suffix;
                     cp.value = value;
                     params.push_back(cp);
+                    if (!effectEnabled)
+                        disabledEffectParams.push_back(cp);
                 }
             }
 
-            if (!pEffectRegistry->isEffectEnabled(effectName))
+            if (!effectEnabled)
                 disabledEffects.push_back(effectName);
 
             if (pEffectRegistry->isEffectBuiltIn(effectName))
@@ -545,7 +549,11 @@ namespace VKIntox
 
                 const auto& defs = pEffectRegistry->getPreprocessorDefs(effectName);
                 for (const auto& def : defs)
+                {
                     allDefs.push_back(def);
+                    if (!effectEnabled)
+                        disabledEffectParams.push_back({def.effectName, "@" + def.name, def.value});
+                }
             }
         }
     }
@@ -557,9 +565,10 @@ namespace VKIntox
 
         std::vector<std::string> effects, disabledEffects;
         std::vector<ConfigParam> params;
+        std::vector<ConfigParam> disabledEffectParams;
         std::map<std::string, std::string> effectPaths;
         std::vector<PreprocessorDefinition> allDefs;
-        collectSaveData(effects, disabledEffects, params, effectPaths, allDefs);
+        collectSaveData(effects, disabledEffects, params, effectPaths, allDefs, disabledEffectParams);
 
         ConfigSerializer::saveConfig(saveConfigName, effects, disabledEffects, params, effectPaths, allDefs);
         profileDirty = false;
@@ -574,23 +583,70 @@ namespace VKIntox
 
         std::vector<std::string> effects, disabledEffects;
         std::vector<ConfigParam> params;
+        std::vector<ConfigParam> disabledEffectParams;
         std::map<std::string, std::string> effectPaths;
         std::vector<PreprocessorDefinition> allDefs;
-        collectSaveData(effects, disabledEffects, params, effectPaths, allDefs);
+        collectSaveData(effects, disabledEffects, params, effectPaths, allDefs, disabledEffectParams);
 
         ProfileSettings profileSettings;
         // safeAntiCheat removed
+
+        bool configSaved = true;
+        if (!activeProfilePath.empty())
+        {
+            std::map<std::string, std::string> instancePaths = effectPaths;
+            for (const auto& [name, path] : effectPaths)
+            {
+                if (std::filesystem::path(path).extension() == ".fx")
+                    instancePaths[name] = std::filesystem::path(path).filename().string();
+            }
+            configSaved = ConfigSerializer::saveToPath(activeProfilePath, effects, disabledEffects, params,
+                                                       instancePaths, allDefs, profileSettings);
+        }
 
         bool shaderSaved = true;
         if (!activeShaderProfilePath.empty())
         {
             std::vector<ConfigParam> shaderParams = params;
+            std::set<std::string> disabledFiles;
+            const auto& allEffects = pEffectRegistry->getAllEffects();
+            for (const auto& effectName : disabledEffects)
+            {
+                const auto effect = std::find_if(allEffects.begin(), allEffects.end(), [&effectName](const EffectConfig& item) {
+                    return item.name == effectName;
+                });
+                if (effect != allEffects.end() && !effect->filePath.empty())
+                    disabledFiles.insert(std::filesystem::path(effect->filePath).filename().string());
+            }
+            shaderParams.erase(std::remove_if(shaderParams.begin(), shaderParams.end(),
+                [&disabledFiles, &effectPaths](const ConfigParam& param) {
+                    const auto path = effectPaths.find(param.effectName);
+                    return path != effectPaths.end() &&
+                        disabledFiles.count(std::filesystem::path(path->second).filename().string()) != 0;
+                }),
+                shaderParams.end());
+            disabledEffectParams.erase(std::remove_if(disabledEffectParams.begin(), disabledEffectParams.end(),
+                [&disabledFiles, &effectPaths](const ConfigParam& param) {
+                    const auto path = effectPaths.find(param.effectName);
+                    return path != effectPaths.end() &&
+                        disabledFiles.count(std::filesystem::path(path->second).filename().string()) == 0;
+                }),
+                disabledEffectParams.end());
             for (const auto& def : allDefs)
-                shaderParams.push_back({def.effectName, "@" + def.name, def.value});
+            {
+                ConfigParam param{def.effectName, "@" + def.name, def.value};
+                shaderParams.push_back(std::move(param));
+            }
+            std::set<std::pair<std::string, std::string>> enabledParamKeys;
+            for (const auto& param : shaderParams)
+                enabledParamKeys.emplace(param.effectName, param.paramName);
+            disabledEffectParams.erase(std::remove_if(disabledEffectParams.begin(), disabledEffectParams.end(),
+                [&enabledParamKeys](const ConfigParam& param) {
+                    return enabledParamKeys.count({param.effectName, param.paramName}) != 0;
+                }), disabledEffectParams.end());
             std::vector<std::string> enabledTechniques;
             std::vector<std::string> techniqueSorting;
             const auto& selected = pEffectRegistry->getSelectedEffects();
-            const auto& allEffects = pEffectRegistry->getAllEffects();
             for (const auto& name : selected)
             {
                 auto effect = std::find_if(allEffects.begin(), allEffects.end(), [&name](const EffectConfig& item) {
@@ -608,11 +664,10 @@ namespace VKIntox
                 }
             }
             shaderSaved = ConfigSerializer::saveShaderProfile(activeShaderProfilePath, shaderParams, effects, disabledEffects,
-                                                               effectPaths, enabledTechniques, techniqueSorting);
+                                                               effectPaths, enabledTechniques, techniqueSorting,
+                                                               disabledEffectParams);
         }
 
-        const bool configSaved = activeProfilePath.empty() ||
-            ConfigSerializer::saveToPath(activeProfilePath, effects, disabledEffects, {}, effectPaths, {}, profileSettings);
         if (shaderSaved && configSaved)
         {
             profileDirty = false;

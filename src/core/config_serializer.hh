@@ -160,7 +160,8 @@ namespace VKIntox
                                       const std::vector<std::string>& disabledEffects = {},
                                       const std::map<std::string, std::string>& effectPaths = {},
                                       const std::vector<std::string>& enabledTechniques = {},
-                                      const std::vector<std::string>& techniqueSorting = {});
+                                      const std::vector<std::string>& techniqueSorting = {},
+                                      const std::vector<ConfigParam>& disabledEffectParams = {});
         static std::vector<ConfigParam> loadShaderProfile(const std::string& path);
         static ShaderProfileData loadShaderProfileData(const std::string& path);
         // Load per-profile settings from a config file

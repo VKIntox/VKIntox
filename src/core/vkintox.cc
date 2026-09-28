@@ -2233,7 +2233,8 @@ namespace VKIntox
                 namesByFile[filename].push_back(name);
             }
             const auto profile = ConfigSerializer::loadShaderProfileData(path);
-            for (const auto& param : profile.params)
+            auto applyParams = [&](const std::vector<ConfigParam>& params) {
+            for (const auto& param : params)
             {
                 std::vector<std::string> effectNames;
                 std::string section = param.effectName;
@@ -2266,6 +2267,15 @@ namespace VKIntox
                 }
                 for (const auto& effectName : effectNames)
                     config->setOption(effectName + "." + param.paramName, param.value);
+            }
+            };
+            applyParams(profile.params);
+            if (!profile.hasEffectList && profile.hasTechniques)
+            {
+                const auto presetPath = std::filesystem::path(path);
+                const auto disabledValuesPath = (presetPath.parent_path() /
+                    ("." + presetPath.filename().string() + "_disabled-effectvalues")).string();
+                applyParams(ConfigSerializer::loadShaderProfile(disabledValuesPath));
             }
             if (profile.hasEffectList)
             {
@@ -2302,47 +2312,67 @@ namespace VKIntox
                     }
                 }
 
+                // TechniqueSorting is an ordering hint for all techniques in a
+                // preset. Techniques is the actual enabled list. Expanding the
+                // sorting list (or matching only by filename) imports every
+                // technique from a shader pack and can create hundreds of
+                // disabled instances that make the overlay unusable.
                 const auto& sortedTechniques = profile.techniqueSorting.empty()
                     ? profile.techniques
                     : profile.techniqueSorting;
-                std::set<std::string> enabledFiles;
+                std::set<std::string> enabledTechniques;
                 for (const auto& technique : profile.techniques)
                 {
-                    const size_t separator = technique.rfind('@');
-                    if (separator == std::string::npos || separator + 1 >= technique.size())
-                        continue;
-                    std::string filename = technique.substr(separator + 1);
-                    std::transform(filename.begin(), filename.end(), filename.begin(),
-                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                    enabledFiles.insert(std::move(filename));
+                    enabledTechniques.insert(technique);
                 }
+                const bool hasExplicitEnabledTechniques = profile.hasTechniques;
                 std::set<std::string> addedEffects;
+                std::set<std::string> matchedConfiguredEffects;
+                const size_t maxEffects = static_cast<size_t>(settingsManager.getMaxEffects());
                 for (const auto& technique : sortedTechniques)
                 {
+                    if (effects.size() >= maxEffects)
+                        break;
                     const size_t separator = technique.rfind('@');
                     if (separator == std::string::npos || separator + 1 >= technique.size())
                         continue;
 
                     const std::string filename = technique.substr(separator + 1);
+                    const std::string techniqueName = technique.substr(0, separator);
                     std::string normalizedFilename = filename;
                     std::transform(normalizedFilename.begin(), normalizedFilename.end(), normalizedFilename.begin(),
                                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                    std::vector<std::string> effectNames;
                     const auto configuredNames = namesByFile.find(normalizedFilename);
-                    if (configuredNames != namesByFile.end())
-                        effectNames = configuredNames->second;
-                    else
-                        effectNames.push_back(std::filesystem::path(filename).stem().string());
+                    std::string effectName;
 
-                    const bool enabled = enabledFiles.count(normalizedFilename) != 0;
-                    for (const auto& name : effectNames)
+                    // Resolve imported preset techniques to an existing
+                    // VKIntox instance by exact technique name. Fall back to
+                    // the configured shader filename only when the preset
+                    // uses a name that does not correspond to a configured
+                    // instance; never expand one file to every instance.
+                    if (config->hasOption(techniqueName))
+                        effectName = techniqueName;
+                    else if (configuredNames != namesByFile.end())
                     {
-                        if (!addedEffects.insert(name).second)
-                            continue;
-                        effects.push_back(name);
-                        if (!enabled)
-                            disabled.push_back(name);
+                        const auto candidate = std::find_if(configuredNames->second.begin(), configuredNames->second.end(),
+                            [&](const std::string& name) {
+                                return !matchedConfiguredEffects.count(name) && name == techniqueName;
+                            });
+                        if (candidate != configuredNames->second.end())
+                            effectName = *candidate;
+                        else if (configuredNames->second.size() == 1 &&
+                                 !matchedConfiguredEffects.count(configuredNames->second.front()))
+                            effectName = configuredNames->second.front();
                     }
+                    if (effectName.empty())
+                        effectName = techniqueName;
+
+                    if (!addedEffects.insert(effectName).second)
+                        continue;
+                    matchedConfiguredEffects.insert(effectName);
+                    effects.push_back(effectName);
+                    if (hasExplicitEnabledTechniques && !enabledTechniques.count(technique))
+                        disabled.push_back(effectName);
                 }
 
                 auto join = [](const std::vector<std::string>& values) {

@@ -135,8 +135,12 @@ int main()
     const std::vector<std::string> shaderDisabled = {"Custom"};
     const std::vector<std::string> techniques = {"SimplePass@simple.fx"};
     const std::vector<std::string> sorting = {"SimplePass@simple.fx", "CustomPass@custom.fx"};
+    const std::vector<VKIntox::ConfigParam> disabledParams = {
+        {"Custom", "Strength", "0.25"},
+        {"Custom", "@QUALITY", "low"},
+    };
     expect(VKIntox::ConfigSerializer::saveShaderProfile(shaderPath, shaderParams, shaderEffects, shaderDisabled,
-                                                         effectPaths, techniques, sorting),
+                                                         effectPaths, techniques, sorting, disabledParams),
            "save shader profile");
     const auto shaderData = VKIntox::ConfigSerializer::loadShaderProfileData(shaderPath);
     expect(shaderData.hasTechniques && shaderData.techniques == techniques && shaderData.techniqueSorting == sorting,
@@ -149,6 +153,17 @@ int main()
     expect(shaderText.find("[simple.fx]\n") != std::string::npos,
            "shader parameters use ReShade shader-filename section names");
     expect(shaderData.params.size() == shaderParams.size(), "shader profile preserves parameter count");
+    const auto presetPath = std::filesystem::path(shaderPath);
+    const auto disabledProfilePath = (presetPath.parent_path() /
+        ("." + presetPath.filename().string() + "_disabled-effectvalues")).string();
+    const auto savedDisabledParams = VKIntox::ConfigSerializer::loadShaderProfile(disabledProfilePath);
+    expect(savedDisabledParams.size() == disabledParams.size(), "disabled effect values saved in sidecar");
+    expect(readFile(shaderPath).find("Strength=0.25") == std::string::npos,
+           "disabled effect values are omitted from main preset");
+    expect(std::find_if(savedDisabledParams.begin(), savedDisabledParams.end(), [](const auto& param) {
+               return param.effectName == "custom.fx" && param.paramName == "Strength" && param.value == "0.25";
+           }) != savedDisabledParams.end(),
+           "disabled effect value retains ReShade shader section in sidecar");
     bool foundMacro = false, foundStrength = false, foundVector0 = false, foundVector1 = false;
     for (const auto& param : shaderData.params)
     {
@@ -189,6 +204,18 @@ int main()
                return param.effectName == "Example.fx" && param.paramName == "@QUALITY" && param.value == "2,4";
            }) != importedData.params.end(),
            "ReShade preprocessor definitions preserve escaped commas");
+
+    const std::string disabledTechniquePath = VKIntox::ConfigSerializer::getBaseConfigDir() +
+                                               "/configs/shaders/disabled-technique.ini";
+    {
+        std::ofstream preset(disabledTechniquePath);
+        preset << "Techniques=EnabledPass@Example.fx\n"
+                  "TechniqueSorting=EnabledPass@Example.fx,DisabledPass@Other.fx\n";
+    }
+    const auto disabledTechniqueData = VKIntox::ConfigSerializer::loadShaderProfileData(disabledTechniquePath);
+    expect(disabledTechniqueData.hasTechniques && disabledTechniqueData.techniques.size() == 1 &&
+               disabledTechniqueData.techniqueSorting.size() == 2,
+           "disabled techniques remain represented in sorting while absent from enabled list");
 
     // New shader profiles inherit the exact active profile contents.
     const std::string inheritedPath = VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "inherited");

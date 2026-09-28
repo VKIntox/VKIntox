@@ -282,7 +282,8 @@ namespace VKIntox
             std::vector<std::string>& disabledEffects,
             std::vector<ConfigParam>& params,
             std::map<std::string, std::string>& effectPaths,
-            std::vector<PreprocessorDefinition>& allDefs);
+            std::vector<PreprocessorDefinition>& allDefs,
+            std::vector<ConfigParam>& disabledEffectParams);
     };
 
 } // namespace VKIntox
