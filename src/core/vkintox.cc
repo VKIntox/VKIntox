@@ -2223,7 +2223,13 @@ namespace VKIntox
             return;
         if (!path.empty())
         {
-            const auto definitions = config->getEffectDefinitions();
+            auto definitions = config->getEffectDefinitions();
+            if (pBaseConfig)
+            {
+                const auto baseDefinitions = pBaseConfig->getEffectDefinitions();
+                for (const auto& [name, effectPath] : baseDefinitions)
+                    definitions.emplace(name, effectPath);
+            }
             std::map<std::string, std::vector<std::string>> namesByFile;
             for (const auto& [name, effectPath] : definitions)
             {
@@ -2240,7 +2246,9 @@ namespace VKIntox
                 std::string section = param.effectName;
                 std::transform(section.begin(), section.end(), section.begin(),
                                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                const auto it = namesByFile.find(section);
+                auto it = namesByFile.find(section);
+                if (it == namesByFile.end())
+                    it = namesByFile.find(std::filesystem::path(section).stem().string());
                 if (it != namesByFile.end())
                     effectNames = it->second;
                 else if (!param.effectName.empty())
@@ -2298,13 +2306,16 @@ namespace VKIntox
                 std::set<std::string> currentDisabledSet(currentDisabled.begin(), currentDisabled.end());
                 std::vector<std::string> effects, disabled;
 
-                // Non-ReShade effects are stored in the game's .conf file;
-                // keep them while standard ReShade techniques select the .fx files.
+                // Keep configured effects that are absent from the preset,
+                // including built-ins and ReShade shaders. Presets choose the
+                // techniques they mention; they must not erase unrelated game
+                // effects from the inherited profile.
                 for (const auto& name : currentEffects)
                 {
                     const auto configuredType = config->getOption<std::string>(name, "");
                     if (BuiltInEffects::instance().isBuiltIn(name) ||
-                        BuiltInEffects::instance().isBuiltIn(configuredType))
+                        BuiltInEffects::instance().isBuiltIn(configuredType) ||
+                        definitions.count(name))
                     {
                         effects.push_back(name);
                         if (currentDisabledSet.count(name))
@@ -2342,7 +2353,9 @@ namespace VKIntox
                     std::string normalizedFilename = filename;
                     std::transform(normalizedFilename.begin(), normalizedFilename.end(), normalizedFilename.begin(),
                                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                    const auto configuredNames = namesByFile.find(normalizedFilename);
+                    auto configuredNames = namesByFile.find(normalizedFilename);
+                    if (configuredNames == namesByFile.end())
+                        configuredNames = namesByFile.find(std::filesystem::path(normalizedFilename).stem().string());
                     std::string effectName;
 
                     // Resolve imported preset techniques to an existing

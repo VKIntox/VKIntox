@@ -794,6 +794,20 @@ namespace VKIntox
         return gameProfilePath;
     }
 
+    namespace
+    {
+        std::string getGameShaderProfilePath(const std::string& gameName, const std::string& profileName)
+        {
+            const std::string base = ConfigSerializer::getBaseConfigDir();
+            if (base.empty() || gameName.empty() || profileName.empty() ||
+                gameName.find('/') != std::string::npos || gameName.find('\\') != std::string::npos ||
+                profileName.find('/') != std::string::npos || profileName.find('\\') != std::string::npos ||
+                gameName == "." || gameName == ".." || profileName == "." || profileName == "..")
+                return "";
+            return base + "/configs/shaders/" + gameName + "@" + profileName + ".ini";
+        }
+    }
+
     std::vector<std::string> ConfigSerializer::listShaderProfilesForGame(const std::string& gameName)
     {
         std::vector<std::string> profiles;
@@ -849,7 +863,9 @@ namespace VKIntox
     bool ConfigSerializer::createShaderProfile(const std::string& gameName, const std::string& profileName,
                                                const std::string& copyFromProfile)
     {
-        const std::string path = getShaderProfilePath(gameName, profileName);
+        // Creation always targets a game-specific file. The regular lookup
+        // intentionally falls back to imported global presets for selection.
+        const std::string path = getGameShaderProfilePath(gameName, profileName);
         if (path.empty() || profileName.find('/') != std::string::npos || profileName.find('\\') != std::string::npos)
             return false;
         std::error_code ec;

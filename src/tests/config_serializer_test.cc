@@ -232,6 +232,19 @@ int main()
            }) != importedData.params.end(),
            "ReShade preprocessor definitions preserve escaped commas");
 
+    // Creating a game profile with an imported preset's name must not overwrite
+    // or alias the shared preset; it should copy its contents into a game file.
+    const auto gameImportPath = VKIntox::ConfigSerializer::getBaseConfigDir() +
+                                "/configs/shaders/roundtrip-game@reshade-import.ini";
+    expect(VKIntox::ConfigSerializer::createShaderProfile("roundtrip-game", "reshade-import", "reshade-import"),
+           "create game profile with same name as imported preset");
+    expect(VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "reshade-import") == gameImportPath,
+           "game-specific profile takes precedence over imported preset");
+    expect(readFile(gameImportPath) == readFile(importedPath),
+           "same-named game profile inherits imported preset contents");
+    expect(readFile(importedPath).find("TechniqueSorting=BloomPass@Example.fx") != std::string::npos,
+           "creating same-named game profile leaves imported preset intact");
+
     const std::string disabledTechniquePath = VKIntox::ConfigSerializer::getBaseConfigDir() +
                                                "/configs/shaders/disabled-technique.ini";
     {
