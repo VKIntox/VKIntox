@@ -17,7 +17,8 @@ TODOS for v0.1.2
 4. Fix Issue#1 -> Make VKIntox .ini fully cross-compatible with ReShade .ini
 Most likely has to do with spacing DONE?
 5. Other cool stuff
-6. Creating a new INI profile should inherit the active profile. DONE
+6. Creating a new INI profile should inherit the active profile. WIP:
+creating a new profile breaks some settings?
 7. Resizing the overlay should also accept right clicks, as traditional DONE
 8. Entering a custom value shouldn't require right clicking and clicking Enter custom value (but keep that, don't remove) but rather double clicking the value itself should open the popup to the bottom right of the cursor; dynamic position. DONE
 9. Slider values should pad by 0.01 instead of 0.1 DONE
