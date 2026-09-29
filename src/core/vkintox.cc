@@ -2305,6 +2305,7 @@ namespace VKIntox
                 const auto currentDisabled = config->getOption<std::vector<std::string>>("disabledEffects", {});
                 std::set<std::string> currentDisabledSet(currentDisabled.begin(), currentDisabled.end());
                 std::vector<std::string> effects, disabled;
+                std::set<std::string> retainedEffects;
 
                 // Keep configured effects that are absent from the preset,
                 // including built-ins and ReShade shaders. Presets choose the
@@ -2317,6 +2318,8 @@ namespace VKIntox
                         BuiltInEffects::instance().isBuiltIn(configuredType) ||
                         definitions.count(name))
                     {
+                        if (!retainedEffects.insert(name).second)
+                            continue;
                         effects.push_back(name);
                         if (currentDisabledSet.count(name))
                             disabled.push_back(name);
@@ -2337,7 +2340,7 @@ namespace VKIntox
                     enabledTechniques.insert(technique);
                 }
                 const bool hasExplicitEnabledTechniques = profile.hasTechniques;
-                std::set<std::string> addedEffects;
+                std::set<std::string> addedEffects = retainedEffects;
                 std::set<std::string> matchedConfiguredEffects;
                 const size_t maxEffects = static_cast<size_t>(settingsManager.getMaxEffects());
                 for (const auto& technique : sortedTechniques)
