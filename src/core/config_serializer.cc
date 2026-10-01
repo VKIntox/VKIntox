@@ -1203,50 +1203,13 @@ namespace VKIntox
         return loadShaderProfileData(path).params;
     }
 
-    ProfileSettings ConfigSerializer::loadProfileSettings(const std::string& filePath)
-    {
-        ProfileSettings settings;
-        std::ifstream file(filePath);
-        if (!file.is_open())
-            return settings;
-
-        std::string line;
-        while (std::getline(file, line))
-        {
-            // Skip comments and empty lines
-            size_t start = line.find_first_not_of(" \t");
-            if (start == std::string::npos || line[start] == '#')
-                continue;
-
-            // Parse key = value
-            size_t eq = line.find('=');
-            if (eq == std::string::npos)
-                continue;
-
-            std::string key = line.substr(0, eq);
-            std::string value = line.substr(eq + 1);
-
-            // Trim whitespace
-            auto trim = [](std::string& s) {
-                s.erase(0, s.find_first_not_of(" \t"));
-                s.erase(s.find_last_not_of(" \t") + 1);
-            };
-            trim(key);
-            trim(value);
-            // Profile settings parsing (safeAntiCheat removed)
-        }
-
-        return settings;
-    }
-
     bool ConfigSerializer::saveToPath(
         const std::string& filePath,
         const std::vector<std::string>& effects,
         const std::vector<std::string>& disabledEffects,
         const std::vector<ConfigParam>& params,
         const std::map<std::string, std::string>& effectPaths,
-        const std::vector<PreprocessorDefinition>& preprocessorDefs,
-        const ProfileSettings& profileSettings)
+        const std::vector<PreprocessorDefinition>& preprocessorDefs)
     {
         // Atomic write: write to temp file then rename to prevent corruption
         std::string tmpPath = filePath + ".tmp";
@@ -1256,8 +1219,6 @@ namespace VKIntox
             Logger::err("Could not open for writing: " + tmpPath);
             return false;
         }
-
-        // Write per-profile settings (safeAntiCheat removed)
 
         // Group params by effect
         std::map<std::string, std::vector<const ConfigParam*>> paramsByEffect;

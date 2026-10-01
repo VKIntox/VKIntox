@@ -86,13 +86,12 @@ namespace VKIntox
 
         VkExtent3D lutImageExtent = {(uint32_t) height, (uint32_t) height, (uint32_t) height};
 
-        lutImage = createImages(pLogicalDevice,
-                                1,
+        lutImage = createSingleImage(pLogicalDevice,
                                 lutImageExtent,
                                 VK_FORMAT_R8G8B8A8_UNORM, // TODO search for format and save it
                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                lutMemory)[0];
+                                lutMemory);
 
         uploadToImage(pLogicalDevice, lutImage, lutImageExtent, height * height * height * 4, pixels);
 
@@ -101,7 +100,7 @@ namespace VKIntox
             stbi_image_free(pixels);
         }
 
-        lutImageView = createImageViews(pLogicalDevice, VK_FORMAT_R8G8B8A8_UNORM, std::vector<VkImage>(1, lutImage), VK_IMAGE_VIEW_TYPE_3D)[0];
+        lutImageView = createSingleImageView(pLogicalDevice, VK_FORMAT_R8G8B8A8_UNORM, lutImage, VK_IMAGE_VIEW_TYPE_3D);
 
         lutDescriptorSetLayout = createImageSamplerDescriptorSetLayout(pLogicalDevice, 1);
         descriptorSetLayouts.push_back(lutDescriptorSetLayout);

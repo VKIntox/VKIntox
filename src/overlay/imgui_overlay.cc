@@ -652,9 +652,6 @@ namespace VKIntox
         std::vector<PreprocessorDefinition> allDefs;
         collectSaveData(effects, disabledEffects, params, effectPaths, allDefs, disabledEffectParams);
 
-        ProfileSettings profileSettings;
-        // safeAntiCheat removed
-
         bool configSaved = true;
         if (!activeProfilePath.empty())
         {
@@ -665,7 +662,7 @@ namespace VKIntox
                     instancePaths[name] = std::filesystem::path(path).filename().string();
             }
             configSaved = ConfigSerializer::saveToPath(activeProfilePath, effects, disabledEffects, params,
-                                                       instancePaths, allDefs, profileSettings);
+                                                       instancePaths, allDefs);
         }
 
         bool shaderSaved = true;

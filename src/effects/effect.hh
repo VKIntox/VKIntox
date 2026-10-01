@@ -18,11 +18,14 @@ namespace VKIntox
     public:
         void virtual applyEffect(uint32_t imageIndex, VkCommandBuffer commandBuffer) = 0;
         void virtual updateEffect(){};
-        void virtual useDepthImage(uint32_t imageIndex,
-                                   VkImageView depthImageView,
-                                   VkImageLayout depthImageLayout = VK_IMAGE_LAYOUT_UNDEFINED){};
+        // Parameter names are omitted on the unused default hooks: subclasses that
+        // do consume depth override these, and leaving the names off keeps the
+        // base declaration free of unused-parameter noise.
+        void virtual useDepthImage(uint32_t /* imageIndex */,
+                                   VkImageView /* depthImageView */,
+                                   VkImageLayout /* depthImageLayout */ = VK_IMAGE_LAYOUT_UNDEFINED){};
         virtual std::vector<std::unique_ptr<EffectParam>> getParameters() const { return {}; }
-        virtual ~Effect(){};
+        virtual ~Effect() = default;
 
     private:
     };

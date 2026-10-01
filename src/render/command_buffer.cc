@@ -113,7 +113,7 @@ namespace VKIntox
 
         VkImageView& trackedView = pLogicalDevice->depthImageViews[index];
         if (trackedView == VK_NULL_HANDLE)
-            trackedView = createImageViews(pLogicalDevice, depthState.format, {depthState.image}, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT)[0];
+            trackedView = createSingleImageView(pLogicalDevice, depthState.format, depthState.image, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT);
 
         return trackedView != VK_NULL_HANDLE ? trackedView : depthState.imageView;
     }

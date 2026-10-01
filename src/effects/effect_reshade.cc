@@ -318,16 +318,15 @@ namespace VKIntox
         stencilFormat = getStencilFormat(pLogicalDevice);
         Logger::debug("Stencil Format: " + std::to_string(stencilFormat));
         textureMemory.push_back(VK_NULL_HANDLE);
-        stencilImage = createImages(pLogicalDevice,
-                                    1,
+        stencilImage = createSingleImage(pLogicalDevice,
                                     {imageExtent.width, imageExtent.height, 1},
                                     stencilFormat,
                                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                    textureMemory.back())[0];
+                                    textureMemory.back());
 
-        stencilImageView = createImageViews(
-            pLogicalDevice, stencilFormat, {stencilImage}, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)[0];
+        stencilImageView = createSingleImageView(
+            pLogicalDevice, stencilFormat, stencilImage, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
 
         std::vector<std::vector<VkImageView>> imageViewVector;
 

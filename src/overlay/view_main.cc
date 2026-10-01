@@ -56,7 +56,9 @@ namespace VKIntox
 
     } // anonymous namespace
 
-    void ImGuiOverlay::renderMainView(const KeyboardState& keyboard)
+    // keyboard is part of the shared view signature; this particular view reads no
+    // key state directly, so the name is omitted here.
+    void ImGuiOverlay::renderMainView(const KeyboardState& /* keyboard */)
     {
         if (!pEffectRegistry)
             return;

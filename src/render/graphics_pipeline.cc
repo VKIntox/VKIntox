@@ -145,14 +145,15 @@ namespace VKIntox
         colorBlendCreateInfo.blendConstants[2] = 0.0f;
         colorBlendCreateInfo.blendConstants[3] = 0.0f;
 
-        VkDynamicState dynamicStates[] = {};
-
         VkPipelineDynamicStateCreateInfo dynamicStateCreateInfo;
         dynamicStateCreateInfo.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
         dynamicStateCreateInfo.pNext             = nullptr;
         dynamicStateCreateInfo.flags             = 0;
         dynamicStateCreateInfo.dynamicStateCount = 0;
-        dynamicStateCreateInfo.pDynamicStates    = dynamicStates;
+        // Vulkan requires pDynamicStates to be NULL when dynamicStateCount is 0.
+        // A zero-length array is a compiler extension, not valid C++, and yields a
+        // non-null pointer that the driver is allowed to dereference.
+        dynamicStateCreateInfo.pDynamicStates    = nullptr;
 
         VkGraphicsPipelineCreateInfo pipelineCreateInfo;
         pipelineCreateInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;

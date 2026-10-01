@@ -179,7 +179,24 @@ namespace VKIntox
         pLogicalDevice->vkd.DestroyBuffer(pLogicalDevice->device, stagingBuffer, nullptr);
     }
 
-    void changeImageLayout(LogicalDevice* pLogicalDevice, std::vector<VkImage> images, uint32_t mipLevels)
+    VkImage createSingleImage(LogicalDevice*        pLogicalDevice,
+                              VkExtent3D            extent,
+                              VkFormat              format,
+                              VkImageUsageFlags     usage,
+                              VkMemoryPropertyFlags properties,
+                              VkDeviceMemory&       imageMemory,
+                              uint32_t              mipLevels)
+    {
+        std::vector<VkImage> images = createImages(pLogicalDevice, 1, extent, format, usage, properties, imageMemory, mipLevels);
+        if (images.empty())
+        {
+            imageMemory = VK_NULL_HANDLE;
+            return VK_NULL_HANDLE;
+        }
+        return images[0];
+    }
+
+    void changeImageLayout(LogicalDevice* pLogicalDevice, const std::vector<VkImage>& images, uint32_t mipLevels)
     {
         VkCommandBufferAllocateInfo allocInfo = {};
 

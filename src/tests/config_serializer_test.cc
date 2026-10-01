@@ -114,9 +114,7 @@ int main()
     const std::vector<VKIntox::PreprocessorDefinition> definitions = {
         {"QUALITY", "high", "low", "Custom"},
     };
-    VKIntox::ProfileSettings profileSettings;
-    expect(VKIntox::ConfigSerializer::saveToPath(configPath, effects, disabled, params,
-                                                  effectPaths, definitions, profileSettings),
+    expect(VKIntox::ConfigSerializer::saveToPath(configPath, effects, disabled, params, effectPaths, definitions),
            "save game config");
     VKIntox::Config config(configPath);
     expect(config.getOption<std::string>("Simple") == "simple.fx", "config preserves effect paths");

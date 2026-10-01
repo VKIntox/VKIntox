@@ -30,7 +30,10 @@ namespace VKIntox
         ~SmaaEffect();
 
     private:
-        LogicalDevice*               pLogicalDevice;
+        // Vulkan handles default to VK_NULL_HANDLE so a partially constructed
+        // effect still hands well-defined null handles to the destroy calls in
+        // ~SmaaEffect. Matches the null-guard discipline in SimpleEffect/LutEffect.
+        LogicalDevice*               pLogicalDevice = nullptr;
         std::vector<VkImage>         inputImages;
         std::vector<VkImage>         edgeImages;
         std::vector<VkImage>         blendImages;
@@ -43,32 +46,32 @@ namespace VKIntox
         std::vector<VkFramebuffer>   edgeFramebuffers;
         std::vector<VkFramebuffer>   blendFramebuffers;
         std::vector<VkFramebuffer>   neignborFramebuffers;
-        VkImage                      areaImage;
-        VkImage                      searchImage;
-        VkImageView                  areaImageView;
-        VkImageView                  searchImageView;
-        VkDescriptorSetLayout        imageSamplerDescriptorSetLayout;
-        VkDescriptorPool             descriptorPool;
-        VkShaderModule               edgeVertexModule;
-        VkShaderModule               edgeFragmentModule;
-        VkShaderModule               blendVertexModule;
-        VkShaderModule               blendFragmentModule;
-        VkShaderModule               neighborVertexModule;
-        VkShaderModule               neignborFragmentModule;
-        VkRenderPass                 renderPass;
-        VkRenderPass                 unormRenderPass;
-        VkPipelineLayout             pipelineLayout;
-        VkPipeline                   edgePipeline;
-        VkPipeline                   blendPipeline;
-        VkPipeline                   neighborPipeline;
-        VkExtent2D                   imageExtent;
-        VkFormat                     format;
-        VkDeviceMemory               imageMemory;
-        VkDeviceMemory               areaMemory;
-        VkDeviceMemory               searchMemory;
-        VkSampler                    sampler;
+        VkImage                      areaImage                       = VK_NULL_HANDLE;
+        VkImage                      searchImage                     = VK_NULL_HANDLE;
+        VkImageView                  areaImageView                   = VK_NULL_HANDLE;
+        VkImageView                  searchImageView                 = VK_NULL_HANDLE;
+        VkDescriptorSetLayout        imageSamplerDescriptorSetLayout = VK_NULL_HANDLE;
+        VkDescriptorPool             descriptorPool                  = VK_NULL_HANDLE;
+        VkShaderModule               edgeVertexModule                = VK_NULL_HANDLE;
+        VkShaderModule               edgeFragmentModule              = VK_NULL_HANDLE;
+        VkShaderModule               blendVertexModule               = VK_NULL_HANDLE;
+        VkShaderModule               blendFragmentModule             = VK_NULL_HANDLE;
+        VkShaderModule               neighborVertexModule            = VK_NULL_HANDLE;
+        VkShaderModule               neignborFragmentModule          = VK_NULL_HANDLE;
+        VkRenderPass                 renderPass                      = VK_NULL_HANDLE;
+        VkRenderPass                 unormRenderPass                 = VK_NULL_HANDLE;
+        VkPipelineLayout             pipelineLayout                  = VK_NULL_HANDLE;
+        VkPipeline                   edgePipeline                    = VK_NULL_HANDLE;
+        VkPipeline                   blendPipeline                   = VK_NULL_HANDLE;
+        VkPipeline                   neighborPipeline                = VK_NULL_HANDLE;
+        VkExtent2D                   imageExtent                     = {};
+        VkFormat                     format                          = VK_FORMAT_UNDEFINED;
+        VkDeviceMemory               imageMemory                     = VK_NULL_HANDLE;
+        VkDeviceMemory               areaMemory                      = VK_NULL_HANDLE;
+        VkDeviceMemory               searchMemory                    = VK_NULL_HANDLE;
+        VkSampler                    sampler                         = VK_NULL_HANDLE;
 
-        Config* pConfig;
+        Config* pConfig = nullptr;
     };
 } // namespace VKIntox
 

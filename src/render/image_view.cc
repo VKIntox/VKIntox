@@ -4,7 +4,7 @@ namespace VKIntox
 {
     std::vector<VkImageView> createImageViews(LogicalDevice*       pLogicalDevice,
                                               VkFormat             format,
-                                              std::vector<VkImage> images,
+                                              const std::vector<VkImage>& images,
                                               VkImageViewType      viewType,
                                               VkImageAspectFlags   aspectMask,
                                               uint32_t             mipLevels)
@@ -38,6 +38,19 @@ namespace VKIntox
         }
 
         return imageViews;
+    }
+
+    VkImageView createSingleImageView(LogicalDevice*     pLogicalDevice,
+                                      VkFormat           format,
+                                      VkImage            image,
+                                      VkImageViewType    viewType,
+                                      VkImageAspectFlags aspectMask,
+                                      uint32_t           mipLevels)
+    {
+        std::vector<VkImageView> imageViews = createImageViews(pLogicalDevice, format, std::vector<VkImage>{image}, viewType, aspectMask, mipLevels);
+        if (imageViews.empty())
+            return VK_NULL_HANDLE;
+        return imageViews[0];
     }
 
 } // namespace VKIntox

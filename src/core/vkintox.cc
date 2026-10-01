@@ -1448,7 +1448,7 @@ namespace VKIntox
 
         VkImageView& trackedView = pLogicalDevice->depthImageViews[index];
         if (trackedView == VK_NULL_HANDLE)
-            trackedView = createImageViews(pLogicalDevice, format, {image}, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT)[0];
+            trackedView = createSingleImageView(pLogicalDevice, format, image, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT);
 
         return trackedView;
     }
@@ -2919,7 +2919,7 @@ namespace VKIntox
     }
 
     // Reload effects for all swapchains belonging to a device
-    void reloadAllSwapchains(LogicalDevice* pLogicalDevice, const std::vector<std::string>& activeEffects)
+    void reloadAllSwapchains(LogicalDevice* /* pLogicalDevice */, const std::vector<std::string>& activeEffects)
     {
         for (auto& [_, pLogicalSwapchain] : swapchainMap)
         {
@@ -6574,7 +6574,7 @@ namespace VKIntox
         return VK_SUCCESS;
     }
 
-    VkResult VKAPI_CALL VKIntox_EnumerateDeviceLayerProperties(VkPhysicalDevice   physicalDevice,
+    VkResult VKAPI_CALL VKIntox_EnumerateDeviceLayerProperties(VkPhysicalDevice   /* physicalDevice */,
                                                                 uint32_t*          pPropertyCount,
                                                                 VkLayerProperties* pProperties)
     {
@@ -6583,7 +6583,7 @@ namespace VKIntox
 
     VkResult VKAPI_CALL VKIntox_EnumerateInstanceExtensionProperties(const char*            pLayerName,
                                                                       uint32_t*              pPropertyCount,
-                                                                      VkExtensionProperties* pProperties)
+                                                                      VkExtensionProperties* /* pProperties */)
     {
         if (pLayerName == NULL || std::strcmp(pLayerName, VKINTOX_LAYER_NAME))
         {

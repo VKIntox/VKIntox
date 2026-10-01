@@ -128,13 +128,6 @@ namespace VKIntox
             activeProfileName = profileName;
             activeProfilePath = profilePath;
             refreshShaderProfiles();
-
-            // Load per-profile settings
-            if (!profilePath.empty())
-            {
-                ConfigSerializer::loadProfileSettings(profilePath);
-                // Profile settings loaded (safeAntiCheat removed)
-            }
         }
 
         void refreshShaderProfiles();

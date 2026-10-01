@@ -60,31 +60,29 @@ namespace VKIntox
 
         VkExtent3D areaImageExtent = {AREATEX_WIDTH, AREATEX_HEIGHT, 1};
 
-        areaImage = createImages(pLogicalDevice,
-                                 1,
+        areaImage = createSingleImage(pLogicalDevice,
                                  areaImageExtent,
                                  VK_FORMAT_R8G8_UNORM, // TODO search for format and save it
                                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                 areaMemory)[0];
+                                 areaMemory);
 
         VkExtent3D searchImageExtent = {SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, 1};
 
-        searchImage = createImages(pLogicalDevice,
-                                   1,
+        searchImage = createSingleImage(pLogicalDevice,
                                    searchImageExtent,
                                    VK_FORMAT_R8_UNORM, // TODO search for format and save it
                                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                   searchMemory)[0];
+                                   searchMemory);
 
         uploadToImage(pLogicalDevice, areaImage, areaImageExtent, AREATEX_SIZE, areaTexBytes);
 
         uploadToImage(pLogicalDevice, searchImage, searchImageExtent, SEARCHTEX_SIZE, searchTexBytes);
 
-        areaImageView = createImageViews(pLogicalDevice, VK_FORMAT_R8G8_UNORM, std::vector<VkImage>(1, areaImage))[0];
+        areaImageView = createSingleImageView(pLogicalDevice, VK_FORMAT_R8G8_UNORM, areaImage);
         Logger::debug("after creating area ImageView");
-        searchImageView = createImageViews(pLogicalDevice, VK_FORMAT_R8_UNORM, std::vector<VkImage>(1, searchImage))[0];
+        searchImageView = createSingleImageView(pLogicalDevice, VK_FORMAT_R8_UNORM, searchImage);
         Logger::debug("created search ImageView");
 
         imageSamplerDescriptorSetLayout = createImageSamplerDescriptorSetLayout(pLogicalDevice, 5);
@@ -313,6 +311,11 @@ namespace VKIntox
     SmaaEffect::~SmaaEffect()
     {
         Logger::debug("destroying smaa effect " + convertToString(this));
+
+        // Skip cleanup if construction never assigned a device.
+        if (!pLogicalDevice)
+            return;
+
         pLogicalDevice->vkd.DestroyPipeline(pLogicalDevice->device, edgePipeline, nullptr);
         pLogicalDevice->vkd.DestroyPipeline(pLogicalDevice->device, blendPipeline, nullptr);
         pLogicalDevice->vkd.DestroyPipeline(pLogicalDevice->device, neighborPipeline, nullptr);
