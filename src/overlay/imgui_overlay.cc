@@ -166,11 +166,46 @@ namespace VKIntox
         if (const char* themePath = ImGuiM3GetThemeFile())
             Logger::info("ImGui: Material 3 Expressive theme from " + std::string(themePath));
 
-        // Font loading
+        // Font loading. VKIntox's config directory is per-app for flatpak (the
+        // layer runs inside the game's sandbox, so $HOME/.var/app/<APP>/config)
+        // and plain ~/.config elsewhere; scripts/setup seeds only the caller's
+        // own environment, which is why a Roblox-hosted overlay never saw those
+        // fonts. Search our own dir first, then sibling app sandboxes' VKIntox
+        // configs, so one setup run serves every game regardless of which one
+        // launched it.
         std::string baseConfigDir = ConfigSerializer::getBaseConfigDir();
+        std::vector<std::string> fontDirs = {baseConfigDir + "/font"};
+        if (const char* home = std::getenv("HOME"))
+        {
+            const std::string varApp = std::string(home) + "/.var/app";
+            std::error_code ec;
+            if (std::filesystem::is_directory(varApp, ec))
+            {
+                for (const auto& entry : std::filesystem::directory_iterator(varApp, ec))
+                {
+                    if (!entry.is_directory())
+                        continue;
+                    std::string dir = entry.path().string() + "/config/VKIntox/font";
+                    if (dir != fontDirs.front())
+                        fontDirs.push_back(std::move(dir));
+                }
+            }
+        }
+
+        auto findFont = [&](const std::string& filename) -> std::string
+        {
+            for (const auto& dir : fontDirs)
+            {
+                std::string path = dir + "/" + filename;
+                if (std::ifstream(path).good())
+                    return path;
+            }
+            return "";
+        };
+
         std::vector<std::pair<std::string, std::string>> fontSearchPaths = {
-            {baseConfigDir + "/font/GoogleSans-Regular.ttf", "Google Sans Regular"},
-            {baseConfigDir + "/font/font.ttf", "legacy regular fallback"}
+            {findFont("GoogleSans-Regular.ttf"), "Google Sans Regular"},
+            {findFont("font.ttf"), "legacy regular fallback"}
         };
 
         // the search paths outlive the atlas call, and AddFontFromFileTTF copies
@@ -197,9 +232,8 @@ namespace VKIntox
         // Material Symbols subset, shared by every text face (merged so icon
         // codepoints render inline in labels) and by the standalone 24px icon
         // face used by M3Icon and the navigation.
-        const std::string fontDir = baseConfigDir + "/font/";
-        const std::string iconFontPath = fontDir + "MaterialSymbolsRounded-subset.ttf";
-        const bool haveIconFont = std::ifstream(iconFontPath).good();
+        const std::string iconFontPath = findFont("MaterialSymbolsRounded-subset.ttf");
+        const bool haveIconFont = !iconFontPath.empty();
 
         if (regularPath)
         {
@@ -228,8 +262,8 @@ namespace VKIntox
             };
             for (const auto& [filename, slot] : weights)
             {
-                const std::string path = fontDir + filename;
-                if (std::ifstream(path).good())
+                const std::string path = findFont(filename);
+                if (!path.empty())
                     *slot = addFace(path.c_str());
             }
             // MergeMode appends atlas entries, so indices are not stable; hand

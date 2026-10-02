@@ -436,15 +436,27 @@ with open(path, "w", encoding="utf-8") as f:
 PYEOF
 say "depth inversion default: $DEPTH_INVERT"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version"
-# Google Sans Flex is instantiated into the M3 type weights at build time.
 # Google Sans Flex is instantiated into the M3 type weights at build time; the
 # Material Symbols subset carries the UI icons VKIntox references by codepoint.
-for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded-subset.ttf; do
-    curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/font/$font" -o "$APP_CONFIG/font/$font"
+# When run from a checkout (the local flatpak path), take the fonts straight
+# from the tree — they are only on raw.githubusercontent once pushed to main, so
+# curl would silently seed nothing for a fresh or experimental build. Fall back
+# to downloading when the script came in over the pipe with no repo around.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FONT_SRC=""
+if [[ -f "$SCRIPT_DIR/../assets/font/MaterialSymbolsRounded-subset.ttf" ]]; then
+    FONT_SRC="$SCRIPT_DIR/../assets/font"
+fi
+for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded-subset.ttf LICENSE; do
+    if [[ -n "$FONT_SRC" ]]; then
+        cp "$FONT_SRC/$font" "$APP_CONFIG/font/$font"
+    else
+        curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/font/$font" -o "$APP_CONFIG/font/$font" ||
+            die "couldn't fetch $font; re-run this script from inside a VKIntox checkout"
+    fi
 done
 # Keep the historical filename as a regular-weight compatibility fallback.
 cp "$APP_CONFIG/font/GoogleSans-Regular.ttf" "$APP_CONFIG/font/font.ttf"
-curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/font/LICENSE" -o "$APP_CONFIG/font/LICENSE"
 curl -fsSL "$EFFECT_PACKAGES_URL" -o "$TMP_DIR/EffectPackages.ini"
 
 EFFECTS_HASH=$(sha256sum "$TMP_DIR/EffectPackages.ini" | cut -d' ' -f1)
