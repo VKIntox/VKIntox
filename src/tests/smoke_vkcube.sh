@@ -91,6 +91,105 @@ cat >"$LAYER_DIR/$LAYER_NAME.json" <<JSON
 JSON
 jq -e . "$LAYER_DIR/$LAYER_NAME.json" >/dev/null || die "generated manifest is not valid json"
 
+# Seed a config that actually exercises the layer. With no config the layer
+# starts with no effects enabled and takes the pass-through path, which is close
+# to doing nothing at all, so a crash-only smoke test would be asserting almost
+# nothing. Enabling one depth-consuming effect forces the capture and resolve
+# machinery to run, which is where the layer actually earns its crash reports.
+#
+# The depth settings are pinned rather than left to defaults so the test is not
+# quietly at the mercy of whatever a previous run happened to write:
+#   depthSourceChannel = 0 -> Luminance/Red, the standard Vulkan depth layout
+#   depthInvert        = false -> near/far not flipped
+seed_config() {
+    local base="$CONFIG_DIR/VKIntox"
+    mkdir -p "$base/configs/shaders" "$base/reshade/packages/Shaders"
+
+    cat >"$base/VKIntox.conf" <<'CONF'
+enableOnLaunch = true
+overlayKey = Home
+reloadKey = F10
+maxEffects = 10
+autoApply = true
+autoApplyDelay = 200
+depthCapture = on
+showDebugWindow = false
+depthResolveMode = 0
+depthManualPin =
+depthTransientWorkaround = true
+depthCaptureMethod = 1
+depthSourceChannel = 0
+depthInvert = false
+CONF
+
+    # The effect itself. It declares a texture with the ": DEPTH" semantic, which
+    # is precisely what the layer's parser looks for when deciding an effect
+    # needs the resolved depth buffer, and PostProcessVS is the standard
+    # bufferless fullscreen-triangle vertex shader. Written here rather than
+    # vendored from ReShade's DisplayDepth.fx so the smoke test needs no
+    # third-party shader and CI needs no network.
+    cat >"$base/reshade/packages/Shaders/SmokeDepth.fx" <<'FX'
+namespace ReShade
+{
+    texture BackBufferTex : COLOR;
+    texture DepthBufferTex : DEPTH;
+
+    sampler BackBuffer { Texture = BackBufferTex; };
+    sampler DepthBuffer { Texture = DepthBufferTex; };
+}
+
+uniform float fDepthScale <
+    ui_type = "slider";
+    ui_min = 0.0;
+    ui_max = 8.0;
+    ui_label = "Depth Scale";
+> = 1.0;
+
+void PostProcessVS(in uint id : SV_VertexID, out float4 position : SV_Position, out float2 texcoord : TEXCOORD)
+{
+    texcoord.x = (id == 2) ? 2.0 : 0.0;
+    texcoord.y = (id == 1) ? 2.0 : 0.0;
+    position = float4(texcoord * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+
+void PS(in float4 position : SV_Position, in float2 texcoord : TEXCOORD, out float4 color : SV_Target)
+{
+    const float depth = tex2Dlod(ReShade::DepthBuffer, float4(texcoord, 0, 0)).x;
+    const float3 base = tex2D(ReShade::BackBuffer, texcoord).rgb;
+    color = float4(base * saturate(depth * fDepthScale), 1.0);
+}
+
+technique SmokeDepth
+{
+    pass
+    {
+        VertexShader = PostProcessVS;
+        PixelShader = PS;
+    }
+}
+FX
+
+    # vkcube is the game name the layer derives from the process, so the config
+    # and profile files are keyed on it.
+    cat >"$base/configs/vkcube.conf" <<'CONF'
+SmokeDepth = SmokeDepth.fx
+SmokeDepth.fDepthScale = 1.0
+effects = SmokeDepth
+CONF
+
+    cat >"$base/configs/shaders/vkcube@smoke.ini" <<'INI'
+Techniques=SmokeDepth@SmokeDepth.fx
+TechniqueSorting=SmokeDepth@SmokeDepth.fx
+
+[SmokeDepth.fx]
+fDepthScale=1.0
+INI
+
+    printf 'smoke\n' >"$base/configs/shaders/vkcube.last-profile"
+}
+
+seed_config
+
 say "layer      $LIBRARY"
 say "duration   ${DURATION}s"
 
