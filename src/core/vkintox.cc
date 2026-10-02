@@ -3745,6 +3745,29 @@ namespace VKIntox
         logicalSwapchain->imageCount = fetchedImageCount;
         logicalSwapchain->images = std::move(realImages);
 
+        // Non-Wayland surfaces get their real swapchain images, and none of the
+        // fake ones.
+        //
+        // Everything below here builds fake images and, at the end of this
+        // function, hands those to the application instead of the real ones.
+        // That substitution only works if something later copies the fakes into
+        // the real swapchain before presenting, and that copy lives in the
+        // Wayland present path. On X11 the present path returns early and passes
+        // straight through, so the application renders into fakes that nothing
+        // ever reads while the real swapchain images are presented untouched and
+        // blank. The symptom is a black window, not a missing effect.
+        //
+        // Giving the application its own images is what makes "pass through
+        // only" true rather than aspirational: the app renders where it expects
+        // to render, and its present arrives unchanged. Anything that needs the
+        // fakes is on the Wayland path and never gets here.
+        if (isNonWaylandSurface())
+        {
+            *pCount = std::min<uint32_t>(*pCount, logicalSwapchain->imageCount);
+            std::memcpy(swapchainImages, logicalSwapchain->images.data(), sizeof(VkImage) * (*pCount));
+            return *pCount < logicalSwapchain->imageCount ? VK_INCOMPLETE : VK_SUCCESS;
+        }
+
         // Create image views for overlay rendering
         logicalSwapchain->imageViews.resize(logicalSwapchain->imageCount);
         for (uint32_t i = 0; i < logicalSwapchain->imageCount; i++)
