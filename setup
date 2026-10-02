@@ -28,8 +28,6 @@ else
 fi
 
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
-# the freedesktop branch this layer is built for; must match the flatpak manifest.
-LAYER_BRANCH="26.08"
 # where `just flatpak-build` leaves the local repo, per the Justfile
 FLATPAK_BUILD_ROOT="build/flatpak-repo"
 # caches the source hash so an unchanged tree can skip a rebuild; uninstall has
@@ -123,17 +121,10 @@ uninstall_flatpak_layer() {
     fi
 }
 
-# root writes to the build tree during install/uninstall, and any root-owned file
-# left there breaks the next unprivileged `just build`. hand them back. needs the
-# sudo session from the caller; a no-op when nothing is root-owned.
-reclaim_build_ownership() {
-    [[ -d build ]] || return 0
-    find build -user root -print0 2>/dev/null \
-        | sudo -n xargs -0 -r chown "$(id -u):$(id -g)" 2>/dev/null || true
-}
-
 uninstall_system_layer() {
-    # the system install wrote into /usr, so this is the one part needing root.
+    # The system install wrote into /usr, so removing it is the one operation
+    # that genuinely needs root, and it goes through the same authenticated
+    # sudo session the install used.
     section "removing system install"
     if [[ ! -d build ]]; then
         die "no build directory; run this from the project root"
@@ -141,7 +132,6 @@ uninstall_system_layer() {
     say "authenticating for system uninstall"
     sudo -v || die "could not authenticate for system uninstall"
     run_progress "removing system-wide files" sudo -n ninja -C build uninstall
-    reclaim_build_ownership
 
     section "config kept"
     printf "  ${DIM}%s${NC}\n" "$HOME/.config/VKIntox"
