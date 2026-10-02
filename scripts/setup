@@ -80,21 +80,11 @@ run_progress() {
 # character at a time, so the shell that invoked us is unusable until reset.
 TTY_SAVED=""
 save_tty() {
-    # a piped script (curl | bash) has no tty on stdin, but the user is still
-    # sitting at one, so capture the controlling terminal instead
-    if [[ -t 0 ]]; then
-        TTY_SAVED=$(stty -g 2>/dev/null || true)
-    elif [[ -r /dev/tty ]]; then
-        TTY_SAVED=$(stty -g </dev/tty 2>/dev/null || true)
-    fi
+    [[ -t 0 ]] || return 0
+    TTY_SAVED=$(stty -g 2>/dev/null || true)
 }
 restore_tty() {
-    [[ -n "$TTY_SAVED" ]] || return 0
-    if [[ -t 0 ]]; then
-        stty "$TTY_SAVED" 2>/dev/null || true
-    elif [[ -r /dev/tty ]]; then
-        stty "$TTY_SAVED" </dev/tty 2>/dev/null || true
-    fi
+    [[ -n "$TTY_SAVED" ]] && stty "$TTY_SAVED" 2>/dev/null || true
 }
 
 usage() {
@@ -104,46 +94,6 @@ usage:
   curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- com.target.app
   curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
 EOF
-}
-
-# Removes the layer and the local repo it came from. The config directories are
-# deliberately left alone: shader presets, profiles and the effect list are the
-# user's own work, and an uninstall that deletes them is an uninstall nobody
-# wants to have to redo.
-uninstall_layer() {
-    section "removing layer"
-    local installed
-    installed=$(flatpak list --user --runtime --columns=application,branch 2>/dev/null | awk -v id="$LAYER_ID" '$1==id{print id "//" $2}')
-    if [ -n "$installed" ]; then
-        while read -r ref; do
-            [ -n "$ref" ] || continue
-            run_progress "uninstalling $ref" flatpak uninstall --user --noninteractive -y "$ref"
-        done <<<"$installed"
-    else
-        ok "layer is not installed"
-    fi
-
-    section "removing local repo"
-    if flatpak remote-list --user 2>/dev/null | awk '{print $1}' | grep -qx 'vkintox-local'; then
-        run_progress "removing vkintox-local" flatpak remote-remove --user vkintox-local
-    else
-        ok "vkintox-local remote is not configured"
-    fi
-
-    if [[ -d "$BUILD_ROOT" ]]; then
-        rm -rf -- "$BUILD_ROOT"
-        ok "removed the local build cache"
-    fi
-
-    section "config kept"
-    local kept
-    kept=$(find "$HOME/.var/app" -maxdepth 3 -type d -name VKIntox -path '*/config/*' 2>/dev/null | head -5)
-    if [[ -n "$kept" ]]; then
-        printf "%s\n" "$kept" | while IFS= read -r line; do printf "  %s\n" "$line"; done
-    else
-        printf "  ${DIM}no per-app config directories found${NC}\n"
-    fi
-    printf "  ${DIM}reinstall with the same command to pick your settings back up${NC}\n"
 }
 
 # Arrow-key picker used for the install method and the version list. The chosen
@@ -159,16 +109,9 @@ select_menu() {
     SELECTED=0
     (( count > 0 )) || return 0
 
-    # stdin is the script itself when piped (curl | bash), so read from the
-    # controlling terminal instead of silently taking the default
-    local read_fd=0
     if [[ ! -t 0 ]]; then
-        if exec 3</dev/tty 2>/dev/null && [[ -t 3 ]]; then
-            read_fd=3
-        else
-            printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
-            return 0
-        fi
+        printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
+        return 0
     fi
     # without stty the terminal stays canonical, arrow keys would sit in the line
     # buffer until enter, and the prompt would look frozen. say so and take the
@@ -176,7 +119,6 @@ select_menu() {
     if ! command -v stty >/dev/null 2>&1; then
         warn "stty is unavailable, so arrow keys cannot be read; taking the default"
         printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
-        if (( read_fd == 3 )); then exec 3<&-; fi
         return 0
     fi
 
@@ -184,7 +126,7 @@ select_menu() {
     # read would never see an arrow key. ISIG stays on so ctrl-c still aborts,
     # and because that means ctrl-c arrives as a signal rather than a byte, the
     # restore lives in the EXIT trap instead of at the end of this function
-    stty -icanon min 1 time 0 -echo <&"$read_fd" 2>/dev/null || true
+    stty -icanon min 1 time 0 -echo 2>/dev/null || true
 
     # leading blank line, so a prompt sits like section() does instead of
     # crowding whatever the previous step printed
@@ -208,12 +150,12 @@ select_menu() {
         drawn=$(( count + 1 ))
 
         key=""
-        IFS= read -rsn1 -u "$read_fd" key || true
+        IFS= read -rsn1 key || true
         [[ -n "$key" ]] || break
         if [[ "$key" == $'\e' || "$key" == $'\033' ]]; then
             # arrows arrive as ESC [ A/B, or ESC O A/B from some terminals
             rest=""
-            IFS= read -rsn2 -u "$read_fd" rest || true
+            IFS= read -rsn2 rest || true
             case "$rest" in
                 '[A' | 'OA') cursor=$(( (cursor - 1 + count) % count )) ;;
                 '[B' | 'OB') cursor=$(( (cursor + 1) % count )) ;;
@@ -230,7 +172,6 @@ select_menu() {
     done
 
     restore_tty
-    if (( read_fd == 3 )); then exec 3<&-; fi
 
     # wipe the menu and leave one confirmation line, so the transcript reads as
     # a choice rather than a scrolling list that was redrawn a dozen times
@@ -266,21 +207,6 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 save_tty
 
-# uninstall short-circuits before the install dependencies, because removing a
-# layer should not require curl, python3 or a shader download to work
-case "$APP_ID" in
-    uninstall | --uninstall | -u)
-        need_cmd flatpak
-        uninstall_layer
-        finish "uninstalled"
-        exit 0
-        ;;
-esac
-
-[[ "$APP_ID" != "sober" ]] || APP_ID="org.vinegarhq.Sober"
-
-for cmd in curl jq unzip flatpak flatpak-builder python3 sha256sum readelf grep install awk sed sort mktemp find head basename dirname; do need_cmd "$cmd"; done
-
 section "dependencies"
 if ! flatpak remote-list --user 2>/dev/null | grep -q '^flathub'; then
     flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
@@ -291,21 +217,9 @@ fi
 
 section "fetching vkintox build"
 API="https://api.github.com/repos/$REPO"
-# a token lifts the unauthenticated GitHub API rate limit, which is what turns
-# this into a 403 on a shared connection. either variable name is accepted.
-AUTH_ARGS=()
-if [[ -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}" ]]; then
-    AUTH_ARGS=(-H "Authorization: Bearer ${GITHUB_TOKEN:-$GH_TOKEN}")
-fi
-HTTP_CODE=$(curl -sSL -w '%{http_code}' -H 'Accept: application/vnd.github+json' \
-    -H 'X-GitHub-Api-Version: 2022-11-28' "${AUTH_ARGS[@]}" \
-    "$API/releases/tags/flatpak-build" -o "$TMP_DIR/release.json" || true)
-case "$HTTP_CODE" in
-    200) ;;
-    403) die "GitHub API rate limit hit (HTTP 403); set GH_TOKEN or wait and retry" ;;
-    404) die "the public flatpak-build release is missing; run the manual $WORKFLOW workflow first" ;;
-    *)   die "couldn't fetch the flatpak-build release (HTTP ${HTTP_CODE:-no response})" ;;
-esac
+curl -fsSL -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+    "$API/releases/tags/flatpak-build" -o "$TMP_DIR/release.json" ||
+    die "the public flatpak-build release is missing; run the manual $WORKFLOW workflow first"
 
 # Every published build lands in the one rolling flatpak-build release, with the
 # version and build date encoded in the asset name, so the version list is
@@ -313,142 +227,48 @@ esac
 # Newest build per version wins, stable builds are listed before experimental
 # ones, and a version counts as experimental only when it ends in -experimental.
 jq -r '
-    def vkey: sub("^v"; "") | sub("[-+].*$"; "") | split(".") | map(tonumber? // 0);
     [.assets[]
      | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$"))
      | { v: (.name | sub("^libvkintox_flatpak_"; "") | sub("_[0-9]{8}\\.so$"; "")),
-         d: (.name | capture("_(?<d>[0-9]{8})\\.so$").d),
-         created: .created_at,
-         url: .browser_download_url }]
-    | (map(select(.v | endswith("-experimental") | not)) | sort_by([(.v | vkey), .d]) | reverse) as $stable
-    | (map(select(.v | endswith("-experimental")))       | sort_by([(.v | vkey), .d]) | reverse) as $experimental
+         url: .browser_download_url,
+         created: .created_at }]
+    | sort_by(.created) | reverse
+    | reduce .[] as $a ([];
+        (map(select(.v == $a.v)) | length) as $seen
+        | if $seen == 0 then . + [$a] else . end)
+    | (map(select(.v | endswith("-experimental") | not))) as $stable
+    | (map(select(.v | endswith("-experimental")))) as $experimental
     | ($stable + $experimental)[]
-    | "\(.v)\t\(.d)\t\(.url)"
+    | "\(.v)\t\(.url)"
 ' "$TMP_DIR/release.json" >"$TMP_DIR/versions.tsv"
 
-declare -a BUILD_VERSIONS=() BUILD_DATES=() BUILD_URLS=()
-while IFS=$'\t' read -r build_version build_date build_url; do
-    [[ -n "$build_version" && -n "$build_url" ]] || continue
-    BUILD_VERSIONS+=("$build_version")
-    BUILD_DATES+=("$build_date")
-    BUILD_URLS+=("$build_url")
+declare -a VERSION_NAMES=() VERSION_URLS=() VERSION_LABELS=()
+while IFS=$'\t' read -r version_name version_url; do
+    [[ -n "$version_name" ]] || continue
+    VERSION_NAMES+=("$version_name")
+    VERSION_URLS+=("$version_url")
 done <"$TMP_DIR/versions.tsv"
-((${#BUILD_URLS[@]})) || die "the flatpak-build release has no dated library asset"
+((${#VERSION_NAMES[@]})) || die "the flatpak-build release has no dated library asset"
 
-# month names for the build picker, so a date reads as a date
-# Published names have carried the date both ways: DDMMYYYY up to October 2026,
-# YYYYMMDD from then on. Normalise to YYYYMMDD, the form that compares and sorts,
-# and pass anything unrecognised straight through so it shows up in the menu
-# instead of being silently wrong.
-normalise_build_date() {
-    local d="$1"
-    if [[ ! "$d" =~ ^[0-9]{8}$ ]]; then
-        printf '%s' "$d"
-        return
-    fi
-    # Year-first puts a month in chars 5-6; day-first puts the year's century
-    # there, which is "20xx" and so never a month. Testing the month is exact for
-    # these two forms, where a year range is not: a 20th of the month reads as a
-    # perfectly plausible year.
-    local month=$((10#${d:4:2}))
-    if ((month >= 1 && month <= 12)); then
-        printf '%s' "$d"
-        return
-    fi
-    local day=$((10#${d:0:2}))
-    month=$((10#${d:2:2}))
-    if ((day >= 1 && day <= 31)) && ((month >= 1 && month <= 12)); then
-        printf '%s%s%s' "${d:4:4}" "${d:2:2}" "${d:0:2}"
-        return
-    fi
-    printf '%s' "$d"
-}
-MONTH_NAMES=(January February March April May June July August September October November December)
-ordinal() {
-    local n=$((10#$1))
-    case $((n % 100)) in
-        11 | 12 | 13) printf '%dth' "$n" ;;
-        *)
-            case $((n % 10)) in
-                1) printf '%dst' "$n" ;;
-                2) printf '%dnd' "$n" ;;
-                3) printf '%drd' "$n" ;;
-                *) printf '%dth' "$n" ;;
-            esac
-            ;;
-    esac
-}
-format_build_date() {
-    local d="$1"
-    if [[ ! "$d" =~ ^[0-9]{8}$ ]]; then
-        printf '%s' "${d:-unknown date}"
-        return
-    fi
-    local month=$((10#${d:4:2}))
-    local day=$((10#${d:6:2}))
-    if ((month < 1 || month > 12 || day < 1 || day > 31)); then
-        printf '%s' "$d"
-        return
-    fi
-    printf '%s %s %s' "${MONTH_NAMES[month - 1]}" "$(ordinal "$day")" "${d:0:4}"
-}
-# one menu entry per version, newest build first, so the counts come free
-declare -a VERSION_LABELS=()
-declare -a VERSION_FIRST_BUILD=()
-version_index=0
-for build_index in "${!BUILD_VERSIONS[@]}"; do
-    if ((build_index > 0)) && [[ "${BUILD_VERSIONS[$build_index]}" == "${BUILD_VERSIONS[$build_index - 1]}" ]]; then
-        continue
-    fi
-    builds=0
-    for other in "${BUILD_VERSIONS[@]}"; do
-        [[ "$other" == "${BUILD_VERSIONS[$build_index]}" ]] && builds=$((builds + 1))
-    done
-    version_label="${BUILD_VERSIONS[$build_index]}"
-    ((builds > 1)) && version_label="$version_label ($builds builds)"
-    # the list is stable-first, so only the head of it can be recommended
-    if [[ "$version_label" == *-experimental* ]]; then
+# stable entries sort first, so the newest stable build is index 0 and is the
+# one we mark recommended
+for version_index in "${!VERSION_NAMES[@]}"; do
+    version_label="${VERSION_NAMES[$version_index]}"
+    if [[ "$version_label" == *-experimental ]]; then
         version_label="${YELLOW}${version_label} (experimental! be careful)${NC}"
-    elif ((version_index == 0)); then
+    elif (( version_index == 0 )); then
         version_label="${GREEN}${version_label} (recommended)${NC}"
     fi
     VERSION_LABELS+=("$version_label")
-    VERSION_FIRST_BUILD+=("$build_index")
-    version_index=$((version_index + 1))
 done
 
 select_menu "pick installation method:" "fetch latest" "choose manually"
-if (( SELECTED == 0 )); then
-    # prefer the newest stable build, so an actively-built experimental branch
-    # can never become the default; only fall back to any build if none is stable
-    ASSET_URL=$(jq -er '
-        [ .assets[] | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$")) ]
-        | (map(select(.name | contains("-experimental") | not))) as $stable
-        | (if ($stable | length) > 0 then $stable else . end)
-        | sort_by(.created_at) | last
-        | .browser_download_url // empty
-    ' "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
-    SELECTED_VERSION_NAME="$(basename "$ASSET_URL" | sed -E 's/^libvkintox_flatpak_//; s/_[0-9]{8}\.so$//')"
-    SELECTED_BUILD_DATE="$(normalise_build_date "$(basename "$ASSET_URL" | sed -nE 's/^.*_([0-9]{8})\.so$/\1/p')")"
-else
+if (( SELECTED == 1 )); then
     select_menu "multiple versions found:" "${VERSION_LABELS[@]}"
-    version_choice=$SELECTED
-    first_build="${VERSION_FIRST_BUILD[$version_choice]}"
-    chosen_version="${BUILD_VERSIONS[$first_build]}"
-    declare -a BUILD_LABELS=() BUILD_CHOICE_URLS=()
-    for build_index in "${!BUILD_VERSIONS[@]}"; do
-        [[ "${BUILD_VERSIONS[$build_index]}" == "$chosen_version" ]] || continue
-        BUILD_LABELS+=("$(format_build_date "$(normalise_build_date "${BUILD_DATES[$build_index]}")")")
-        BUILD_CHOICE_URLS+=("${BUILD_URLS[$build_index]}")
-    done
-    if ((${#BUILD_CHOICE_URLS[@]} > 1)); then
-        select_menu "$chosen_version has ${#BUILD_CHOICE_URLS[@]} builds. pick:" "${BUILD_LABELS[@]}"
-        ASSET_URL="${BUILD_CHOICE_URLS[$SELECTED]}"
-    else
-        ASSET_URL="${BUILD_CHOICE_URLS[0]}"
-    fi
-    SELECTED_VERSION_NAME="$(basename "$ASSET_URL" | sed -E 's/^libvkintox_flatpak_//; s/_[0-9]{8}\.so$//')"
-    SELECTED_BUILD_DATE="$(normalise_build_date "$(basename "$ASSET_URL" | sed -nE 's/^.*_([0-9]{8})\.so$/\1/p')")"
+    ASSET_URL="${VERSION_URLS[$SELECTED]}"
+else
+    ASSET_URL=$(jq -er '[.assets[] | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$"))] | sort_by(.created_at) | last | .browser_download_url // empty' \
+        "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
 fi
 LIBRARY="$TMP_DIR/$(basename "$ASSET_URL")"
 say "downloading $(basename "$ASSET_URL")"
