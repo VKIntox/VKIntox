@@ -3501,6 +3501,16 @@ namespace VKIntox
             pLogicalDevice->vkd.DestroyCommandPool(device, pLogicalDevice->commandPool, pAllocator);
         }
 
+        // Final drain, and this one is not redundant with the flush at the top of
+        // this function. Everything registered between the two -- the swapchain
+        // teardown above, and above all imguiOverlay.reset(), which releases the
+        // overlay's handles into the queue rather than destroying them -- has only
+        // just been queued, and the device is about to become invalid. Without
+        // this those handles are never released at all: not deferred to a later
+        // flush, because there is no later one, and not safe to release later
+        // either, since calling Vulkan against a destroyed VkDevice is undefined.
+        DeferredDestroyQueue::instance().flush();
+
         pLogicalDevice->vkd.DestroyDevice(device, pAllocator);
 
         depthRetryStates.erase(pLogicalDevice);

@@ -1,4 +1,6 @@
 #include "imgui_overlay.hh"
+
+#include "vk_handle.hh"
 #include "effects/effect_registry.hh"
 #include "settings_manager.hh"
 #include "reshade_parser.hh"
@@ -294,35 +296,65 @@ namespace VKIntox
 
         if (titleIconDescriptor != VK_NULL_HANDLE)
             ImGui_ImplVulkan_RemoveTexture(titleIconDescriptor);
-        if (titleIconSampler != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroySampler(pLogicalDevice->device, titleIconSampler, nullptr);
-        if (titleIconView != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, titleIconView, nullptr);
-        if (titleIconImage != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, titleIconImage, nullptr);
-        if (titleIconMemory != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, titleIconMemory, nullptr);
 
+        // The ImGui teardown stays inline and runs first, because it releases
+        // ImGui's own references to the descriptor pool and the title icon
+        // descriptor. Those references have to be gone before the queue releases
+        // the pool, and the queue only runs at the next teardown, so ordering
+        // here is by construction rather than by luck.
         if (backendInitialized)
             ImGui_ImplVulkan_Shutdown();
         ImGui::DestroyContext();
 
+        // Deferred, like every other owner. The QueueWaitIdle above already makes
+        // this a safe moment, but inline destruction still meant that an overlay
+        // torn down during device teardown would call into a destroyed VkDevice.
+        // Handing the handles over means the flush at device destroy decides when
+        // they actually go, and the handle is still valid when it does.
+        auto& queue   = DeferredDestroyQueue::instance();
+        auto  device = pLogicalDevice->device;
+        auto& vkd    = pLogicalDevice->vkd;
+
+        const VkDeviceMemory   iconMem = titleIconMemory;
+        const VkImage         iconImg = titleIconImage;
+        const VkImageView     iconView = titleIconView;
+        const VkSampler       iconSampler = titleIconSampler;
+        const VkCommandPool   pool = commandPool;
+        const VkRenderPass    pass = renderPass;
+        const VkDescriptorPool descPool = descriptorPool;
+
+        if (iconMem != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Memory, [vkd, device, iconMem] { vkd.FreeMemory(device, iconMem, nullptr); });
+        // image before its view, so the view is released first
+        if (iconImg != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, iconImg] { vkd.DestroyImage(device, iconImg, nullptr); });
+        if (iconView != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, iconView] { vkd.DestroyImageView(device, iconView, nullptr); });
+        if (iconSampler != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, iconSampler] { vkd.DestroySampler(device, iconSampler, nullptr); });
+        if (pool != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, pool] { vkd.DestroyCommandPool(device, pool, nullptr); });
+
+        if (descPool != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Descriptor, [vkd, device, descPool] { vkd.DestroyDescriptorPool(device, descPool, nullptr); });
+
+        // framebuffers before the pass they were created from
         for (auto fb : framebuffers)
         {
             if (fb != VK_NULL_HANDLE)
-                pLogicalDevice->vkd.DestroyFramebuffer(pLogicalDevice->device, fb, nullptr);
+                queue.push(DestroyPhase::RenderPass, [vkd, device, fb] { vkd.DestroyFramebuffer(device, fb, nullptr); });
         }
+        if (pass != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::RenderPass, [vkd, device, pass] { vkd.DestroyRenderPass(device, pass, nullptr); });
+
+        // Fences are the earliest phase: a fence whose command pool is gone is
+        // fine to destroy, but a command pool destroyed while a submitted fence
+        // is still unsignalled is not, and the pool lands in Resource.
         for (auto fence : commandBufferFences)
         {
             if (fence != VK_NULL_HANDLE)
-                pLogicalDevice->vkd.DestroyFence(pLogicalDevice->device, fence, nullptr);
+                queue.push(DestroyPhase::Sync, [vkd, device, fence] { vkd.DestroyFence(device, fence, nullptr); });
         }
-        if (commandPool != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyCommandPool(pLogicalDevice->device, commandPool, nullptr);
-        if (renderPass != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyRenderPass(pLogicalDevice->device, renderPass, nullptr);
-        if (descriptorPool != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyDescriptorPool(pLogicalDevice->device, descriptorPool, nullptr);
 
         Logger::info("ImGui overlay destroyed");
     }
