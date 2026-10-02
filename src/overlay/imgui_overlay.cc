@@ -34,10 +34,10 @@ namespace VKIntox
 {
     namespace
     {
-        // M3 small top app bar is 64dp; the overlay's title bar is one.
+        // compact like a macOS titlebar: just enough for the brand row.
         float OverlayTitleBarHeight()
         {
-            return 64.0f * ImGuiM3GetMetrics().density;
+            return 44.0f * ImGuiM3GetMetrics().density;
         }
 
         void overlayTitleHeightConstraint(ImGuiSizeCallbackData* data)
@@ -1350,16 +1350,18 @@ namespace VKIntox
         const float previousFramePaddingY = ImGui::GetStyle().FramePadding.y;
         ImGui::GetStyle().FramePadding.y = std::max(0.0f, (OverlayTitleBarHeight() - ImGui::GetFontSize()) * 0.5f);
         ImGui::SetNextWindowSizeConstraints(minSize, maxSize, overlayTitleHeightConstraint);
-        ImGui::Begin("VKIntox Overlay", nullptr, ImGuiWindowFlags_NoCollapse);
+        // "##..." renders as an empty native title: the bar keeps its drag
+        // rect while the brand row below owns the pixels.
+        ImGui::Begin("##vkintox_overlay", nullptr, ImGuiWindowFlags_NoCollapse);
         ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
 
         const ImVec2 windowPos = ImGui::GetWindowPos();
         const ImVec2 windowSize = ImGui::GetWindowSize();
         const float titleBarHeight = ImGui::GetCurrentWindowRead()->TitleBarHeight;
         const ImGuiM3Metrics& m3metrics = ImGuiM3GetMetrics();
-        // compact circular close button; glyph is smaller and heavier than text.
-        const float closeButtonSize = 32.0f * m3metrics.density;
-        const float closeButtonRightInset = 12.0f * m3metrics.density;
+        // three-zone header: icon leading, brand centred, close trailing.
+        const float closeButtonSize = 26.0f * m3metrics.density;
+        const float closeButtonRightInset = 14.0f * m3metrics.density;
         const ImVec2 buttonMin(windowPos.x + windowSize.x - closeButtonSize - closeButtonRightInset,
                                windowPos.y + (titleBarHeight - closeButtonSize) * 0.5f);
         const ImVec2 buttonMax(buttonMin.x + closeButtonSize, buttonMin.y + closeButtonSize);
@@ -1385,6 +1387,31 @@ namespace VKIntox
         }
         const bool closeRequested = buttonHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         ImDrawList* drawList = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
+
+        // brand row: icon pinned to the leading edge, wordmark centred on the
+        // bar independently of it.
+        {
+            if (titleIconDescriptor != VK_NULL_HANDLE)
+            {
+                const float leftPad = 14.0f * m3metrics.density;
+                const float iconSize = ImTrunc(titleBarHeight * 0.62f);
+                const ImVec2 iconMin(windowPos.x + leftPad, windowPos.y + (titleBarHeight - iconSize) * 0.5f);
+                drawList->AddImage(ImTextureRef(reinterpret_cast<ImTextureID>(titleIconDescriptor)),
+                                   iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize));
+            }
+            ImFont* bold = ImGuiM3FontBold();
+            const float titleSize = ImGui::GetFontSize() * 1.2f;
+            if (bold)
+                ImGui::PushFont(bold, titleSize);
+            const char* brand = "VKIntox";
+            const ImVec2 textSize = ImGui::CalcTextSize(brand);
+            drawList->AddText(ImVec2(windowPos.x + (windowSize.x - textSize.x) * 0.5f,
+                                     windowPos.y + (titleBarHeight - textSize.y) * 0.5f),
+                              ImGuiM3ColorU32(ImGuiM3Role_OnSurface), brand);
+            if (bold)
+                ImGui::PopFont();
+        }
+
         ImVec4 surfaceColor = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
         surfaceColor.w = 1.0f;
         // mask the moving title behind the button, then hover/press on top.
@@ -1404,12 +1431,12 @@ namespace VKIntox
         ImFont* closeIcon = ImGuiM3IconFont();
         if (closeIcon)
         {
-            const float px = closeButtonSize * 0.46f;
+            const float px = closeButtonSize * 0.60f;
             ImGuiM3DrawIcon(drawList, kCloseGlyph, ImRect(buttonMin, buttonMax), px, crossColor);
         }
         else
         {
-            const float crossInset = closeButtonSize * 0.15f;
+            const float crossInset = closeButtonSize * 0.22f;
             const float crossThickness = 3.0f * m3metrics.density;
             drawList->AddLine(ImVec2(buttonCenter.x - crossInset, buttonCenter.y - crossInset),
                               ImVec2(buttonCenter.x + crossInset, buttonCenter.y + crossInset), crossColor, crossThickness);
