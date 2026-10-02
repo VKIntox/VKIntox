@@ -109,3 +109,26 @@ jobs:
 
       - name: Compile ReShade EffectPackages shaders
         run: python3 src/tests/test_reshade_shaders.py --shader-check build/src/vkintox-shader-check
+
+      - name: Install smoke test dependencies
+        run: |
+          sudo apt-get install --no-install-recommends -y \
+            mesa-vulkan-drivers \
+            vulkan-tools \
+            xvfb
+
+      - name: Smoke test the layer under vkcube
+        run: |
+          # A runner has no GPU, so lavapipe supplies a software Vulkan
+          # implementation, and xvfb supplies the display vkcube needs to open a
+          # window. The script fails the build when the loader never picked up
+          # the freshly built layer, so a green run cannot be a vacuous one where
+          # the layer silently never loaded and vkcube ran untouched.
+          LVP_ICD=$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)
+          if [ -z "$LVP_ICD" ]; then
+            echo "lavapipe ICD not found; mesa-vulkan-drivers did not install" >&2
+            ls /usr/share/vulkan/icd.d/ >&2
+            exit 1
+          fi
+          echo "using software vulkan: $LVP_ICD"
+          VK_ICD_FILENAMES="$LVP_ICD" xvfb-run -a src/tests/smoke_vkcube.sh build/src/libvkintox.so 11
