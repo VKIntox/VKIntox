@@ -64,6 +64,7 @@ overlay_src = [
 
 VKIntox_src = [
     'core/vkintox.cc',
+    'core/vkintox_depth.cc',
     'render/buffer.cc',
     'render/command_buffer.cc',
     'render/vk_handle.cc',

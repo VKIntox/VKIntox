@@ -50,7 +50,7 @@ curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- com.target.a
 > no system prebuilts exist yet due to dependency variance. use local compilation for native installs.
 
 > [!WARNING]
-> **wayland only, effectively.** x11 is not supported yet and fails quietly.
+> **wayland only, effectively.** x11 is not supported yet and fails quietly rather than loudly: the overlay never opens, keybinds do nothing, and depth resolve never engages, so depth-based effects render without depth instead of telling you they could not. if you are on x11 and something looks inert, that is why. x11 support is being worked on for v0.1.4.
 
 ## features
 
