@@ -143,6 +143,10 @@ namespace VKIntox
 
         void refreshShaderProfiles();
         void setActiveShaderProfile(const std::string& profileName);
+        // save the outgoing profile, activate profileName and queue a reload.
+        // atomic so the debounced auto-save can't hit the new path first.
+        bool switchShaderProfile(const std::string& profileName);
+        std::string getActiveShaderProfilePath() const { return activeShaderProfilePath; }
         void renderCenteredBrandIcon(float size);
 
         // Trigger debounced reload (for config switch)

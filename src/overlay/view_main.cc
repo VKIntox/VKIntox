@@ -151,15 +151,8 @@ namespace VKIntox
                     const bool selected = profile == activeShaderProfileName;
                     if (ImGui::Selectable(profile.c_str(), selected) && !selected)
                     {
-                        if (!autoSaveProfile())
+                        if (!switchShaderProfile(profile))
                             pushToast(LogLevel::Error, "Could not save the active shader profile.");
-                        else
-                        {
-                            setActiveShaderProfile(profile);
-                            pendingShaderProfilePath = activeShaderProfilePath;
-                            pendingShaderProfile = true;
-                            applyRequested = true;
-                        }
                     }
                     if (selected)
                         ImGui::SetItemDefaultFocus();
@@ -218,11 +211,8 @@ namespace VKIntox
                     else if (ConfigSerializer::createShaderProfile(activeGameName, newShaderProfileName,
                                                                    activeShaderProfileName))
                     {
-                        setActiveShaderProfile(newShaderProfileName);
+                        switchShaderProfile(newShaderProfileName);
                         refreshShaderProfiles();
-                        pendingShaderProfilePath = activeShaderProfilePath;
-                        pendingShaderProfile = true;
-                        applyRequested = true;
                         newShaderProfileName[0] = '\0';
                         ImGui::CloseCurrentPopup();
                     }

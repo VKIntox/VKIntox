@@ -732,24 +732,23 @@ namespace VKIntox
                 config->setOption("effects", join(profile.effects));
                 config->setOption("disabledEffects", join(profile.disabledEffects));
             }
-            else if (profile.hasTechniques)
+            else if (!profile.techniques.empty() || !profile.techniqueSorting.empty())
             {
+                // a preset that names no techniques must leave the inherited
+                // list alone: the auto-created "default" starts empty.
                 const auto currentEffects = config->getOption<std::vector<std::string>>("effects", {});
                 const auto currentDisabled = config->getOption<std::vector<std::string>>("disabledEffects", {});
                 std::set<std::string> currentDisabledSet(currentDisabled.begin(), currentDisabled.end());
                 std::vector<std::string> effects, disabled;
                 std::set<std::string> retainedEffects;
 
-                // Keep configured effects that are absent from the preset,
-                // including built-ins and ReShade shaders. Presets choose the
-                // techniques they mention; they must not erase unrelated game
-                // effects from the inherited profile.
+                // the preset owns the ReShade stack; keeping every configured
+                // effect here made switches re-import the outgoing profile.
                 for (const auto& name : currentEffects)
                 {
                     const auto configuredType = config->getOption<std::string>(name, "");
                     if (BuiltInEffects::instance().isBuiltIn(name) ||
-                        BuiltInEffects::instance().isBuiltIn(configuredType) ||
-                        definitions.count(name))
+                        BuiltInEffects::instance().isBuiltIn(configuredType))
                     {
                         if (!retainedEffects.insert(name).second)
                             continue;
@@ -2924,11 +2923,19 @@ namespace VKIntox
                     logicalDevice->depthReallocPending = false;
                 };
 
+                // the overlay owns the active profile; the static is only for
+                // early calls before it exists.
+                std::string overlayShaderPath = logicalDevice->imguiOverlay
+                    ? logicalDevice->imguiOverlay->getActiveShaderProfilePath()
+                    : std::string();
+                if (overlayShaderPath.empty())
+                    overlayShaderPath = activeShaderProfilePath;
+
                 // Check if overlay wants to load a different config
                 if (logicalDevice->imguiOverlay && logicalDevice->imguiOverlay->hasPendingConfig())
                 {
                     std::string newConfigPath = logicalDevice->imguiOverlay->getPendingConfigPath();
-                    switchConfig(newConfigPath, activeShaderProfilePath);
+                    switchConfig(newConfigPath, overlayShaderPath);
                     // Update overlay with effects from the new config
                     std::vector<std::string> newEffects = config->getOption<std::vector<std::string>>("effects", {});
                     std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects", {});
@@ -2959,7 +2966,7 @@ namespace VKIntox
                 else
                 {
                     config->reload();
-                    applyShaderProfile(config.get(), activeShaderProfilePath);
+                    applyShaderProfile(config.get(), overlayShaderPath);
                     reloadSelectedEffects();
                 }
             }

@@ -413,6 +413,25 @@ namespace VKIntox
             ConfigSerializer::setLastShaderProfile(activeGameName, activeShaderProfileName);
     }
 
+    bool ImGuiOverlay::switchShaderProfile(const std::string& profileName)
+    {
+        if (profileName.empty() || profileName == activeShaderProfileName)
+            return true;
+
+        // save the outgoing profile while it is still active, then clear the
+        // dirty flags so render()'s auto-save can't clobber the new path.
+        if (!autoSaveProfile())
+            return false;
+
+        setActiveShaderProfile(profileName);
+        pendingShaderProfilePath = activeShaderProfilePath;
+        pendingShaderProfile = true;
+        applyRequested = true;
+        paramsDirty = false;
+        profileDirty = false;
+        return true;
+    }
+
     void ImGuiOverlay::renderCenteredBrandIcon(float size)
     {
         if (titleIconDescriptor == VK_NULL_HANDLE || size <= 0.0f)
@@ -727,14 +746,27 @@ namespace VKIntox
         bool configSaved = true;
         if (!activeProfilePath.empty())
         {
+            // .conf is the structural base: definitions plus built-ins. values
+            // live in the .ini so a sparse preset can't inherit stale ones.
+            std::vector<std::string> baseEffects;
+            std::vector<std::string> baseDisabled;
+            const std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());
+            for (const auto& name : effects)
+            {
+                if (!effectRegistry->isEffectBuiltIn(name))
+                    continue;
+                baseEffects.push_back(name);
+                if (disabledSet.count(name))
+                    baseDisabled.push_back(name);
+            }
             std::map<std::string, std::string> instancePaths = effectPaths;
             for (const auto& [name, path] : effectPaths)
             {
                 if (std::filesystem::path(path).extension() == ".fx")
                     instancePaths[name] = std::filesystem::path(path).filename().string();
             }
-            configSaved = ConfigSerializer::saveToPath(activeProfilePath, effects, disabledEffects, params,
-                                                       instancePaths, allDefs);
+            configSaved = ConfigSerializer::saveToPath(activeProfilePath, baseEffects, baseDisabled, {},
+                                                       instancePaths, {});
         }
 
         bool shaderSaved = true;
