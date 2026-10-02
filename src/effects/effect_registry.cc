@@ -60,14 +60,14 @@ namespace VKIntox
             float defaultVal,
             float minVal,
             float maxVal,
-            Config* pConfig)
+            Config* config)
         {
             auto p = std::make_unique<FloatParam>();
             p->effectName = effectName;
             p->name = name;
             p->label = label;
             p->defaultValue = defaultVal;
-            p->value = pConfig->getInstanceOption<float>(effectName, name, defaultVal);
+            p->value = config->getInstanceOption<float>(effectName, name, defaultVal);
             p->minValue = minVal;
             p->maxValue = maxVal;
             return p;
@@ -81,14 +81,14 @@ namespace VKIntox
             int defaultVal,
             int minVal,
             int maxVal,
-            Config* pConfig)
+            Config* config)
         {
             auto p = std::make_unique<IntParam>();
             p->effectName = effectName;
             p->name = name;
             p->label = label;
             p->defaultValue = defaultVal;
-            p->value = pConfig->getInstanceOption<int32_t>(effectName, name, defaultVal);
+            p->value = config->getInstanceOption<int32_t>(effectName, name, defaultVal);
             p->minValue = minVal;
             p->maxValue = maxVal;
             return p;
@@ -156,7 +156,7 @@ namespace VKIntox
         }
 
         // Try to find effect file path
-        std::string findEffectPath(const std::string& name, Config* pConfig)
+        std::string findEffectPath(const std::string& name, Config* config)
         {
             // If caller already provides a path (absolute or relative), use it directly.
             std::string directPath = tryResolveDirectEffectPath(name);
@@ -164,7 +164,7 @@ namespace VKIntox
                 return directPath;
 
             // First check if path is directly configured (e.g. "Vibrance = /path/to/Vibrance.fx")
-            std::string path = pConfig->getOption<std::string>(name, "");
+            std::string path = config->getOption<std::string>(name, "");
             std::string resolvedConfiguredPath = tryResolveDirectEffectPath(path);
             if (!resolvedConfiguredPath.empty())
                 return resolvedConfiguredPath;
@@ -173,7 +173,7 @@ namespace VKIntox
             std::vector<std::string> searchDirs;
 
             // reshadeIncludePath from config (colon-separated)
-            std::string includePath = pConfig->getOption<std::string>("reshadeIncludePath", "");
+            std::string includePath = config->getOption<std::string>("reshadeIncludePath", "");
             if (!includePath.empty())
             {
                 std::stringstream ss(includePath);
@@ -227,14 +227,14 @@ namespace VKIntox
         return BuiltInEffects::instance().isBuiltIn(name);
     }
 
-    void EffectRegistry::initialize(Config* pConfig)
+    void EffectRegistry::initialize(Config* config)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        this->pConfig = pConfig;
+        this->rootConfig = config;
         effects.clear();
 
-        std::vector<std::string> effectNames = pConfig->getOption<std::vector<std::string>>("effects");
-        std::vector<std::string> disabledEffects = pConfig->getOption<std::vector<std::string>>("disabledEffects");
+        std::vector<std::string> effectNames = config->getOption<std::vector<std::string>>("effects");
+        std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects");
 
         // Build set for quick lookup
         std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());
@@ -243,7 +243,7 @@ namespace VKIntox
         {
             // Check if there's a stored effect type/path for this effect
             // Format: "cas.2 = cas" (built-in) or "Clarity = /path/to/Clarity.fx" (ReShade)
-            std::string storedValue = pConfig->getOption<std::string>(name, "");
+            std::string storedValue = config->getOption<std::string>(name, "");
 
             if (!storedValue.empty() && isBuiltInEffect(storedValue))
             {
@@ -258,7 +258,7 @@ namespace VKIntox
             else
             {
                 // Try to find as ReShade effect
-                std::string effectPath = findEffectPath(name, pConfig);
+                std::string effectPath = findEffectPath(name, config);
                 if (effectPath.empty())
                 {
                     Logger::err("EffectRegistry: could not find effect file for: " + name);
@@ -297,13 +297,13 @@ namespace VKIntox
             {
                 config.parameters.push_back(
                     makeFloatParam(instanceName, paramDef.name, paramDef.label,
-                                   paramDef.defaultFloat, paramDef.minFloat, paramDef.maxFloat, pConfig));
+                                   paramDef.defaultFloat, paramDef.minFloat, paramDef.maxFloat, rootConfig));
             }
             else if (paramDef.type == ParamType::Int)
             {
                 config.parameters.push_back(
                     makeIntParam(instanceName, paramDef.name, paramDef.label,
-                                 paramDef.defaultInt, paramDef.minInt, paramDef.maxInt, pConfig));
+                                 paramDef.defaultInt, paramDef.minInt, paramDef.maxInt, rootConfig));
             }
         }
 
@@ -337,7 +337,7 @@ namespace VKIntox
         else
         {
             // Only parse parameters if compilation succeeded
-            config.parameters = parseReshadeEffect(name, path, pConfig, &config.techniqueNames);
+            config.parameters = parseReshadeEffect(name, path, rootConfig, &config.techniqueNames);
 
             // Extract preprocessor definitions (user-configurable macros)
             config.preprocessorDefs = extractPreprocessorDefinitions(name, path);
@@ -347,7 +347,7 @@ namespace VKIntox
             for (auto& def : config.preprocessorDefs)
             {
                 std::string configKey = name + "@" + def.name;
-                std::string savedValue = pConfig->getOption<std::string>(configKey, "");
+                std::string savedValue = rootConfig->getOption<std::string>(configKey, "");
                 if (!savedValue.empty())
                 {
                     def.value = savedValue;
@@ -596,7 +596,7 @@ namespace VKIntox
         bool isBuiltIn = isBuiltInEffect(type);
         if (!isBuiltIn)
         {
-            path = findEffectPath(type, pConfig);
+            path = findEffectPath(type, rootConfig);
             if (path.empty() || !std::filesystem::exists(path))
             {
                 Logger::warn("EffectRegistry::ensureEffect: could not find effect file for: " + type);
@@ -738,13 +738,13 @@ namespace VKIntox
     {
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (initializedFromConfig || !pConfig)
+            if (initializedFromConfig || !rootConfig)
                 return;
         }
 
         // Read effects list from config
-        std::vector<std::string> configEffects = pConfig->getOption<std::vector<std::string>>("effects", {});
-        std::vector<std::string> disabledEffects = pConfig->getOption<std::vector<std::string>>("disabledEffects", {});
+        std::vector<std::string> configEffects = rootConfig->getOption<std::vector<std::string>>("effects", {});
+        std::vector<std::string> disabledEffects = rootConfig->getOption<std::vector<std::string>>("disabledEffects", {});
 
         // Build set of disabled effects for quick lookup
         std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());

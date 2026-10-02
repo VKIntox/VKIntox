@@ -23,12 +23,12 @@ namespace VKIntox
     // TODO currently return false if format is UNORM and no matching sRGB format exist
     bool isUNORM(VkFormat format);
 
-    VkFormat getSupportedFormat(LogicalDevice*        pLogicalDevice,
+    VkFormat getSupportedFormat(LogicalDevice*        logicalDevice,
                                 std::vector<VkFormat> formats,
                                 VkFormatFeatureFlags  features,
                                 VkImageTiling         tiling = VK_IMAGE_TILING_OPTIMAL);
 
-    VkFormat getStencilFormat(LogicalDevice* pLogicalDevice);
+    VkFormat getStencilFormat(LogicalDevice* logicalDevice);
 
     bool isDepthFormat(VkFormat format);
 

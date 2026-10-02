@@ -13,7 +13,7 @@
 
 namespace VKIntox
 {
-    std::vector<VkImageView> createImageViews(LogicalDevice*       pLogicalDevice,
+    std::vector<VkImageView> createImageViews(LogicalDevice*       logicalDevice,
                                               VkFormat             format,
                                               const std::vector<VkImage>& images,
                                               VkImageViewType      viewType   = VK_IMAGE_VIEW_TYPE_2D,
@@ -23,7 +23,7 @@ namespace VKIntox
     // SAFETY: createImageViews returns an empty vector when any Vulkan call fails,
     // so callers that request exactly one view must not subscript [0] blindly.
     // This returns VK_NULL_HANDLE instead of invoking undefined behaviour.
-    VkImageView createSingleImageView(LogicalDevice*     pLogicalDevice,
+    VkImageView createSingleImageView(LogicalDevice*     logicalDevice,
                                       VkFormat           format,
                                       VkImage            image,
                                       VkImageViewType    viewType   = VK_IMAGE_VIEW_TYPE_2D,

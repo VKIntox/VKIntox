@@ -13,7 +13,7 @@
 
 namespace VKIntox
 {
-    uint32_t findMemoryTypeIndex(LogicalDevice* pLogicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    uint32_t findMemoryTypeIndex(LogicalDevice* logicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties);
 }
 
 #endif // MEMORY_HPP_INCLUDED

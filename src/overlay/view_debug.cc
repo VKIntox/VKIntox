@@ -52,7 +52,7 @@ namespace VKIntox
             {
                 debugWindowTab = 0;
 
-                if (!pEffectRegistry)
+                if (!effectRegistry)
                 {
                     ImGui::TextDisabled("Effect registry not available");
                     ImGui::EndTabItem();
@@ -61,7 +61,7 @@ namespace VKIntox
                     return;
                 }
 
-                const auto& effects = pEffectRegistry->getAllEffects();
+                const auto& effects = effectRegistry->getAllEffects();
                 ImGui::Text("Total Effects: %zu", effects.size());
                 ImGui::Separator();
 

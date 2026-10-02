@@ -278,35 +278,35 @@ namespace VKIntox
         }
     }
 
-    ReshadeEffect::ReshadeEffect(LogicalDevice*       pLogicalDevice,
+    ReshadeEffect::ReshadeEffect(LogicalDevice*       logicalDevice,
                                  VkFormat             format,
                                  VkExtent2D           imageExtent,
                                  std::vector<VkImage> inputImages,
                                  std::vector<VkImage> outputImages,
-                                 EffectRegistry*      pEffectRegistry,
+                                 EffectRegistry*      effectRegistry,
                                  std::string          effectName,
                                  std::string          effectPath,
                                  std::vector<PreprocessorDefinition> customDefs)
     {
         Logger::debug("in creating ReshadeEffect");
 
-        this->pLogicalDevice        = pLogicalDevice;
+        this->logicalDevice        = logicalDevice;
         this->imageExtent           = imageExtent;
         this->inputImages           = inputImages;
         this->outputImages          = outputImages;
         outputImageInitialized.assign(outputImages.size(), false);
-        this->pEffectRegistry       = pEffectRegistry;
+        this->effectRegistry       = effectRegistry;
         this->effectName            = effectName;
         this->effectPath            = effectPath;
         this->customPreprocessorDefs = customDefs;
         inputOutputFormatUNORM = convertToUNORM(format);
         inputOutputFormatSRGB  = convertToSRGB(format);
 
-        inputImageViewsSRGB  = createImageViews(pLogicalDevice, inputOutputFormatSRGB, inputImages);
-        inputImageViewsUNORM = createImageViews(pLogicalDevice, inputOutputFormatUNORM, inputImages);
+        inputImageViewsSRGB  = createImageViews(logicalDevice, inputOutputFormatSRGB, inputImages);
+        inputImageViewsUNORM = createImageViews(logicalDevice, inputOutputFormatUNORM, inputImages);
         Logger::debug("created input ImageViews");
-        outputImageViewsSRGB  = createImageViews(pLogicalDevice, inputOutputFormatSRGB, outputImages);
-        outputImageViewsUNORM = createImageViews(pLogicalDevice, inputOutputFormatUNORM, outputImages);
+        outputImageViewsSRGB  = createImageViews(logicalDevice, inputOutputFormatSRGB, outputImages);
+        outputImageViewsUNORM = createImageViews(logicalDevice, inputOutputFormatUNORM, outputImages);
         Logger::debug("created ImageViews");
 
         createReshadeModule();
@@ -318,14 +318,14 @@ namespace VKIntox
         bufferSize = module.total_uniform_size;
         if (bufferSize)
         {
-            createBuffer(pLogicalDevice,
+            createBuffer(logicalDevice,
                          bufferSize,
                          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                          stagingBuffer,
                          stagingBufferMemory);
             // Persistent map — HOST_COHERENT means no flush needed, just write directly
-            VkResult mapResult = pLogicalDevice->vkd.MapMemory(pLogicalDevice->device, stagingBufferMemory, 0, bufferSize, 0, &stagingBufferMapped);
+            VkResult mapResult = logicalDevice->vkd.MapMemory(logicalDevice->device, stagingBufferMemory, 0, bufferSize, 0, &stagingBufferMapped);
             if (mapResult != VK_SUCCESS)
             {
                 Logger::err("MapMemory failed for effect " + effectName + ": " + std::to_string(mapResult));
@@ -333,10 +333,10 @@ namespace VKIntox
             }
         }
 
-        stencilFormat = getStencilFormat(pLogicalDevice);
+        stencilFormat = getStencilFormat(logicalDevice);
         Logger::debug("Stencil Format: " + std::to_string(stencilFormat));
         textureMemory.push_back(VK_NULL_HANDLE);
-        stencilImage = createSingleImage(pLogicalDevice,
+        stencilImage = createSingleImage(logicalDevice,
                                     {imageExtent.width, imageExtent.height, 1},
                                     stencilFormat,
                                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
@@ -344,7 +344,7 @@ namespace VKIntox
                                     textureMemory.back());
 
         stencilImageView = createSingleImageView(
-            pLogicalDevice, stencilFormat, stencilImage, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+            logicalDevice, stencilFormat, stencilImage, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
 
         std::vector<std::vector<VkImageView>> imageViewVector;
 
@@ -395,7 +395,7 @@ namespace VKIntox
                     imageUsage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
                 textureMemory.push_back(VK_NULL_HANDLE);
-                std::vector<VkImage> images = createImages(pLogicalDevice,
+                std::vector<VkImage> images = createImages(logicalDevice,
                                                            1,
                                                            textureExtent,
                                                            convertReshadeFormat(module.textures[i].format),
@@ -407,7 +407,7 @@ namespace VKIntox
                 textureImages[module.textures[i].unique_name] = images;
                 std::vector<VkImageView> imageViewsUNORM =
                     std::vector<VkImageView>(inputImages.size(),
-                                             createImageViews(pLogicalDevice,
+                                             createImageViews(logicalDevice,
                                                               convertToUNORM(convertReshadeFormat(module.textures[i].format)),
                                                               images,
                                                               textureViewType,
@@ -416,7 +416,7 @@ namespace VKIntox
 
                 std::vector<VkImageView> imageViewsSRGB =
                     std::vector<VkImageView>(inputImages.size(),
-                                             createImageViews(pLogicalDevice,
+                                             createImageViews(logicalDevice,
                                                               convertToSRGB(convertReshadeFormat(module.textures[i].format)),
                                                               images,
                                                               textureViewType,
@@ -431,7 +431,7 @@ namespace VKIntox
 
                     renderImageViewsUNORM[module.textures[i].unique_name] = std::vector<VkImageView>(
                         inputImages.size(),
-                        createImageViews(pLogicalDevice,
+                        createImageViews(logicalDevice,
                                          convertToUNORM(convertReshadeFormat(module.textures[i].format)),
                                          images,
                                          textureViewType,
@@ -440,7 +440,7 @@ namespace VKIntox
 
                     renderImageViewsSRGB[module.textures[i].unique_name] = std::vector<VkImageView>(
                         inputImages.size(),
-                        createImageViews(pLogicalDevice,
+                        createImageViews(logicalDevice,
                                          convertToSRGB(convertReshadeFormat(module.textures[i].format)),
                                          images,
                                          textureViewType,
@@ -455,14 +455,14 @@ namespace VKIntox
 
                 textureFormatsUNORM[module.textures[i].unique_name] = convertToUNORM(convertReshadeFormat(module.textures[i].format));
                 textureFormatsSRGB[module.textures[i].unique_name]  = convertToSRGB(convertReshadeFormat(module.textures[i].format));
-                changeImageLayout(pLogicalDevice, images, module.textures[i].levels);
+                changeImageLayout(logicalDevice, images, module.textures[i].levels);
                 continue;
             }
             else
             {
                 textureMemory.push_back(VK_NULL_HANDLE);
                 std::vector<VkImage> images =
-                    createImages(pLogicalDevice,
+                    createImages(logicalDevice,
                                  1,
                                  textureExtent,
                                  convertReshadeFormat(module.textures[i].format), // TODO search for format and save it
@@ -474,7 +474,7 @@ namespace VKIntox
 
                 textureImages[module.textures[i].unique_name] = images;
 
-                std::vector<VkImageView> imageViews = createImageViews(pLogicalDevice,
+                std::vector<VkImageView> imageViews = createImageViews(logicalDevice,
                                                                        convertToUNORM(convertReshadeFormat(module.textures[i].format)),
                                                                        images,
                                                                        textureViewType,
@@ -483,7 +483,7 @@ namespace VKIntox
 
                 std::vector<VkImageView> imageViewsUNORM = std::vector<VkImageView>(inputImages.size(), imageViews[0]);
 
-                imageViews = createImageViews(pLogicalDevice,
+                imageViews = createImageViews(logicalDevice,
                                               convertToSRGB(convertReshadeFormat(module.textures[i].format)),
                                               images,
                                               textureViewType,
@@ -623,7 +623,7 @@ namespace VKIntox
                 }
 
                 uploadToImage(
-                    pLogicalDevice, images[0], textureExtent, size, resizedPixels.size() ? resizedPixels.data() : pixels.get(), module.textures[i].levels);
+                    logicalDevice, images[0], textureExtent, size, resizedPixels.size() ? resizedPixels.data() : pixels.get(), module.textures[i].levels);
             }
         }
 
@@ -643,7 +643,7 @@ namespace VKIntox
                 info.filter = reshadefx::texture_filter::min_mag_mip_point;
             samplerFilters.push_back(info.filter);
 
-            VkSampler sampler = createReshadeSampler(pLogicalDevice, info);
+            VkSampler sampler = createReshadeSampler(logicalDevice, info);
 
             samplers.push_back(sampler);
 
@@ -671,8 +671,8 @@ namespace VKIntox
                 " filter=" + std::to_string(static_cast<uint32_t>(samplerFilters[i])));
         }
 
-        imageSamplerDescriptorSetLayout = createImageSamplerDescriptorSetLayout(pLogicalDevice, samplerBindingTypes);
-        uniformDescriptorSetLayout      = createUniformBufferDescriptorSetLayout(pLogicalDevice);
+        imageSamplerDescriptorSetLayout = createImageSamplerDescriptorSetLayout(logicalDevice, samplerBindingTypes);
+        uniformDescriptorSetLayout      = createUniformBufferDescriptorSetLayout(logicalDevice);
         Logger::debug("created descriptorSetLayouts");
 
         VkDescriptorPoolSize sampledImagePoolSize;
@@ -693,12 +693,12 @@ namespace VKIntox
         if (storageImagePoolSize.descriptorCount > 0)
             poolSizes.push_back(storageImagePoolSize);
 
-        descriptorPool = createDescriptorPool(pLogicalDevice, poolSizes);
+        descriptorPool = createDescriptorPool(logicalDevice, poolSizes);
         Logger::debug("created descriptorPool");
 
         std::vector<VkDescriptorSetLayout> descriptorSetLayouts = {uniformDescriptorSetLayout, imageSamplerDescriptorSetLayout};
 
-        pipelineLayout = createGraphicsPipelineLayout(pLogicalDevice, descriptorSetLayouts);
+        pipelineLayout = createGraphicsPipelineLayout(logicalDevice, descriptorSetLayouts);
 
         Logger::debug("created Pipeline layout");
 
@@ -714,41 +714,41 @@ namespace VKIntox
         Logger::debug("output writes: " + std::to_string(outputWrites));
         if (bufferSize)
         {
-            bufferDescriptorSet = writeBufferDescriptorSet(pLogicalDevice, descriptorPool, uniformDescriptorSetLayout, stagingBuffer);
+            bufferDescriptorSet = writeBufferDescriptorSet(logicalDevice, descriptorPool, uniformDescriptorSetLayout, stagingBuffer);
         }
 
         inputDescriptorSets =
             allocateAndWriteImageSamplerDescriptorSets(
-                pLogicalDevice, descriptorPool, imageSamplerDescriptorSetLayout, samplers, imageViewVector, samplerBindingTypes);
+                logicalDevice, descriptorPool, imageSamplerDescriptorSetLayout, samplers, imageViewVector, samplerBindingTypes);
 
         // if there is only one outputWrite, we can directly write to outputImages
         if (outputWrites > 1)
         {
             textureMemory.push_back(VK_NULL_HANDLE);
-            backBufferImages = createImages(pLogicalDevice,
+            backBufferImages = createImages(logicalDevice,
                                             inputImages.size(),
                                             {imageExtent.width, imageExtent.height, 1},
                                             format, // TODO search for format and save it
                                             VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                                             textureMemory.back());
-            changeImageLayout(pLogicalDevice, backBufferImages, 1);
+            changeImageLayout(logicalDevice, backBufferImages, 1);
 
-            backBufferImageViewsSRGB  = createImageViews(pLogicalDevice, inputOutputFormatSRGB, backBufferImages);
-            backBufferImageViewsUNORM = createImageViews(pLogicalDevice, inputOutputFormatUNORM, backBufferImages);
+            backBufferImageViewsSRGB  = createImageViews(logicalDevice, inputOutputFormatSRGB, backBufferImages);
+            backBufferImageViewsUNORM = createImageViews(logicalDevice, inputOutputFormatUNORM, backBufferImages);
 
             std::replace(imageViewVector.begin(), imageViewVector.end(), inputImageViewsSRGB, backBufferImageViewsSRGB);
             std::replace(imageViewVector.begin(), imageViewVector.end(), inputImageViewsUNORM, backBufferImageViewsUNORM);
 
             backBufferDescriptorSets = allocateAndWriteImageSamplerDescriptorSets(
-                pLogicalDevice, descriptorPool, imageSamplerDescriptorSetLayout, samplers, imageViewVector, samplerBindingTypes);
+                logicalDevice, descriptorPool, imageSamplerDescriptorSetLayout, samplers, imageViewVector, samplerBindingTypes);
         }
         if (outputWrites > 2)
         {
             std::replace(imageViewVector.begin(), imageViewVector.end(), backBufferImageViewsSRGB, outputImageViewsSRGB);
             std::replace(imageViewVector.begin(), imageViewVector.end(), backBufferImageViewsUNORM, outputImageViewsUNORM);
             outputDescriptorSets = allocateAndWriteImageSamplerDescriptorSets(
-                pLogicalDevice, descriptorPool, imageSamplerDescriptorSetLayout, samplers, imageViewVector, samplerBindingTypes);
+                logicalDevice, descriptorPool, imageSamplerDescriptorSetLayout, samplers, imageViewVector, samplerBindingTypes);
         }
 
         Logger::debug("after writing ImageSamplerDescriptorSets");
@@ -786,7 +786,7 @@ namespace VKIntox
                     }
 
                     // Get parameter from EffectRegistry (the single source of truth)
-                    auto paramOpt = pEffectRegistry->getParameter(effectName, opt.name);
+                    auto paramOpt = effectRegistry->getParameter(effectName, opt.name);
                     if (!paramOpt)
                     {
                         specId++;
@@ -912,8 +912,8 @@ namespace VKIntox
                     computePipelineCreateInfo.flags = VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
 
                 Logger::debug("creating compute pipeline entry: " + pass.cs_entry_point);
-                const VkResult computeResult = pLogicalDevice->vkd.CreateComputePipelines(
-                    pLogicalDevice->device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &runtime.pipeline);
+                const VkResult computeResult = logicalDevice->vkd.CreateComputePipelines(
+                    logicalDevice->device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &runtime.pipeline);
                 if (computeResult != VK_SUCCESS)
                 {
                     std::string error = "CreateComputePipelines failed for effect '" + effectName +
@@ -1098,7 +1098,7 @@ namespace VKIntox
             runtime.renderTargets = std::move(currentRenderTargets);
             runtime.vertexCount = pass.num_vertices == 0 ? 3 : pass.num_vertices;
 
-            VkResult result = pLogicalDevice->vkd.CreateRenderPass(pLogicalDevice->device, &renderPassCreateInfo, nullptr, &runtime.renderPass);
+            VkResult result = logicalDevice->vkd.CreateRenderPass(logicalDevice->device, &renderPassCreateInfo, nullptr, &runtime.renderPass);
             ASSERT_VULKAN(result);
 
             runtime.renderArea = scissor;
@@ -1109,7 +1109,7 @@ namespace VKIntox
                 std::vector<VkImageView> backBufferImageViews = pass.srgb_write_enable ? backBufferImageViewsSRGB : backBufferImageViewsUNORM;
                 std::vector<VkImageView> finalOutputImageViews = pass.srgb_write_enable ? outputImageViewsSRGB : outputImageViewsUNORM;
                 runtime.framebuffers = createFramebuffers(
-                    pLogicalDevice,
+                    logicalDevice,
                     runtime.renderPass,
                     imageExtent,
                     {outputToBackBuffer ? backBufferImageViews : finalOutputImageViews, std::vector<VkImageView>(inputImages.size(), stencilImageView)});
@@ -1118,7 +1118,7 @@ namespace VKIntox
             }
             else
             {
-                runtime.framebuffers = createFramebuffers(pLogicalDevice, runtime.renderPass, scissor.extent, attachmentImageViews);
+                runtime.framebuffers = createFramebuffers(logicalDevice, runtime.renderPass, scissor.extent, attachmentImageViews);
                 runtime.switchSamplers = false;
             }
 
@@ -1230,8 +1230,8 @@ namespace VKIntox
             pipelineCreateInfo.basePipelineIndex   = -1;
 
             Logger::debug("creating graphics pipeline VS=" + pass.vs_entry_point + " PS=" + pass.ps_entry_point);
-            result = pLogicalDevice->vkd.CreateGraphicsPipelines(
-                pLogicalDevice->device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &runtime.pipeline);
+            result = logicalDevice->vkd.CreateGraphicsPipelines(
+                logicalDevice->device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &runtime.pipeline);
             if (result != VK_SUCCESS)
             {
                 std::string error = "CreateGraphicsPipelines failed for effect '" + effectName +
@@ -1259,7 +1259,7 @@ namespace VKIntox
                 if (uniform.name.empty())
                     continue;
 
-                if (auto registryParam = pEffectRegistry->getParameter(effectName, uniform.name))
+                if (auto registryParam = effectRegistry->getParameter(effectName, uniform.name))
                 {
                     maybeLogReshadeUiUniformWrite(effectName, uniform.name, *(*registryParam));
                     writeConfiguredUniformValue(stagingBufferMapped, uniform, *registryParam);
@@ -1335,16 +1335,16 @@ namespace VKIntox
                     writeDescriptorSet.pBufferInfo      = nullptr;
                     writeDescriptorSet.pTexelBufferView = nullptr;
 
-                    pLogicalDevice->vkd.UpdateDescriptorSets(pLogicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
+                    logicalDevice->vkd.UpdateDescriptorSets(logicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
                     if (outputWrites > 1 && imageIndex < backBufferDescriptorSets.size())
                     {
                         writeDescriptorSet.dstSet = backBufferDescriptorSets[imageIndex];
-                        pLogicalDevice->vkd.UpdateDescriptorSets(pLogicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
+                        logicalDevice->vkd.UpdateDescriptorSets(logicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
                     }
                     if (outputWrites > 2 && imageIndex < outputDescriptorSets.size())
                     {
                         writeDescriptorSet.dstSet = outputDescriptorSets[imageIndex];
-                        pLogicalDevice->vkd.UpdateDescriptorSets(pLogicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
+                        logicalDevice->vkd.UpdateDescriptorSets(logicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
                     }
                     break;
                 }
@@ -1382,7 +1382,7 @@ namespace VKIntox
         memoryBarrier.subresourceRange.baseArrayLayer = 0;
         memoryBarrier.subresourceRange.layerCount     = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(
+        logicalDevice->vkd.CmdPipelineBarrier(
             commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, transferStage, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
 
         // Seed output image from current input so backbuffer/load-based passes never start from undefined data.
@@ -1391,10 +1391,10 @@ namespace VKIntox
         memoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         memoryBarrier.srcAccessMask = 0;
         memoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        pLogicalDevice->vkd.CmdPipelineBarrier(
+        logicalDevice->vkd.CmdPipelineBarrier(
             commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, transferStage, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
 
-        pLogicalDevice->vkd.CmdCopyImage(commandBuffer,
+        logicalDevice->vkd.CmdCopyImage(commandBuffer,
                                          inputImages[imageIndex],
                                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                          outputImages[imageIndex],
@@ -1410,7 +1410,7 @@ namespace VKIntox
             memoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
             memoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            pLogicalDevice->vkd.CmdPipelineBarrier(
+            logicalDevice->vkd.CmdPipelineBarrier(
                 commandBuffer,
                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | shaderStages,
                 transferStage,
@@ -1422,7 +1422,7 @@ namespace VKIntox
                 1,
                 &memoryBarrier);
 
-            pLogicalDevice->vkd.CmdCopyImage(commandBuffer,
+            logicalDevice->vkd.CmdCopyImage(commandBuffer,
                                              inputImages[imageIndex],
                                              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                              backBufferImages[imageIndex],
@@ -1455,14 +1455,14 @@ namespace VKIntox
         secondBarrier.subresourceRange.baseArrayLayer = 0;
         secondBarrier.subresourceRange.layerCount     = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(
+        logicalDevice->vkd.CmdPipelineBarrier(
             commandBuffer, transferStage, shaderStages, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
         memoryBarrier.image     = outputImages[imageIndex];
         memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        pLogicalDevice->vkd.CmdPipelineBarrier(
+        logicalDevice->vkd.CmdPipelineBarrier(
             commandBuffer, transferStage, shaderStages, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
         if (outputWrites > 1)
         {
@@ -1471,7 +1471,7 @@ namespace VKIntox
             memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-            pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+            logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                    transferStage,
                                                    shaderStages,
                                                    0,
@@ -1496,7 +1496,7 @@ namespace VKIntox
             memoryBarrier.newLayout                   = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             memoryBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT | VK_IMAGE_ASPECT_DEPTH_BIT;
 
-            pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+            logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                                                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
                                                    0,
@@ -1515,24 +1515,24 @@ namespace VKIntox
             auto& runtime = passRuntimes[i];
             if (runtime.isCompute)
             {
-                pLogicalDevice->vkd.CmdBindDescriptorSets(
+                logicalDevice->vkd.CmdBindDescriptorSets(
                     commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 1, 1, &currentSamplerSet, 0, nullptr);
                 if (bufferSize)
                 {
-                    pLogicalDevice->vkd.CmdBindDescriptorSets(
+                    logicalDevice->vkd.CmdBindDescriptorSets(
                         commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &bufferDescriptorSet, 0, nullptr);
                 }
 
-                pLogicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, runtime.pipeline);
-                pLogicalDevice->vkd.CmdDispatch(commandBuffer, runtime.dispatchSizeX, runtime.dispatchSizeY, runtime.dispatchSizeZ);
+                logicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, runtime.pipeline);
+                logicalDevice->vkd.CmdDispatch(commandBuffer, runtime.dispatchSizeX, runtime.dispatchSizeY, runtime.dispatchSizeZ);
             }
             else
             {
-                pLogicalDevice->vkd.CmdBindDescriptorSets(
+                logicalDevice->vkd.CmdBindDescriptorSets(
                     commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &currentSamplerSet, 0, nullptr);
                 if (bufferSize)
                 {
-                    pLogicalDevice->vkd.CmdBindDescriptorSets(
+                    logicalDevice->vkd.CmdBindDescriptorSets(
                         commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &bufferDescriptorSet, 0, nullptr);
                 }
 
@@ -1544,10 +1544,10 @@ namespace VKIntox
                 renderPassBeginInfo.clearValueCount = runtime.clearValueCount;
                 renderPassBeginInfo.pClearValues = runtime.clearValues.data();
 
-                pLogicalDevice->vkd.CmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-                pLogicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, runtime.pipeline);
-                pLogicalDevice->vkd.CmdDraw(commandBuffer, runtime.vertexCount, 1, 0, 0);
-                pLogicalDevice->vkd.CmdEndRenderPass(commandBuffer);
+                logicalDevice->vkd.CmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+                logicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, runtime.pipeline);
+                logicalDevice->vkd.CmdDraw(commandBuffer, runtime.vertexCount, 1, 0, 0);
+                logicalDevice->vkd.CmdEndRenderPass(commandBuffer);
 
                 if (runtime.switchSamplers && outputWrites > 1)
                 {
@@ -1565,7 +1565,7 @@ namespace VKIntox
                 for (const auto& renderTarget : runtime.renderTargets)
                 {
                     generateMipMaps(
-                        pLogicalDevice, commandBuffer, textureImages[renderTarget][0], textureExtents[renderTarget], textureMipLevels[renderTarget]);
+                        logicalDevice, commandBuffer, textureImages[renderTarget][0], textureExtents[renderTarget], textureMipLevels[renderTarget]);
                 }
             }
 
@@ -1574,7 +1574,7 @@ namespace VKIntox
             passMemoryBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
             passMemoryBarrier.dstAccessMask =
                 VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+            logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | shaderStages,
                                                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | shaderStages,
                                                    0,
@@ -1586,10 +1586,10 @@ namespace VKIntox
                                                    nullptr);
         }
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer, shaderStages, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &secondBarrier);
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer, shaderStages, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &secondBarrier);
         secondBarrier.image = outputImages[imageIndex];
         secondBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer, shaderStages, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &secondBarrier);
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer, shaderStages, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &secondBarrier);
     }
 
     std::vector<std::unique_ptr<EffectParam>> ReshadeEffect::getParameters() const
@@ -1656,7 +1656,7 @@ namespace VKIntox
             // unwrapped once here because the branches below dynamic_cast it
             // repeatedly; the registry call itself still returns an optional, so
             // "no such parameter" stays in the type at the boundary
-            auto registryParamOpt = pEffectRegistry->getParameter(effectName, spec.name);
+            auto registryParamOpt = effectRegistry->getParameter(effectName, spec.name);
             EffectParam* registryParam = registryParamOpt ? *registryParamOpt : nullptr;
 
             // Create appropriate subclass based on spec type
@@ -1749,14 +1749,14 @@ namespace VKIntox
     // freed memory, which is why it is stated here rather than left to the reader.
     void ReshadeEffect::releaseResources()
     {
-        if (!pLogicalDevice || pLogicalDevice->device == VK_NULL_HANDLE)
+        if (!logicalDevice || logicalDevice->device == VK_NULL_HANDLE)
             return;
 
         Logger::info("[DESTROY-TRACE] ~ReshadeEffect start: " + effectName + " passRuntimes=" + std::to_string(passRuntimes.size()));
 
         auto& queue = DeferredDestroyQueue::instance();
-        auto  device = pLogicalDevice->device;
-        auto& vkd    = pLogicalDevice->vkd;
+        auto  device = logicalDevice->device;
+        auto& vkd    = logicalDevice->vkd;
 
         // ---- Resource phase, registered bottom-up so views precede images ----
 
@@ -2020,7 +2020,7 @@ namespace VKIntox
         std::string shaderPath = this->effectPath;
         if (shaderPath.empty())
         {
-            shaderPath = pEffectRegistry->getEffectFilePath(effectName);
+            shaderPath = effectRegistry->getEffectFilePath(effectName);
             if (shaderPath.empty())
             {
                 // Search discovered shader paths for the effect
@@ -2055,7 +2055,7 @@ namespace VKIntox
         if (!errors.empty())
             Logger::err(errors);
 
-        const RuntimeCodegenPolicy runtimePolicy = selectRuntimeCodegenPolicy(pLogicalDevice);
+        const RuntimeCodegenPolicy runtimePolicy = selectRuntimeCodegenPolicy(logicalDevice);
         disableComputePipelineOptimization = runtimePolicy.disableComputePipelineOptimization;
         Logger::debug("runtime codegen policy: local_size_id=" + std::to_string(runtimePolicy.useLocalSizeId ? 1 : 0) +
                       " uniform_spec_constants=" + std::to_string(runtimePolicy.useUniformSpecConstants ? 1 : 0) +
@@ -2110,7 +2110,7 @@ namespace VKIntox
         shaderCreateInfo.codeSize = module.spirv.size() * sizeof(uint32_t);
         shaderCreateInfo.pCode    = module.spirv.data();
 
-        VkResult result = pLogicalDevice->vkd.CreateShaderModule(pLogicalDevice->device, &shaderCreateInfo, nullptr, &shaderModule);
+        VkResult result = logicalDevice->vkd.CreateShaderModule(logicalDevice->device, &shaderCreateInfo, nullptr, &shaderModule);
         if (result != VK_SUCCESS)
         {
             Logger::err("failed to create shader module for: " + effectName);

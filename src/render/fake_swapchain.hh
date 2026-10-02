@@ -13,7 +13,7 @@
 
 namespace VKIntox
 {
-    std::vector<VkImage> createFakeSwapchainImages(LogicalDevice*                    pLogicalDevice,
+    std::vector<VkImage> createFakeSwapchainImages(LogicalDevice*                    logicalDevice,
                                                       VkSwapchainCreateInfoKHR          swapchainCreateInfo,
                                                       uint32_t                          count,
                                                       std::vector<VkDeviceMemory>&      deviceMemories);

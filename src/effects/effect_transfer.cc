@@ -2,19 +2,19 @@
 
 namespace VKIntox
 {
-    TransferEffect::TransferEffect(LogicalDevice*       pLogicalDevice,
+    TransferEffect::TransferEffect(LogicalDevice*       logicalDevice,
                                    VkFormat             format,
                                    VkExtent2D           imageExtent,
                                    std::vector<VkImage> inputImages,
                                    std::vector<VkImage> outputImages,
-                                   Config*              pConfig)
+                                   Config*              config)
     {
-        this->pLogicalDevice = pLogicalDevice;
+        this->logicalDevice = logicalDevice;
         this->format         = format;
         this->imageExtent    = imageExtent;
         this->inputImages    = inputImages;
         this->outputImages   = outputImages;
-        this->pConfig        = pConfig;
+        this->config        = config;
     }
 
     void TransferEffect::applyEffect(uint32_t imageIndex, VkCommandBuffer commandBuffer)
@@ -47,17 +47,17 @@ namespace VKIntox
         memoryBarrier.subresourceRange.baseArrayLayer = 0;
         memoryBarrier.subresourceRange.layerCount     = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(
+        logicalDevice->vkd.CmdPipelineBarrier(
             commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
 
         memoryBarrier.image         = outputImages[imageIndex];
         memoryBarrier.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
         memoryBarrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         memoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        pLogicalDevice->vkd.CmdPipelineBarrier(
+        logicalDevice->vkd.CmdPipelineBarrier(
             commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
 
-        pLogicalDevice->vkd.CmdCopyImage(commandBuffer,
+        logicalDevice->vkd.CmdCopyImage(commandBuffer,
                                          inputImages[imageIndex],
                                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                          outputImages[imageIndex],
@@ -70,14 +70,14 @@ namespace VKIntox
         memoryBarrier.image         = outputImages[imageIndex];
         memoryBarrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         memoryBarrier.newLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        pLogicalDevice->vkd.CmdPipelineBarrier(
+        logicalDevice->vkd.CmdPipelineBarrier(
             commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
 
         memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         memoryBarrier.image         = inputImages[imageIndex];
         memoryBarrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         memoryBarrier.newLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        pLogicalDevice->vkd.CmdPipelineBarrier(
+        logicalDevice->vkd.CmdPipelineBarrier(
             commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
     }
 

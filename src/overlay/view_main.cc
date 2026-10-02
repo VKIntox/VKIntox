@@ -60,11 +60,11 @@ namespace VKIntox
     // key state directly, so the name is omitted here.
     void ImGuiOverlay::renderMainView(const KeyboardState& /* keyboard */)
     {
-        if (!pEffectRegistry)
+        if (!effectRegistry)
             return;
 
         // Get a mutable copy of selected effects for this frame
-        std::vector<std::string> selectedEffects = pEffectRegistry->getSelectedEffects();
+        std::vector<std::string> selectedEffects = effectRegistry->getSelectedEffects();
         static bool reorderPreviewActive = false;
         static std::string reorderPreviewName;
         static std::string reorderPreviewTargetName;
@@ -237,7 +237,7 @@ namespace VKIntox
         if (ImGui::Button("Clear All"))
         {
             selectedEffects.clear();
-            pEffectRegistry->clearSelectedEffects();
+            effectRegistry->clearSelectedEffects();
             paramsDirty = true;
             lastChangeTime = std::chrono::steady_clock::now();
             applyRequested = true;
@@ -291,19 +291,19 @@ namespace VKIntox
             ImGui::SameLine();
 
             // Check if effect failed to compile
-            bool effectFailed = pEffectRegistry ? pEffectRegistry->hasEffectFailed(effectName) : false;
-            std::string effectError = effectFailed && pEffectRegistry ? pEffectRegistry->getEffectError(effectName) : "";
+            bool effectFailed = effectRegistry ? effectRegistry->hasEffectFailed(effectName) : false;
+            std::string effectError = effectFailed && effectRegistry ? effectRegistry->getEffectError(effectName) : "";
 
             // Checkbox to enable/disable effect (read/write via registry)
             // Disabled for failed effects
             if (effectFailed)
                 ImGui::BeginDisabled();
 
-            bool effectEnabled = pEffectRegistry ? pEffectRegistry->isEffectEnabled(effectName) : true;
+            bool effectEnabled = effectRegistry ? effectRegistry->isEffectEnabled(effectName) : true;
             if (ImGui::Checkbox("##enabled", &effectEnabled))
             {
-                if (pEffectRegistry)
-                    pEffectRegistry->setEffectEnabled(effectName, effectEnabled);
+                if (effectRegistry)
+                    effectRegistry->setEffectEnabled(effectName, effectEnabled);
                 paramsDirty = true;
                 lastChangeTime = std::chrono::steady_clock::now();
             }
@@ -328,9 +328,9 @@ namespace VKIntox
                 // Toggle ON/OFF
                 if (ImGui::MenuItem(effectEnabled ? "Disable" : "Enable"))
                 {
-                    if (pEffectRegistry)
+                    if (effectRegistry)
                     {
-                        pEffectRegistry->setEffectEnabled(effectName, !effectEnabled);
+                        effectRegistry->setEffectEnabled(effectName, !effectEnabled);
                         paramsDirty = true;
                         lastChangeTime = std::chrono::steady_clock::now();
                     }
@@ -339,7 +339,7 @@ namespace VKIntox
                 // Reset to defaults
                 if (ImGui::MenuItem("Reset to Defaults"))
                 {
-                    for (auto* param : pEffectRegistry->getParametersForEffect(effectName))
+                    for (auto* param : effectRegistry->getParametersForEffect(effectName))
                     {
                         FieldEditor* editor = FieldEditorFactory::instance().getEditor(param->getType());
                         if (editor)
@@ -375,8 +375,8 @@ namespace VKIntox
                     }
                     std::string removedName = *removeIt;
                     selectedEffects.erase(removeIt);
-                    pEffectRegistry->setSelectedEffects(selectedEffects);
-                    pEffectRegistry->removeEffect(removedName);
+                    effectRegistry->setSelectedEffects(selectedEffects);
+                    effectRegistry->removeEffect(removedName);
                     paramsDirty = true;
                     lastChangeTime = std::chrono::steady_clock::now();
                     applyRequested = true;
@@ -433,7 +433,7 @@ namespace VKIntox
                             if (selectedEffects != reorderPreviewEffects)
                             {
                                 selectedEffects = reorderPreviewEffects;
-                                pEffectRegistry->setSelectedEffects(selectedEffects);
+                                effectRegistry->setSelectedEffects(selectedEffects);
                                 paramsDirty = true;
                                 lastChangeTime = std::chrono::steady_clock::now();
                                 applyRequested = true;
@@ -465,9 +465,9 @@ namespace VKIntox
             }
 
             // Show preprocessor definitions first (ReShade effects only)
-            if (pEffectRegistry)
+            if (effectRegistry)
             {
-                auto& defs = pEffectRegistry->getPreprocessorDefs(effectName);
+                auto& defs = effectRegistry->getPreprocessorDefs(effectName);
                 if (!defs.empty())
                 {
                     // Draw background rect behind preprocessor section using channels
@@ -484,7 +484,7 @@ namespace VKIntox
                         for (size_t defIdx = 0; defIdx < defs.size(); defIdx++)
                         {
                             ImGui::PushID(static_cast<int>(defIdx + 1000));
-                            if (renderPreprocessorDef(defs[defIdx], pEffectRegistry, effectName))
+                            if (renderPreprocessorDef(defs[defIdx], effectRegistry, effectName))
                             {
                                 paramsDirty = true;
                                 profileDirty = true;
@@ -508,7 +508,7 @@ namespace VKIntox
             }
 
             // Show parameters for this effect
-            auto effectParams = pEffectRegistry->getParametersForEffect(effectName);
+            auto effectParams = effectRegistry->getParametersForEffect(effectName);
             for (size_t paramIdx = 0; paramIdx < effectParams.size(); paramIdx++)
             {
                 ImGui::PushID(static_cast<int>(paramIdx));
@@ -534,7 +534,7 @@ namespace VKIntox
                 if (selectedEffects != reorderPreviewEffects)
                 {
                     selectedEffects = reorderPreviewEffects;
-                    pEffectRegistry->setSelectedEffects(selectedEffects);
+                    effectRegistry->setSelectedEffects(selectedEffects);
                     paramsDirty = true;
                     lastChangeTime = std::chrono::steady_clock::now();
                     applyRequested = true;

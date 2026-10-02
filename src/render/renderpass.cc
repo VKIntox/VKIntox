@@ -2,7 +2,7 @@
 
 namespace VKIntox
 {
-    VkRenderPass createRenderPass(LogicalDevice* pLogicalDevice, VkFormat format, VkImageLayout finalLayout)
+    VkRenderPass createRenderPass(LogicalDevice* logicalDevice, VkFormat format, VkImageLayout finalLayout)
     {
         VkRenderPass renderPass;
 
@@ -68,13 +68,13 @@ namespace VKIntox
         renderPassCreateInfo.dependencyCount = 2;
         renderPassCreateInfo.pDependencies   = subpassDependencies;
 
-        VkResult result = pLogicalDevice->vkd.CreateRenderPass(pLogicalDevice->device, &renderPassCreateInfo, nullptr, &renderPass);
+        VkResult result = logicalDevice->vkd.CreateRenderPass(logicalDevice->device, &renderPassCreateInfo, nullptr, &renderPass);
         ASSERT_VULKAN_VAL(result, VK_NULL_HANDLE);
 
         return renderPass;
     }
 
-    VkRenderPass createDepthMsaaResolveRenderPass(LogicalDevice*         pLogicalDevice,
+    VkRenderPass createDepthMsaaResolveRenderPass(LogicalDevice*         logicalDevice,
                                                   VkFormat               depthFormat,
                                                   VkSampleCountFlagBits  samples,
                                                   VkResolveModeFlagBits  depthResolveMode,
@@ -187,7 +187,7 @@ namespace VKIntox
         renderPassCreateInfo.pCorrelatedViewMasks    = nullptr;
 
         VkRenderPass renderPass = VK_NULL_HANDLE;
-        VkResult result = pLogicalDevice->vkd.CreateRenderPass2(pLogicalDevice->device, &renderPassCreateInfo, nullptr, &renderPass);
+        VkResult result = logicalDevice->vkd.CreateRenderPass2(logicalDevice->device, &renderPassCreateInfo, nullptr, &renderPass);
         ASSERT_VULKAN_VAL(result, VK_NULL_HANDLE);
 
         return renderPass;

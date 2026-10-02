@@ -26,7 +26,7 @@ namespace VKIntox
 
     struct LogicalSwapchain
     {
-        LogicalDevice*                       pLogicalDevice;
+        LogicalDevice*                       logicalDevice;
         VkSwapchainCreateInfoKHR             swapchainCreateInfo;
         VkExtent2D                           imageExtent;
         VkFormat                             format;
@@ -80,7 +80,7 @@ namespace VKIntox
         bool                                  rebuildEffectsOnNextPresent = false;
 
         void destroy();
-        void reloadEffects(Config* pConfig);
+        void reloadEffects(Config* config);
     };
 } // namespace VKIntox
 

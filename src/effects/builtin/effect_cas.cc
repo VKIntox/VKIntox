@@ -15,15 +15,15 @@
 
 namespace VKIntox
 {
-    CasEffect::CasEffect(LogicalDevice*       pLogicalDevice,
+    CasEffect::CasEffect(LogicalDevice*       logicalDevice,
                          VkFormat             format,
                          VkExtent2D           imageExtent,
                          std::vector<VkImage> inputImages,
                          std::vector<VkImage> outputImages,
-                         Config*              pConfig)
+                         Config*              config)
     {
 
-        float sharpness = pConfig->getOption<float>("casSharpness", 0.4f);
+        float sharpness = config->getOption<float>("casSharpness", 0.4f);
 
         vertexCode   = full_screen_triangle_vert;
         fragmentCode = cas_frag;
@@ -39,10 +39,10 @@ namespace VKIntox
         fragmentSpecializationInfo.dataSize      = sizeof(float);
         fragmentSpecializationInfo.pData         = &sharpness;
 
-        pVertexSpecInfo   = nullptr;
-        pFragmentSpecInfo = &fragmentSpecializationInfo;
+        vertexSpecInfo   = nullptr;
+        fragmentSpecInfo = &fragmentSpecializationInfo;
 
-        init(pLogicalDevice, format, imageExtent, inputImages, outputImages, pConfig);
+        init(logicalDevice, format, imageExtent, inputImages, outputImages, config);
     }
     CasEffect::~CasEffect()
     {

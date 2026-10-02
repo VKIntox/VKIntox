@@ -10,10 +10,10 @@
 
 namespace VKIntox
 {
-    static bool hasDepthResolveResources(const LogicalSwapchain* pLogicalSwapchain, size_t commandBufferCount)
+    static bool hasDepthResolveResources(const LogicalSwapchain* logicalSwapchain, size_t commandBufferCount)
     {
-        return pLogicalSwapchain != nullptr
-               && pLogicalSwapchain->depthResolvePerImage.size() == commandBufferCount;
+        return logicalSwapchain != nullptr
+               && logicalSwapchain->depthResolvePerImage.size() == commandBufferCount;
     }
 
     static bool hasDepthState(const DepthState& state)
@@ -68,70 +68,70 @@ namespace VKIntox
                                        : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
     }
 
-    static VkImageLayout getDepthResolveReadOnlyLayout(const LogicalSwapchain* pLogicalSwapchain)
+    static VkImageLayout getDepthResolveReadOnlyLayout(const LogicalSwapchain* logicalSwapchain)
     {
-        if (!pLogicalSwapchain)
+        if (!logicalSwapchain)
             return VK_IMAGE_LAYOUT_UNDEFINED;
 
-        return pLogicalSwapchain->depthResolveUsesShader
+        return logicalSwapchain->depthResolveUsesShader
             ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-            : getInternalDepthReadOnlyLayout(pLogicalSwapchain->depthResolveFormat);
+            : getInternalDepthReadOnlyLayout(logicalSwapchain->depthResolveFormat);
     }
 
-    static VkImageView getOrCreateTrackedDepthSampleView(LogicalDevice* pLogicalDevice, const DepthState& depthState)
+    static VkImageView getOrCreateTrackedDepthSampleView(LogicalDevice* logicalDevice, const DepthState& depthState)
     {
-        if (!pLogicalDevice || !hasDepthState(depthState))
+        if (!logicalDevice || !hasDepthState(depthState))
             return VK_NULL_HANDLE;
 
-        auto it = pLogicalDevice->depthViewStates.find(depthState.imageView);
-        if (it != pLogicalDevice->depthViewStates.end() && it->second.imageView != VK_NULL_HANDLE)
+        auto it = logicalDevice->depthViewStates.find(depthState.imageView);
+        if (it != logicalDevice->depthViewStates.end() && it->second.imageView != VK_NULL_HANDLE)
             return it->second.imageView;
 
         // Check if this is the persistent storage image — if so, we can't use
         // the parallel-indexed depthImages/depthFormats/depthImageViews vectors
         // (those are for app images only). Return the view directly.
-        if (depthState.image == pLogicalDevice->depthCaptureStorage.image
-            && pLogicalDevice->persistentStorageTracked)
+        if (depthState.image == logicalDevice->depthCaptureStorage.image
+            && logicalDevice->persistentStorageTracked)
         {
             return depthState.imageView;
         }
 
-        auto imageIt = std::find(pLogicalDevice->depthImages.begin(), pLogicalDevice->depthImages.end(), depthState.image);
-        if (imageIt == pLogicalDevice->depthImages.end())
+        auto imageIt = std::find(logicalDevice->depthImages.begin(), logicalDevice->depthImages.end(), depthState.image);
+        if (imageIt == logicalDevice->depthImages.end())
             return depthState.imageView;
 
-        const size_t index = std::distance(pLogicalDevice->depthImages.begin(), imageIt);
+        const size_t index = std::distance(logicalDevice->depthImages.begin(), imageIt);
         // Bounds-check: the parallel vectors must have the same length.
-        if (index >= pLogicalDevice->depthFormats.size() || index >= pLogicalDevice->depthImageViews.size())
+        if (index >= logicalDevice->depthFormats.size() || index >= logicalDevice->depthImageViews.size())
         {
             Logger::warn("getOrCreateTrackedDepthSampleView: index " + std::to_string(index)
-                         + " out of range (depthFormats=" + std::to_string(pLogicalDevice->depthFormats.size())
-                         + " depthImageViews=" + std::to_string(pLogicalDevice->depthImageViews.size())
+                         + " out of range (depthFormats=" + std::to_string(logicalDevice->depthFormats.size())
+                         + " depthImageViews=" + std::to_string(logicalDevice->depthImageViews.size())
                          + "); returning app view");
             return depthState.imageView;
         }
 
-        VkImageView& trackedView = pLogicalDevice->depthImageViews[index];
+        VkImageView& trackedView = logicalDevice->depthImageViews[index];
         if (trackedView == VK_NULL_HANDLE)
-            trackedView = createSingleImageView(pLogicalDevice, depthState.format, depthState.image, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT);
+            trackedView = createSingleImageView(logicalDevice, depthState.format, depthState.image, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT);
 
         return trackedView != VK_NULL_HANDLE ? trackedView : depthState.imageView;
     }
 
-    static void recordDepthResolveSnapshotViaShader(LogicalDevice*    pLogicalDevice,
-                                                    LogicalSwapchain* pLogicalSwapchain,
+    static void recordDepthResolveSnapshotViaShader(LogicalDevice*    logicalDevice,
+                                                    LogicalSwapchain* logicalSwapchain,
                                                     VkCommandBuffer   commandBuffer,
                                                     uint32_t          imageIndex,
                                                     const DepthState& depthState)
     {
-        if (!pLogicalDevice || !pLogicalSwapchain || imageIndex >= pLogicalSwapchain->depthResolveDescriptorSets.size()
-            || imageIndex >= pLogicalSwapchain->depthResolveFramebuffers.size())
+        if (!logicalDevice || !logicalSwapchain || imageIndex >= logicalSwapchain->depthResolveDescriptorSets.size()
+            || imageIndex >= logicalSwapchain->depthResolveFramebuffers.size())
             return;
 
         // CRITICAL: Zero-trust resource management - verify depth state is still valid
         // before attempting any descriptor updates or command recording.
-        auto extentIt = pLogicalDevice->depthImageExtents.find(depthState.image);
-        if (extentIt == pLogicalDevice->depthImageExtents.end())
+        auto extentIt = logicalDevice->depthImageExtents.find(depthState.image);
+        if (extentIt == logicalDevice->depthImageExtents.end())
         {
             Logger::debug("recordDepthResolveSnapshotViaShader: depth image no longer tracked, skipping");
             return;
@@ -144,34 +144,34 @@ namespace VKIntox
         }
 
         // Non-blocking fence check - skip descriptor update if previous CB still running
-        if (imageIndex < pLogicalSwapchain->effectSubmitFences.size()
-            && pLogicalSwapchain->effectSubmitFences[imageIndex] != VK_NULL_HANDLE)
+        if (imageIndex < logicalSwapchain->effectSubmitFences.size()
+            && logicalSwapchain->effectSubmitFences[imageIndex] != VK_NULL_HANDLE)
         {
-            VkResult status = pLogicalDevice->vkd.WaitForFences(
-                pLogicalDevice->device, 1, &pLogicalSwapchain->effectSubmitFences[imageIndex], VK_TRUE, 0);
+            VkResult status = logicalDevice->vkd.WaitForFences(
+                logicalDevice->device, 1, &logicalSwapchain->effectSubmitFences[imageIndex], VK_TRUE, 0);
             if (status == VK_TIMEOUT || status == VK_ERROR_DEVICE_LOST)
             {
                 Logger::debug("recordDepthResolveSnapshotViaShader: fence not ready, skipping snapshot");
                 return;
             }
-            pLogicalDevice->vkd.ResetFences(pLogicalDevice->device, 1, &pLogicalSwapchain->effectSubmitFences[imageIndex]);
+            logicalDevice->vkd.ResetFences(logicalDevice->device, 1, &logicalSwapchain->effectSubmitFences[imageIndex]);
         }
 
         VkDescriptorImageInfo imageInfo = {};
-        imageInfo.sampler = pLogicalSwapchain->depthResolveSampler;
-        imageInfo.imageView = getOrCreateTrackedDepthSampleView(pLogicalDevice, depthState);
+        imageInfo.sampler = logicalSwapchain->depthResolveSampler;
+        imageInfo.imageView = getOrCreateTrackedDepthSampleView(logicalDevice, depthState);
         imageInfo.imageLayout = shouldKeepObservedDepthInGeneralLayout(depthState)
             ? VK_IMAGE_LAYOUT_GENERAL
             : getInternalDepthReadOnlyLayout(depthState.format);
 
         VkWriteDescriptorSet writeDescriptorSet = {};
         writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptorSet.dstSet = pLogicalSwapchain->depthResolveDescriptorSets[imageIndex];
+        writeDescriptorSet.dstSet = logicalSwapchain->depthResolveDescriptorSets[imageIndex];
         writeDescriptorSet.dstBinding = 0;
         writeDescriptorSet.descriptorCount = 1;
         writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writeDescriptorSet.pImageInfo = &imageInfo;
-        pLogicalDevice->vkd.UpdateDescriptorSets(pLogicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
+        logicalDevice->vkd.UpdateDescriptorSets(logicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
 
         VkImageMemoryBarrier sourceBarrier = {};
         sourceBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -191,7 +191,7 @@ namespace VKIntox
         sourceBarrier.subresourceRange.baseArrayLayer = 0;
         sourceBarrier.subresourceRange.layerCount = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                getObservedDepthSourceStages(depthState),
                                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                                0,
@@ -204,12 +204,12 @@ namespace VKIntox
 
         VkImageMemoryBarrier resolveBarrier = {};
         resolveBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        resolveBarrier.image = pLogicalSwapchain->depthResolvePerImage[imageIndex].image;
-        resolveBarrier.oldLayout = pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized
+        resolveBarrier.image = logicalSwapchain->depthResolvePerImage[imageIndex].image;
+        resolveBarrier.oldLayout = logicalSwapchain->depthResolvePerImage[imageIndex].initialized
             ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
             : VK_IMAGE_LAYOUT_UNDEFINED;
         resolveBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        resolveBarrier.srcAccessMask = pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
+        resolveBarrier.srcAccessMask = logicalSwapchain->depthResolvePerImage[imageIndex].initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
         resolveBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         resolveBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         resolveBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -219,8 +219,8 @@ namespace VKIntox
         resolveBarrier.subresourceRange.baseArrayLayer = 0;
         resolveBarrier.subresourceRange.layerCount = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
-                                               pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+                                               logicalSwapchain->depthResolvePerImage[imageIndex].initialized
                                                    ? (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
                                                    : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -234,29 +234,29 @@ namespace VKIntox
 
         VkRenderPassBeginInfo renderPassBeginInfo = {};
         renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassBeginInfo.renderPass = pLogicalSwapchain->depthResolveRenderPass;
-        renderPassBeginInfo.framebuffer = pLogicalSwapchain->depthResolveFramebuffers[imageIndex];
+        renderPassBeginInfo.renderPass = logicalSwapchain->depthResolveRenderPass;
+        renderPassBeginInfo.framebuffer = logicalSwapchain->depthResolveFramebuffers[imageIndex];
         renderPassBeginInfo.renderArea.offset = {0, 0};
-        renderPassBeginInfo.renderArea.extent = {pLogicalSwapchain->depthResolveExtent.width, pLogicalSwapchain->depthResolveExtent.height};
+        renderPassBeginInfo.renderArea.extent = {logicalSwapchain->depthResolveExtent.width, logicalSwapchain->depthResolveExtent.height};
         VkClearValue clearValue = {};
         clearValue.color.float32[0] = 1.0f;
         renderPassBeginInfo.clearValueCount = 1;
         renderPassBeginInfo.pClearValues = &clearValue;
 
-        pLogicalDevice->vkd.CmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-        pLogicalDevice->vkd.CmdBindDescriptorSets(commandBuffer,
+        logicalDevice->vkd.CmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+        logicalDevice->vkd.CmdBindDescriptorSets(commandBuffer,
                                                   VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                  pLogicalSwapchain->depthResolvePipelineLayout,
+                                                  logicalSwapchain->depthResolvePipelineLayout,
                                                   0,
                                                   1,
-                                                  &pLogicalSwapchain->depthResolveDescriptorSets[imageIndex],
+                                                  &logicalSwapchain->depthResolveDescriptorSets[imageIndex],
                                                   0,
                                                   nullptr);
-        pLogicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pLogicalSwapchain->depthResolvePipeline);
+        logicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, logicalSwapchain->depthResolvePipeline);
         
         // Push depth parameters to shader (mode, inversion, normalization)
         // Only push if we have a valid pipeline layout with push constant range
-        if (pLogicalSwapchain->depthResolvePipelineLayout != VK_NULL_HANDLE)
+        if (logicalSwapchain->depthResolvePipelineLayout != VK_NULL_HANDLE)
         {
             // Struct must match GLSL layout(push_constant) uniform DepthParams exactly:
             //   int  depthMode;    = int32_t (4 bytes)
@@ -277,9 +277,9 @@ namespace VKIntox
             pushData.invertDepth = settingsManager.getDepthInvert() ? 1 : 0;
             pushData.normalize = 1; // Always normalize for safety
             
-            pLogicalDevice->vkd.CmdPushConstants(
+            logicalDevice->vkd.CmdPushConstants(
                 commandBuffer,
-                pLogicalSwapchain->depthResolvePipelineLayout,
+                logicalSwapchain->depthResolvePipelineLayout,
                 VK_SHADER_STAGE_FRAGMENT_BIT,
                 0,
                 sizeof(DepthPushConstants),
@@ -287,10 +287,10 @@ namespace VKIntox
             );
         }
         
-        pLogicalDevice->vkd.CmdDraw(commandBuffer, 3, 1, 0, 0);
-        pLogicalDevice->vkd.CmdEndRenderPass(commandBuffer);
+        logicalDevice->vkd.CmdDraw(commandBuffer, 3, 1, 0, 0);
+        logicalDevice->vkd.CmdEndRenderPass(commandBuffer);
 
-        pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized = true;
+        logicalSwapchain->depthResolvePerImage[imageIndex].initialized = true;
 
         if (shouldKeepObservedDepthInGeneralLayout(depthState))
             return;
@@ -299,7 +299,7 @@ namespace VKIntox
         sourceBarrier.newLayout = getObservedDepthAttachmentLayout(depthState);
         sourceBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
         sourceBarrier.dstAccessMask = getObservedDepthRestoreAccess(depthState);
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                                getObservedDepthRestoreStages(depthState),
                                                0,
@@ -311,7 +311,7 @@ namespace VKIntox
                                                &sourceBarrier);
     }
 
-    std::vector<VkCommandBuffer> allocateCommandBuffer(LogicalDevice* pLogicalDevice, uint32_t count)
+    std::vector<VkCommandBuffer> allocateCommandBuffer(LogicalDevice* logicalDevice, uint32_t count)
     {
         std::vector<VkCommandBuffer> commandBuffers(count);
 
@@ -319,10 +319,10 @@ namespace VKIntox
         allocInfo.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.pNext              = nullptr;
         allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandPool        = pLogicalDevice->commandPool;
+        allocInfo.commandPool        = logicalDevice->commandPool;
         allocInfo.commandBufferCount = count;
 
-        VkResult result = pLogicalDevice->vkd.AllocateCommandBuffers(pLogicalDevice->device, &allocInfo, commandBuffers.data());
+        VkResult result = logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &allocInfo, commandBuffers.data());
         if (result != VK_SUCCESS)
         {
             Logger::err("ASSERT_VULKAN failed in " + std::string(__FILE__) + " : " + std::to_string(__LINE__) + "; " + std::to_string(result));
@@ -331,13 +331,13 @@ namespace VKIntox
         for (uint32_t i = 0; i < count; i++)
         {
             // initialize dispatch tables for commandBuffers since the are dispatchable objects
-            initializeDispatchTable(commandBuffers[i], pLogicalDevice->device);
+            initializeDispatchTable(commandBuffers[i], logicalDevice->device);
         }
 
         return commandBuffers;
     }
-    void writeCommandBuffers(LogicalDevice*                                 pLogicalDevice,
-                             LogicalSwapchain*                              pLogicalSwapchain,
+    void writeCommandBuffers(LogicalDevice*                                 logicalDevice,
+                             LogicalSwapchain*                              logicalSwapchain,
                              std::vector<std::shared_ptr<VKIntox::Effect>> effects,
                              std::vector<VkCommandBuffer>                   commandBuffers,
                              const DepthState&                              depthState)
@@ -349,7 +349,7 @@ namespace VKIntox
         beginInfo.flags            = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
         beginInfo.pInheritanceInfo = nullptr;
 
-        const bool hasDepthResolveTarget = hasDepthResolveResources(pLogicalSwapchain, commandBuffers.size());
+        const bool hasDepthResolveTarget = hasDepthResolveResources(logicalSwapchain, commandBuffers.size());
 
         // Defensive: if the resolve resources exist but their baked source view
         // doesn't match the current depth state (e.g. depth changed but realloc
@@ -358,27 +358,27 @@ namespace VKIntox
         // depth reads rather than sampling a stale/destroyed view.
         const bool depthResolveTargetUsable = hasDepthResolveTarget
             && (!hasDepthState(depthState)
-                || pLogicalSwapchain->depthResolveSourceView == VK_NULL_HANDLE
-                || pLogicalSwapchain->depthResolveSourceView == depthState.imageView);
+                || logicalSwapchain->depthResolveSourceView == VK_NULL_HANDLE
+                || logicalSwapchain->depthResolveSourceView == depthState.imageView);
 
         for (uint32_t i = 0; i < commandBuffers.size(); i++)
         {
-            const VkImageView  boundDepthImageView = depthResolveTargetUsable ? pLogicalSwapchain->depthResolvePerImage[i].imageView
+            const VkImageView  boundDepthImageView = depthResolveTargetUsable ? logicalSwapchain->depthResolvePerImage[i].imageView
                                                                                : VK_NULL_HANDLE;
-            const VkImageLayout boundDepthLayout   = depthResolveTargetUsable ? getDepthResolveReadOnlyLayout(pLogicalSwapchain)
+            const VkImageLayout boundDepthLayout   = depthResolveTargetUsable ? getDepthResolveReadOnlyLayout(logicalSwapchain)
                                                                                : VK_IMAGE_LAYOUT_UNDEFINED;
             for (auto& effect : effects)
             {
                 effect->useDepthImage(i, boundDepthImageView, boundDepthLayout);
             }
 
-            VkResult result = pLogicalDevice->vkd.BeginCommandBuffer(commandBuffers[i], &beginInfo);
+            VkResult result = logicalDevice->vkd.BeginCommandBuffer(commandBuffers[i], &beginInfo);
             ASSERT_VULKAN(result);
 
             if (depthResolveTargetUsable && hasDepthState(depthState))
             {
                 recordDepthResolveSnapshot(
-                    pLogicalDevice, pLogicalSwapchain, commandBuffers[i], i, depthState);
+                    logicalDevice, logicalSwapchain, commandBuffers[i], i, depthState);
             }
 
             for (uint32_t j = 0; j < effects.size(); j++)
@@ -386,7 +386,7 @@ namespace VKIntox
                 effects[j]->applyEffect(i, commandBuffers[i]);
             }
 
-            result = pLogicalDevice->vkd.EndCommandBuffer(commandBuffers[i]);
+            result = logicalDevice->vkd.EndCommandBuffer(commandBuffers[i]);
             ASSERT_VULKAN(result);
         }
     }
@@ -396,13 +396,13 @@ namespace VKIntox
     // initializeDepthResolveLayout. No draws are recorded; the resolve happens
     // implicitly at subpass end. The resolve target ends in the read-only depth
     // layout so effects can sample it.
-    static void recordDepthResolveSnapshotViaMsaaSubpass(LogicalDevice*     pLogicalDevice,
-                                                         LogicalSwapchain*  pLogicalSwapchain,
+    static void recordDepthResolveSnapshotViaMsaaSubpass(LogicalDevice*     logicalDevice,
+                                                         LogicalSwapchain*  logicalSwapchain,
                                                          VkCommandBuffer    commandBuffer,
                                                          uint32_t           imageIndex,
                                                          const DepthState&  depthState)
     {
-        if (imageIndex >= pLogicalSwapchain->depthResolveMsaaFramebuffers.size())
+        if (imageIndex >= logicalSwapchain->depthResolveMsaaFramebuffers.size())
             return;
 
         const bool sourceInGeneral = (depthState.observedLayout == VK_IMAGE_LAYOUT_GENERAL);
@@ -428,7 +428,7 @@ namespace VKIntox
             toAttachment.subresourceRange.levelCount = 1;
             toAttachment.subresourceRange.baseArrayLayer = 0;
             toAttachment.subresourceRange.layerCount = 1;
-            pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+            logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                                                    0, 0, nullptr, 0, nullptr, 1, &toAttachment);
@@ -436,15 +436,15 @@ namespace VKIntox
 
         VkRenderPassBeginInfo beginInfo = {};
         beginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        beginInfo.renderPass = pLogicalSwapchain->depthResolveMsaaRenderPass;
-        beginInfo.framebuffer = pLogicalSwapchain->depthResolveMsaaFramebuffers[imageIndex];
+        beginInfo.renderPass = logicalSwapchain->depthResolveMsaaRenderPass;
+        beginInfo.framebuffer = logicalSwapchain->depthResolveMsaaFramebuffers[imageIndex];
         beginInfo.renderArea.offset = {0, 0};
-        beginInfo.renderArea.extent = {pLogicalSwapchain->depthResolveExtent.width, pLogicalSwapchain->depthResolveExtent.height};
+        beginInfo.renderArea.extent = {logicalSwapchain->depthResolveExtent.width, logicalSwapchain->depthResolveExtent.height};
         beginInfo.clearValueCount = 0;
         beginInfo.pClearValues = nullptr;
 
-        pLogicalDevice->vkd.CmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
-        pLogicalDevice->vkd.CmdEndRenderPass(commandBuffer);
+        logicalDevice->vkd.CmdBeginRenderPass(commandBuffer, &beginInfo, VK_SUBPASS_CONTENTS_INLINE);
+        logicalDevice->vkd.CmdEndRenderPass(commandBuffer);
 
         // Restore source layout if it was GENERAL.
         if (sourceInGeneral)
@@ -464,17 +464,17 @@ namespace VKIntox
             toGeneral.subresourceRange.levelCount = 1;
             toGeneral.subresourceRange.baseArrayLayer = 0;
             toGeneral.subresourceRange.layerCount = 1;
-            pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+            logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                                                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                                                    0, 0, nullptr, 0, nullptr, 1, &toGeneral);
         }
 
-        pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized = true;
+        logicalSwapchain->depthResolvePerImage[imageIndex].initialized = true;
 
         Logger::debug("depth MSAA resolve via subpass: image=" + convertToString(depthState.image)
                       + " samples=" + convertToString(depthState.samples)
-                      + " mode=" + std::to_string(pLogicalSwapchain->depthResolveMode)
+                      + " mode=" + std::to_string(logicalSwapchain->depthResolveMode)
                       + " sourceWasGeneral=" + std::string(sourceInGeneral ? "true" : "false"));
     }
 
@@ -490,13 +490,13 @@ namespace VKIntox
     // Layout transitions:
     //   source (MSAA depth):  ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL → ATTACHMENT_OPTIMAL
     //   target (1-sample):    read-only → TRANSFER_DST_OPTIMAL → read-only
-    static void recordDepthResolveSnapshotViaCmdResolveImage(LogicalDevice*     pLogicalDevice,
-                                                             LogicalSwapchain*  pLogicalSwapchain,
+    static void recordDepthResolveSnapshotViaCmdResolveImage(LogicalDevice*     logicalDevice,
+                                                             LogicalSwapchain*  logicalSwapchain,
                                                              VkCommandBuffer    commandBuffer,
                                                              uint32_t           imageIndex,
                                                              const DepthState&  depthState)
     {
-        if (imageIndex >= pLogicalSwapchain->depthResolvePerImage.size())
+        if (imageIndex >= logicalSwapchain->depthResolvePerImage.size())
             return;
 
         const VkImageLayout observedLayout = getObservedDepthAttachmentLayout(depthState);
@@ -522,7 +522,7 @@ namespace VKIntox
         srcBarrier.subresourceRange.baseArrayLayer = 0;
         srcBarrier.subresourceRange.layerCount = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                getObservedDepthSourceStages(depthState),
                                                VK_PIPELINE_STAGE_TRANSFER_BIT,
                                                0, 0, nullptr, 0, nullptr, 1, &srcBarrier);
@@ -530,12 +530,12 @@ namespace VKIntox
         // --- Target barrier: read-only → TRANSFER_DST_OPTIMAL ---
         VkImageMemoryBarrier dstBarrier = {};
         dstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        dstBarrier.image = pLogicalSwapchain->depthResolvePerImage[imageIndex].image;
-        dstBarrier.oldLayout = pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized
-            ? getInternalDepthReadOnlyLayout(pLogicalSwapchain->depthResolveFormat)
+        dstBarrier.image = logicalSwapchain->depthResolvePerImage[imageIndex].image;
+        dstBarrier.oldLayout = logicalSwapchain->depthResolvePerImage[imageIndex].initialized
+            ? getInternalDepthReadOnlyLayout(logicalSwapchain->depthResolveFormat)
             : VK_IMAGE_LAYOUT_UNDEFINED;
         dstBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        dstBarrier.srcAccessMask = pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
+        dstBarrier.srcAccessMask = logicalSwapchain->depthResolvePerImage[imageIndex].initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
         dstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         dstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         dstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -545,8 +545,8 @@ namespace VKIntox
         dstBarrier.subresourceRange.baseArrayLayer = 0;
         dstBarrier.subresourceRange.layerCount = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
-                                               pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+                                               logicalSwapchain->depthResolvePerImage[imageIndex].initialized
                                                    ? (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
                                                    : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                                VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -566,26 +566,26 @@ namespace VKIntox
         resolveRegion.dstOffset = {0, 0, 0};
         resolveRegion.extent = {depthState.extent.width, depthState.extent.height, 1};
 
-        pLogicalDevice->vkd.CmdResolveImage(commandBuffer,
+        logicalDevice->vkd.CmdResolveImage(commandBuffer,
                                             depthState.image,
                                             sourceInGeneral ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                            pLogicalSwapchain->depthResolvePerImage[imageIndex].image,
+                                            logicalSwapchain->depthResolvePerImage[imageIndex].image,
                                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                             1,
                                             &resolveRegion);
 
         // --- Target barrier: TRANSFER_DST_OPTIMAL → read-only ---
         dstBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        dstBarrier.newLayout = getInternalDepthReadOnlyLayout(pLogicalSwapchain->depthResolveFormat);
+        dstBarrier.newLayout = getInternalDepthReadOnlyLayout(logicalSwapchain->depthResolveFormat);
         dstBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         dstBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                VK_PIPELINE_STAGE_TRANSFER_BIT,
                                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                                0, 0, nullptr, 0, nullptr, 1, &dstBarrier);
 
-        pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized = true;
+        logicalSwapchain->depthResolvePerImage[imageIndex].initialized = true;
 
         // --- Restore source layout if we transitioned away from GENERAL ---
         if (!sourceInGeneral)
@@ -594,7 +594,7 @@ namespace VKIntox
             srcBarrier.newLayout = observedLayout;
             srcBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
             srcBarrier.dstAccessMask = getObservedDepthRestoreAccess(depthState);
-            pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+            logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                    VK_PIPELINE_STAGE_TRANSFER_BIT,
                                                    getObservedDepthRestoreStages(depthState),
                                                    0, 0, nullptr, 0, nullptr, 1, &srcBarrier);
@@ -605,19 +605,19 @@ namespace VKIntox
                       + " sourceWasGeneral=" + std::string(sourceInGeneral ? "true" : "false"));
     }
 
-    void recordDepthResolveSnapshot(LogicalDevice*  pLogicalDevice,
-                                    LogicalSwapchain* pLogicalSwapchain,
+    void recordDepthResolveSnapshot(LogicalDevice*  logicalDevice,
+                                    LogicalSwapchain* logicalSwapchain,
                                     VkCommandBuffer commandBuffer,
                                     uint32_t imageIndex,
                                     const DepthState& depthState)
     {
-        if (!pLogicalDevice || !pLogicalSwapchain)
+        if (!logicalDevice || !logicalSwapchain)
             return;
         if (!hasDepthState(depthState))
             return;
         if (depthState.extent.width == 0 || depthState.extent.height == 0)
             return;
-        if (imageIndex >= pLogicalSwapchain->depthResolvePerImage.size())
+        if (imageIndex >= logicalSwapchain->depthResolvePerImage.size())
             return;
 
         // Defensive: ensure the underlying depth image is still tracked and has
@@ -627,21 +627,21 @@ namespace VKIntox
         // check, vkCmdCopyImage / vkCmdResolveImage would operate on a dangling
         // image handle, producing either a device-loss or silent garbage.
         // Note: persistent storage is tracked separately, not in depthImages.
-        if (depthState.image != pLogicalDevice->depthCaptureStorage.image
-            || !pLogicalDevice->persistentStorageTracked)
+        if (depthState.image != logicalDevice->depthCaptureStorage.image
+            || !logicalDevice->persistentStorageTracked)
         {
-            auto imageIt = std::find(pLogicalDevice->depthImages.begin(),
-                                     pLogicalDevice->depthImages.end(),
+            auto imageIt = std::find(logicalDevice->depthImages.begin(),
+                                     logicalDevice->depthImages.end(),
                                      depthState.image);
-            if (imageIt == pLogicalDevice->depthImages.end())
+            if (imageIt == logicalDevice->depthImages.end())
             {
                 Logger::warn("recordDepthResolveSnapshot: depth image no longer tracked; skipping (image="
                              + convertToString(depthState.image) + ")");
                 return;
             }
         } // end persistent-storage bypass
-        auto metadataIt = pLogicalDevice->depthImageMetadata.find(depthState.image);
-        if (metadataIt != pLogicalDevice->depthImageMetadata.end())
+        auto metadataIt = logicalDevice->depthImageMetadata.find(depthState.image);
+        if (metadataIt != logicalDevice->depthImageMetadata.end())
         {
             const VkImageUsageFlags required = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
             if ((metadataIt->second.usage & required) != required)
@@ -657,19 +657,19 @@ namespace VKIntox
         // rather than reading from the wrong image. ensureDepthResolveResources
         // should have already rebuilt the framebuffers, but if for any reason it
         // didn't (race, missed realloc, etc.), this prevents silent corruption.
-        if (pLogicalSwapchain->depthResolveIsMsaa
-            && pLogicalSwapchain->depthResolveSourceView != VK_NULL_HANDLE
-            && pLogicalSwapchain->depthResolveSourceView != depthState.imageView)
+        if (logicalSwapchain->depthResolveIsMsaa
+            && logicalSwapchain->depthResolveSourceView != VK_NULL_HANDLE
+            && logicalSwapchain->depthResolveSourceView != depthState.imageView)
         {
             Logger::warn("recordDepthResolveSnapshot: MSAA framebuffer source view mismatch (fb="
-                         + convertToString(pLogicalSwapchain->depthResolveSourceView)
+                         + convertToString(logicalSwapchain->depthResolveSourceView)
                          + " cur=" + convertToString(depthState.imageView)
                          + "); skipping snapshot until realloc catches up");
             return;
         }
 
-        auto logMetadataIt = pLogicalDevice->depthImageMetadata.find(depthState.image);
-        if (logMetadataIt != pLogicalDevice->depthImageMetadata.end())
+        auto logMetadataIt = logicalDevice->depthImageMetadata.find(depthState.image);
+        if (logMetadataIt != logicalDevice->depthImageMetadata.end())
         {
             Logger::debug("depth snapshot source state: commandBuffer=" + convertToString(commandBuffer)
                           + " image=" + convertToString(depthState.image)
@@ -687,9 +687,9 @@ namespace VKIntox
                           + " metadata=missing");
         }
 
-        if (pLogicalSwapchain->depthResolveUsesShader)
+        if (logicalSwapchain->depthResolveUsesShader)
         {
-            recordDepthResolveSnapshotViaShader(pLogicalDevice, pLogicalSwapchain, commandBuffer, imageIndex, depthState);
+            recordDepthResolveSnapshotViaShader(logicalDevice, logicalSwapchain, commandBuffer, imageIndex, depthState);
             return;
         }
 
@@ -697,11 +697,11 @@ namespace VKIntox
         // pass has no draws; the implementation resolves attachment 0 (MSAA
         // depth source) into attachment 1 (1-sample resolve target) at subpass
         // end. Effects then sample attachment 1 in the read-only depth layout.
-        if (pLogicalSwapchain->depthResolveIsMsaa
-            && pLogicalSwapchain->depthResolveMsaaRenderPass != VK_NULL_HANDLE
-            && imageIndex < pLogicalSwapchain->depthResolveMsaaFramebuffers.size())
+        if (logicalSwapchain->depthResolveIsMsaa
+            && logicalSwapchain->depthResolveMsaaRenderPass != VK_NULL_HANDLE
+            && imageIndex < logicalSwapchain->depthResolveMsaaFramebuffers.size())
         {
-            recordDepthResolveSnapshotViaMsaaSubpass(pLogicalDevice, pLogicalSwapchain, commandBuffer, imageIndex, depthState);
+            recordDepthResolveSnapshotViaMsaaSubpass(logicalDevice, logicalSwapchain, commandBuffer, imageIndex, depthState);
             return;
         }
 
@@ -714,11 +714,11 @@ namespace VKIntox
         // This is the path ReShade uses for MSAA depth: a plain
         // vkCmdResolveImage with aspectMask=DEPTH. It's supported on every
         // Vulkan device and doesn't require the depth-stencil resolve extension.
-        if (pLogicalSwapchain->depthResolveIsMsaa
-            && (pLogicalSwapchain->depthResolveMsaaRenderPass == VK_NULL_HANDLE
-                || imageIndex >= pLogicalSwapchain->depthResolveMsaaFramebuffers.size()))
+        if (logicalSwapchain->depthResolveIsMsaa
+            && (logicalSwapchain->depthResolveMsaaRenderPass == VK_NULL_HANDLE
+                || imageIndex >= logicalSwapchain->depthResolveMsaaFramebuffers.size()))
         {
-            recordDepthResolveSnapshotViaCmdResolveImage(pLogicalDevice, pLogicalSwapchain, commandBuffer, imageIndex, depthState);
+            recordDepthResolveSnapshotViaCmdResolveImage(logicalDevice, logicalSwapchain, commandBuffer, imageIndex, depthState);
             return;
         }
 
@@ -742,7 +742,7 @@ namespace VKIntox
         memoryBarrier.subresourceRange.baseArrayLayer = 0;
         memoryBarrier.subresourceRange.layerCount     = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                getObservedDepthSourceStages(depthState),
                                                VK_PIPELINE_STAGE_TRANSFER_BIT,
                                                0,
@@ -756,12 +756,12 @@ namespace VKIntox
         VkImageMemoryBarrier resolveBarrier = {};
         resolveBarrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         resolveBarrier.pNext               = nullptr;
-        resolveBarrier.image               = pLogicalSwapchain->depthResolvePerImage[imageIndex].image;
-        resolveBarrier.oldLayout = pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized
-                                       ? getInternalDepthReadOnlyLayout(pLogicalSwapchain->depthResolveFormat)
+        resolveBarrier.image               = logicalSwapchain->depthResolvePerImage[imageIndex].image;
+        resolveBarrier.oldLayout = logicalSwapchain->depthResolvePerImage[imageIndex].initialized
+                                       ? getInternalDepthReadOnlyLayout(logicalSwapchain->depthResolveFormat)
                                        : VK_IMAGE_LAYOUT_UNDEFINED;
         resolveBarrier.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        resolveBarrier.srcAccessMask       = pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
+        resolveBarrier.srcAccessMask       = logicalSwapchain->depthResolvePerImage[imageIndex].initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
         resolveBarrier.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
         resolveBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         resolveBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -771,8 +771,8 @@ namespace VKIntox
         resolveBarrier.subresourceRange.baseArrayLayer = 0;
         resolveBarrier.subresourceRange.layerCount     = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
-                                               pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+                                               logicalSwapchain->depthResolvePerImage[imageIndex].initialized
                                                    ? (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
                                                    : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                                VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -797,20 +797,20 @@ namespace VKIntox
         copyRegion.extent.height                 = depthState.extent.height;
         copyRegion.extent.depth                  = 1;
 
-        pLogicalDevice->vkd.CmdCopyImage(commandBuffer,
+        logicalDevice->vkd.CmdCopyImage(commandBuffer,
                                          depthState.image,
                                          keepGeneralLayout ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                         pLogicalSwapchain->depthResolvePerImage[imageIndex].image,
+                                         logicalSwapchain->depthResolvePerImage[imageIndex].image,
                                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                          1,
                                          &copyRegion);
 
         resolveBarrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        resolveBarrier.newLayout     = getInternalDepthReadOnlyLayout(pLogicalSwapchain->depthResolveFormat);
+        resolveBarrier.newLayout     = getInternalDepthReadOnlyLayout(logicalSwapchain->depthResolveFormat);
         resolveBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         resolveBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                VK_PIPELINE_STAGE_TRANSFER_BIT,
                                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                                0,
@@ -821,7 +821,7 @@ namespace VKIntox
                                                1,
                                                &resolveBarrier);
 
-        pLogicalSwapchain->depthResolvePerImage[imageIndex].initialized = true;
+        logicalSwapchain->depthResolvePerImage[imageIndex].initialized = true;
 
         if (!keepGeneralLayout)
         {
@@ -829,7 +829,7 @@ namespace VKIntox
             memoryBarrier.newLayout     = getObservedDepthAttachmentLayout(depthState);
             memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
             memoryBarrier.dstAccessMask = getObservedDepthRestoreAccess(depthState);
-            pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+            logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                    VK_PIPELINE_STAGE_TRANSFER_BIT,
                                                    getObservedDepthRestoreStages(depthState),
                                                    0,
@@ -842,7 +842,7 @@ namespace VKIntox
         }
     }
 
-    std::vector<VkSemaphore> createSemaphores(LogicalDevice* pLogicalDevice, uint32_t count)
+    std::vector<VkSemaphore> createSemaphores(LogicalDevice* logicalDevice, uint32_t count)
     {
         std::vector<VkSemaphore> semaphores(count);
         VkSemaphoreCreateInfo    info;
@@ -852,7 +852,7 @@ namespace VKIntox
 
         for (uint32_t i = 0; i < count; i++)
         {
-            VkResult vr = pLogicalDevice->vkd.CreateSemaphore(pLogicalDevice->device, &info, nullptr, &semaphores[i]);
+            VkResult vr = logicalDevice->vkd.CreateSemaphore(logicalDevice->device, &info, nullptr, &semaphores[i]);
             if (vr != VK_SUCCESS)
             {
                 Logger::err("createSemaphores: CreateSemaphore failed at index "
@@ -861,7 +861,7 @@ namespace VKIntox
                 for (uint32_t j = 0; j < i; ++j)
                 {
                     if (semaphores[j] != VK_NULL_HANDLE)
-                        pLogicalDevice->vkd.DestroySemaphore(pLogicalDevice->device, semaphores[j], nullptr);
+                        logicalDevice->vkd.DestroySemaphore(logicalDevice->device, semaphores[j], nullptr);
                 }
                 semaphores.clear();
                 return semaphores;

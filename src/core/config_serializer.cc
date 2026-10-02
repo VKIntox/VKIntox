@@ -68,12 +68,10 @@ namespace VKIntox
 
     std::string ConfigSerializer::getBaseConfigDir()
     {
-        const char* xdgConfig = std::getenv("XDG_CONFIG_HOME");
-        if (xdgConfig)
+        if (const char* xdgConfig = std::getenv("XDG_CONFIG_HOME"))
             return std::string(xdgConfig) + "/VKIntox";
 
-        const char* home = std::getenv("HOME");
-        if (home)
+        if (const char* home = std::getenv("HOME"))
             return std::string(home) + "/.config/VKIntox";
 
         return "";
@@ -162,8 +160,7 @@ namespace VKIntox
 
     std::string ConfigSerializer::getDefaultConfigPath()
     {
-        const char* home = std::getenv("HOME");
-        if (home)
+        if (const char* home = std::getenv("HOME"))
             return std::string(home) + "/.config/VKIntox/default_config";
         return "";
     }
@@ -934,8 +931,7 @@ namespace VKIntox
         if (path.empty())
             return false;
         std::error_code ec;
-        const auto parent = std::filesystem::path(path).parent_path();
-        if (!parent.empty())
+        if (const auto parent = std::filesystem::path(path).parent_path(); !parent.empty())
             std::filesystem::create_directories(parent, ec);
         if (ec)
             return false;
@@ -950,8 +946,8 @@ namespace VKIntox
         };
         auto mergeParams = [&sectionFor](const std::vector<ConfigParam>& source) {
             std::map<std::pair<std::string, std::string>, std::string> merged;
-            for (const auto& p : source)
-                merged[{sectionFor(p.effectName), p.paramName}] = p.value;
+            for (const auto& [effectName, paramName, value] : source)
+                merged[{sectionFor(effectName), paramName}] = value;
             return merged;
         };
         const auto merged = mergeParams(params);

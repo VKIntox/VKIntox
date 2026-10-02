@@ -14,7 +14,7 @@
 
 namespace VKIntox
 {
-    std::vector<VkImage> createImages(LogicalDevice*        pLogicalDevice,
+    std::vector<VkImage> createImages(LogicalDevice*        logicalDevice,
                                       uint32_t              count,
                                       VkExtent3D            extent,
                                       VkFormat              format,
@@ -26,7 +26,7 @@ namespace VKIntox
     // SAFETY: createImages returns an empty vector when any Vulkan call fails, so
     // callers that request exactly one image must not subscript [0] blindly.
     // This returns VK_NULL_HANDLE instead of invoking undefined behaviour.
-    VkImage createSingleImage(LogicalDevice*        pLogicalDevice,
+    VkImage createSingleImage(LogicalDevice*        logicalDevice,
                               VkExtent3D            extent,
                               VkFormat              format,
                               VkImageUsageFlags     usage,
@@ -35,11 +35,11 @@ namespace VKIntox
                               uint32_t              mipLevels = 1);
 
     void uploadToImage(
-        LogicalDevice* pLogicalDevice, VkImage image, VkExtent3D extent, uint32_t size, const unsigned char* writeData, uint32_t mipLevels = 1);
+        LogicalDevice* logicalDevice, VkImage image, VkExtent3D extent, uint32_t size, const unsigned char* writeData, uint32_t mipLevels = 1);
 
-    void changeImageLayout(LogicalDevice* pLogicalDevice, const std::vector<VkImage>& images, uint32_t mipLevels = 1);
+    void changeImageLayout(LogicalDevice* logicalDevice, const std::vector<VkImage>& images, uint32_t mipLevels = 1);
 
-    void generateMipMaps(LogicalDevice* pLogicalDevice, VkCommandBuffer commandBuffer, VkImage image, VkExtent3D extent, uint32_t mipLevels);
+    void generateMipMaps(LogicalDevice* logicalDevice, VkCommandBuffer commandBuffer, VkImage image, VkExtent3D extent, uint32_t mipLevels);
 } // namespace VKIntox
 
 #endif // IMAGE_HPP_INCLUDED

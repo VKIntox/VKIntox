@@ -13,7 +13,7 @@
 
 namespace VKIntox
 {
-    void createBuffer(LogicalDevice*        pLogicalDevice,
+    void createBuffer(LogicalDevice*        logicalDevice,
                       VkDeviceSize          size,
                       VkBufferUsageFlags    usage,
                       VkMemoryPropertyFlags properties,

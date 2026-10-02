@@ -22,17 +22,17 @@
 
 namespace VKIntox
 {
-    LutEffect::LutEffect(LogicalDevice*       pLogicalDevice,
+    LutEffect::LutEffect(LogicalDevice*       logicalDevice,
                          VkFormat             format,
                          VkExtent2D           imageExtent,
                          std::vector<VkImage> inputImages,
                          std::vector<VkImage> outputImages,
-                         Config*              pConfig)
+                         Config*              config)
     {
         vertexCode   = full_screen_triangle_vert;
         fragmentCode = lut_frag;
 
-        std::string lutFile = pConfig->getOption<std::string>("lutFile");
+        std::string lutFile = config->getOption<std::string>("lutFile");
 
         if (lutFile.empty())
         {
@@ -83,28 +83,28 @@ namespace VKIntox
         fragmentSpecializationInfo.dataSize      = specMapEntrys.size() * sizeof(int32_t);
         fragmentSpecializationInfo.pData         = specData.data();
 
-        pVertexSpecInfo   = nullptr;
-        pFragmentSpecInfo = &fragmentSpecializationInfo;
+        vertexSpecInfo   = nullptr;
+        fragmentSpecInfo = &fragmentSpecializationInfo;
 
         VkExtent3D lutImageExtent = {(uint32_t) height, (uint32_t) height, (uint32_t) height};
 
-        lutImage = createSingleImage(pLogicalDevice,
+        lutImage = createSingleImage(logicalDevice,
                                 lutImageExtent,
                                 VK_FORMAT_R8G8B8A8_UNORM, // TODO search for format and save it
                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                                 lutMemory);
 
-        uploadToImage(pLogicalDevice, lutImage, lutImageExtent, height * height * height * 4, pixels);
+        uploadToImage(logicalDevice, lutImage, lutImageExtent, height * height * height * 4, pixels);
 
         if (usingPNG)
         {
             stbi_image_free(pixels);
         }
 
-        lutImageView = createSingleImageView(pLogicalDevice, VK_FORMAT_R8G8B8A8_UNORM, lutImage, VK_IMAGE_VIEW_TYPE_3D);
+        lutImageView = createSingleImageView(logicalDevice, VK_FORMAT_R8G8B8A8_UNORM, lutImage, VK_IMAGE_VIEW_TYPE_3D);
 
-        lutDescriptorSetLayout = createImageSamplerDescriptorSetLayout(pLogicalDevice, 1);
+        lutDescriptorSetLayout = createImageSamplerDescriptorSetLayout(logicalDevice, 1);
         descriptorSetLayouts.push_back(lutDescriptorSetLayout);
 
         VkDescriptorPoolSize imagePoolSize;
@@ -113,12 +113,12 @@ namespace VKIntox
 
         std::vector<VkDescriptorPoolSize> poolSizes = {imagePoolSize};
 
-        lutDescriptorPool = createDescriptorPool(pLogicalDevice, poolSizes);
+        lutDescriptorPool = createDescriptorPool(logicalDevice, poolSizes);
 
-        init(pLogicalDevice, format, imageExtent, inputImages, outputImages, pConfig);
+        init(logicalDevice, format, imageExtent, inputImages, outputImages, config);
 
         lutDescriptorSet =
-            allocateAndWriteImageSamplerDescriptorSets(pLogicalDevice,
+            allocateAndWriteImageSamplerDescriptorSets(logicalDevice,
                                                        lutDescriptorPool,
                                                        lutDescriptorSetLayout,
                                                        {sampler},
@@ -127,7 +127,7 @@ namespace VKIntox
     LutEffect::~LutEffect()
     {
         // Skip cleanup if init() was never called (e.g., constructor threw exception)
-        if (!pLogicalDevice || pLogicalDevice->device == VK_NULL_HANDLE)
+        if (!logicalDevice || logicalDevice->device == VK_NULL_HANDLE)
             return;
 
         // Handed to the deferred queue rather than released here, for the same
@@ -140,8 +140,8 @@ namespace VKIntox
         // the image goes in before its view: that way the view is destroyed
         // first, and the memory last of all.
         auto& queue   = DeferredDestroyQueue::instance();
-        auto  device = pLogicalDevice->device;
-        auto& vkd    = pLogicalDevice->vkd;
+        auto  device = logicalDevice->device;
+        auto& vkd    = logicalDevice->vkd;
 
         const VkDeviceMemory        memory    = lutMemory;
         const VkImage               image     = lutImage;
@@ -162,7 +162,7 @@ namespace VKIntox
     }
     void LutEffect::applyEffect(uint32_t imageIndex, VkCommandBuffer commandBuffer)
     {
-        pLogicalDevice->vkd.CmdBindDescriptorSets(
+        logicalDevice->vkd.CmdBindDescriptorSets(
             commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &(lutDescriptorSet), 0, nullptr);
         SimpleEffect::applyEffect(imageIndex, commandBuffer);
     }

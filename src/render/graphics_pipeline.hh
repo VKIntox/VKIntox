@@ -13,11 +13,11 @@
 
 namespace VKIntox
 {
-    VkPipelineLayout createGraphicsPipelineLayout(LogicalDevice* pLogicalDevice, 
+    VkPipelineLayout createGraphicsPipelineLayout(LogicalDevice* logicalDevice, 
                                                    std::vector<VkDescriptorSetLayout> descriptorSetLayouts,
                                                    std::vector<VkPushConstantRange> pushConstantRanges = {});
 
-    VkPipeline createGraphicsPipeline(LogicalDevice*        pLogicalDevice,
+    VkPipeline createGraphicsPipeline(LogicalDevice*        logicalDevice,
                                       VkShaderModule        vertexModule,
                                       VkSpecializationInfo* vertexSpecializationInfo,
                                       std::string           vertexEntryPoint,

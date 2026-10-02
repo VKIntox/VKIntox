@@ -19,30 +19,30 @@ namespace VKIntox
     SimpleEffect::SimpleEffect()
     {
     }
-    void SimpleEffect::init(LogicalDevice*       pLogicalDevice,
+    void SimpleEffect::init(LogicalDevice*       logicalDevice,
                             VkFormat             format,
                             VkExtent2D           imageExtent,
                             std::vector<VkImage> inputImages,
                             std::vector<VkImage> outputImages,
-                            Config*              pConfig)
+                            Config*              config)
     {
         Logger::debug("in creating SimpleEffect");
 
-        this->pLogicalDevice = pLogicalDevice;
+        this->logicalDevice = logicalDevice;
         this->format         = format;
         this->imageExtent    = imageExtent;
         this->inputImages    = inputImages;
         this->outputImages   = outputImages;
-        this->pConfig        = pConfig;
+        this->config        = config;
 
-        inputImageViews = createImageViews(pLogicalDevice, format, inputImages);
+        inputImageViews = createImageViews(logicalDevice, format, inputImages);
         Logger::debug("created input ImageViews");
-        outputImageViews = createImageViews(pLogicalDevice, format, outputImages);
+        outputImageViews = createImageViews(logicalDevice, format, outputImages);
         Logger::debug("created ImageViews");
-        sampler = createSampler(pLogicalDevice);
+        sampler = createSampler(logicalDevice);
         Logger::debug("created sampler");
 
-        imageSamplerDescriptorSetLayout = createImageSamplerDescriptorSetLayout(pLogicalDevice, 1);
+        imageSamplerDescriptorSetLayout = createImageSamplerDescriptorSetLayout(logicalDevice, 1);
         Logger::debug("created descriptorSetLayouts");
 
         VkDescriptorPoolSize imagePoolSize;
@@ -51,32 +51,32 @@ namespace VKIntox
 
         std::vector<VkDescriptorPoolSize> poolSizes = {imagePoolSize};
 
-        descriptorPool = createDescriptorPool(pLogicalDevice, poolSizes);
+        descriptorPool = createDescriptorPool(logicalDevice, poolSizes);
         Logger::debug("created descriptorPool");
 
-        createShaderModule(pLogicalDevice, vertexCode, &vertexModule);
-        createShaderModule(pLogicalDevice, fragmentCode, &fragmentModule);
+        createShaderModule(logicalDevice, vertexCode, &vertexModule);
+        createShaderModule(logicalDevice, fragmentCode, &fragmentModule);
 
-        renderPass = createRenderPass(pLogicalDevice, format);
+        renderPass = createRenderPass(logicalDevice, format);
 
         descriptorSetLayouts.insert(descriptorSetLayouts.begin(), imageSamplerDescriptorSetLayout);
-        pipelineLayout = createGraphicsPipelineLayout(pLogicalDevice, descriptorSetLayouts);
+        pipelineLayout = createGraphicsPipelineLayout(logicalDevice, descriptorSetLayouts);
 
-        graphicsPipeline = createGraphicsPipeline(pLogicalDevice,
+        graphicsPipeline = createGraphicsPipeline(logicalDevice,
                                                   vertexModule,
-                                                  pVertexSpecInfo,
+                                                  vertexSpecInfo,
                                                   "main",
                                                   fragmentModule,
-                                                  pFragmentSpecInfo,
+                                                  fragmentSpecInfo,
                                                   "main",
                                                   imageExtent,
                                                   renderPass,
                                                   pipelineLayout);
 
         imageDescriptorSets = allocateAndWriteImageSamplerDescriptorSets(
-            pLogicalDevice, descriptorPool, imageSamplerDescriptorSetLayout, {sampler}, std::vector<std::vector<VkImageView>>(1, inputImageViews));
+            logicalDevice, descriptorPool, imageSamplerDescriptorSetLayout, {sampler}, std::vector<std::vector<VkImageView>>(1, inputImageViews));
 
-        framebuffers = createFramebuffers(pLogicalDevice, renderPass, imageExtent, {outputImageViews});
+        framebuffers = createFramebuffers(logicalDevice, renderPass, imageExtent, {outputImageViews});
     }
     void SimpleEffect::applyEffect(uint32_t imageIndex, VkCommandBuffer commandBuffer)
     {
@@ -116,7 +116,7 @@ namespace VKIntox
         secondBarrier.subresourceRange.baseArrayLayer = 0;
         secondBarrier.subresourceRange.layerCount     = 1;
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(
+        logicalDevice->vkd.CmdPipelineBarrier(
             commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
 
         VkRenderPassBeginInfo renderPassBeginInfo;
@@ -130,18 +130,18 @@ namespace VKIntox
         renderPassBeginInfo.clearValueCount   = 1;
         renderPassBeginInfo.pClearValues      = &clearValue;
 
-        pLogicalDevice->vkd.CmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+        logicalDevice->vkd.CmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        pLogicalDevice->vkd.CmdBindDescriptorSets(
+        logicalDevice->vkd.CmdBindDescriptorSets(
             commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &(imageDescriptorSets[imageIndex]), 0, nullptr);
 
-        pLogicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+        logicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-        pLogicalDevice->vkd.CmdDraw(commandBuffer, 3, 1, 0, 0);
+        logicalDevice->vkd.CmdDraw(commandBuffer, 3, 1, 0, 0);
 
-        pLogicalDevice->vkd.CmdEndRenderPass(commandBuffer);
+        logicalDevice->vkd.CmdEndRenderPass(commandBuffer);
 
-        pLogicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
                                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                                0,
@@ -157,14 +157,14 @@ namespace VKIntox
         Logger::debug("destroying SimpleEffect " + convertToString(this));
 
         // Skip cleanup if init() was never called (e.g., constructor threw exception)
-        if (!pLogicalDevice || pLogicalDevice->device == VK_NULL_HANDLE)
+        if (!logicalDevice || logicalDevice->device == VK_NULL_HANDLE)
             return;
 
         // Deferred like every other owner, so nothing is destroyed at scope exit
         // while the GPU may still be reading it.
         auto& queue   = DeferredDestroyQueue::instance();
-        auto  device = pLogicalDevice->device;
-        auto& vkd    = pLogicalDevice->vkd;
+        auto  device = logicalDevice->device;
+        auto& vkd    = logicalDevice->vkd;
 
         const VkPipeline           pipeline    = graphicsPipeline;
         const VkPipelineLayout     pipelineLay = pipelineLayout;

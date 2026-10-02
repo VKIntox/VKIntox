@@ -18,12 +18,12 @@ namespace VKIntox
     class CasEffect : public SimpleEffect
     {
     public:
-        CasEffect(LogicalDevice*       pLogicalDevice,
+        CasEffect(LogicalDevice*       logicalDevice,
                   VkFormat             format,
                   VkExtent2D           imageExtent,
                   std::vector<VkImage> inputImages,
                   std::vector<VkImage> outputImages,
-                  Config*              pConfig);
+                  Config*              config);
         ~CasEffect();
     };
 } // namespace VKIntox

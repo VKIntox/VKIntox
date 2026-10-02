@@ -193,7 +193,7 @@ namespace VKIntox
         std::unique_ptr<EffectParam> convertSpecConstant(
             const reshadefx::uniform_info& spec,
             const std::string& effectName,
-            Config* pConfig)
+            Config* config)
         {
             // Label (common to all types)
             auto labelIt = findAnnotation(spec.annotations, "ui_label");
@@ -222,7 +222,7 @@ namespace VKIntox
                 {
                     std::string suffix = "[" + std::to_string(c) + "]";
                     p.defaultValue[c] = spec.initializer_value.as_float[c];
-                    p.value[c] = pConfig->getInstanceOption<float>(effectName, spec.name + suffix, p.defaultValue[c]);
+                    p.value[c] = config->getInstanceOption<float>(effectName, spec.name + suffix, p.defaultValue[c]);
                     if (minIt != spec.annotations.end())
                         p.minValue[c] = getAnnotationFloat(*minIt);
                     if (maxIt != spec.annotations.end())
@@ -249,7 +249,7 @@ namespace VKIntox
                 {
                     std::string suffix = "[" + std::to_string(c) + "]";
                     p.defaultValue[c] = spec.initializer_value.as_int[c];
-                    p.value[c] = pConfig->getInstanceOption<int32_t>(effectName, spec.name + suffix, p.defaultValue[c]);
+                    p.value[c] = config->getInstanceOption<int32_t>(effectName, spec.name + suffix, p.defaultValue[c]);
                     if (minIt != spec.annotations.end())
                         p.minValue[c] = getAnnotationInt(*minIt);
                     if (maxIt != spec.annotations.end())
@@ -276,7 +276,7 @@ namespace VKIntox
                 {
                     std::string suffix = "[" + std::to_string(c) + "]";
                     p.defaultValue[c] = spec.initializer_value.as_uint[c];
-                    p.value[c] = pConfig->getInstanceOption<uint32_t>(effectName, spec.name + suffix, p.defaultValue[c]);
+                    p.value[c] = config->getInstanceOption<uint32_t>(effectName, spec.name + suffix, p.defaultValue[c]);
                     if (minIt != spec.annotations.end())
                         p.minValue[c] = static_cast<uint32_t>(getAnnotationInt(*minIt));
                     if (maxIt != spec.annotations.end())
@@ -306,7 +306,7 @@ namespace VKIntox
                 p->tooltip = tooltip;
                 p->uiType = uiType;
                 p->defaultValue = spec.initializer_value.as_float[0];
-                p->value = pConfig->getInstanceOption<float>(effectName, spec.name, p->defaultValue);
+                p->value = config->getInstanceOption<float>(effectName, spec.name, p->defaultValue);
                 applyFloatRange(*p, spec.annotations);
 
                 auto stepIt = findAnnotation(spec.annotations, "ui_step");
@@ -324,7 +324,7 @@ namespace VKIntox
                 p->tooltip = tooltip;
                 p->uiType = uiType;
                 p->defaultValue = (spec.initializer_value.as_uint[0] != 0);
-                p->value = pConfig->getInstanceOption<bool>(effectName, spec.name, p->defaultValue);
+                p->value = config->getInstanceOption<bool>(effectName, spec.name, p->defaultValue);
                 return p;
             }
             else if (spec.type.is_integral() && spec.type.is_signed() && spec.type.rows >= 2 && spec.type.rows <= 4)
@@ -344,7 +344,7 @@ namespace VKIntox
                 p->tooltip = tooltip;
                 p->uiType = uiType;
                 p->defaultValue = spec.initializer_value.as_int[0];
-                p->value = pConfig->getInstanceOption<int32_t>(effectName, spec.name, p->defaultValue);
+                p->value = config->getInstanceOption<int32_t>(effectName, spec.name, p->defaultValue);
                 applyIntRange(*p, spec.annotations);
 
                 auto stepIt = findAnnotation(spec.annotations, "ui_step");
@@ -374,7 +374,7 @@ namespace VKIntox
                 p->tooltip = tooltip;
                 p->uiType = uiType;
                 p->defaultValue = spec.initializer_value.as_uint[0];
-                p->value = pConfig->getInstanceOption<uint32_t>(effectName, spec.name, p->defaultValue);
+                p->value = config->getInstanceOption<uint32_t>(effectName, spec.name, p->defaultValue);
 
                 auto minIt = findAnnotation(spec.annotations, "ui_min");
                 auto maxIt = findAnnotation(spec.annotations, "ui_max");
@@ -438,7 +438,7 @@ namespace VKIntox
     std::vector<std::unique_ptr<EffectParam>> parseReshadeEffect(
         const std::string& effectName,
         const std::string& effectPath,
-        Config* pConfig,
+        Config* config,
         std::vector<std::string>* techniqueNames)
     {
         std::vector<std::unique_ptr<EffectParam>> params;
@@ -554,7 +554,7 @@ namespace VKIntox
                     {
                         std::string suffix = "[" + std::to_string(c) + "]";
                         p->defaultValue[c] = module.spec_constants[i + c].initializer_value.as_float[0];
-                        p->value[c] = pConfig->getInstanceOption<float>(effectName, spec.name + suffix, p->defaultValue[c]);
+                        p->value[c] = config->getInstanceOption<float>(effectName, spec.name + suffix, p->defaultValue[c]);
                         if (minIt != spec.annotations.end())
                             p->minValue[c] = getAnnotationFloat(*minIt);
                         if (maxIt != spec.annotations.end())
@@ -580,7 +580,7 @@ namespace VKIntox
                     {
                         std::string suffix = "[" + std::to_string(c) + "]";
                         p->defaultValue[c] = module.spec_constants[i + c].initializer_value.as_int[0];
-                        p->value[c] = pConfig->getInstanceOption<int32_t>(effectName, spec.name + suffix, p->defaultValue[c]);
+                        p->value[c] = config->getInstanceOption<int32_t>(effectName, spec.name + suffix, p->defaultValue[c]);
                         if (minIt != spec.annotations.end())
                             p->minValue[c] = getAnnotationInt(*minIt);
                         if (maxIt != spec.annotations.end())
@@ -606,7 +606,7 @@ namespace VKIntox
                     {
                         std::string suffix = "[" + std::to_string(c) + "]";
                         p->defaultValue[c] = module.spec_constants[i + c].initializer_value.as_uint[0];
-                        p->value[c] = pConfig->getInstanceOption<uint32_t>(effectName, spec.name + suffix, p->defaultValue[c]);
+                        p->value[c] = config->getInstanceOption<uint32_t>(effectName, spec.name + suffix, p->defaultValue[c]);
                         if (minIt != spec.annotations.end())
                             p->minValue[c] = static_cast<uint32_t>(getAnnotationInt(*minIt));
                         if (maxIt != spec.annotations.end())
@@ -624,7 +624,7 @@ namespace VKIntox
             else
             {
                 // Regular scalar parameter
-                auto param = convertSpecConstant(spec, effectName, pConfig);
+                auto param = convertSpecConstant(spec, effectName, config);
                 if (param)
                 {
                     param->noSave = hasAnnotation(spec.annotations, "nosave");
@@ -639,7 +639,7 @@ namespace VKIntox
             if (shouldSkipSpecConstant(uniform))
                 continue;
 
-            auto param = convertSpecConstant(uniform, effectName, pConfig);
+            auto param = convertSpecConstant(uniform, effectName, config);
             if (param)
             {
                 param->noSave = hasAnnotation(uniform.annotations, "nosave");

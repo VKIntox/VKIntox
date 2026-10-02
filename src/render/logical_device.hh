@@ -39,7 +39,7 @@ namespace VKIntox
     struct DepthSnapshotTarget
     {
         VkSwapchainKHR  swapchain = VK_NULL_HANDLE;
-        LogicalSwapchain* pLogicalSwapchain = nullptr;
+        LogicalSwapchain* logicalSwapchain = nullptr;
         uint32_t        imageIndex = 0;
     };
 

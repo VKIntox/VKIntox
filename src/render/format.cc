@@ -94,12 +94,12 @@ namespace VKIntox
         return convertToSRGB(format) != format;
     }
 
-    VkFormat getSupportedFormat(LogicalDevice* pLogicalDevice, std::vector<VkFormat> formats, VkFormatFeatureFlags features, VkImageTiling tiling)
+    VkFormat getSupportedFormat(LogicalDevice* logicalDevice, std::vector<VkFormat> formats, VkFormatFeatureFlags features, VkImageTiling tiling)
     {
         for (auto& format : formats)
         {
             VkFormatProperties properties;
-            pLogicalDevice->vki.GetPhysicalDeviceFormatProperties(pLogicalDevice->physicalDevice, format, &properties);
+            logicalDevice->vki.GetPhysicalDeviceFormatProperties(logicalDevice->physicalDevice, format, &properties);
             if ((properties.optimalTilingFeatures & features) == features && tiling == VK_IMAGE_TILING_OPTIMAL)
             {
                 return format;
@@ -113,10 +113,10 @@ namespace VKIntox
         return VK_FORMAT_UNDEFINED;
     }
 
-    VkFormat getStencilFormat(LogicalDevice* pLogicalDevice)
+    VkFormat getStencilFormat(LogicalDevice* logicalDevice)
     {
         std::vector<VkFormat> stencilFormats = {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT};
-        return getSupportedFormat(pLogicalDevice, stencilFormats, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+        return getSupportedFormat(logicalDevice, stencilFormats, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
     }
 
     bool isDepthFormat(VkFormat format)

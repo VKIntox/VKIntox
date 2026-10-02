@@ -22,7 +22,7 @@ namespace VKIntox
         Config(const Config& other);
 
         // Set a fallback config for options not found in this config
-        void setFallback(Config* fallback) { pFallback = fallback; }
+        void setFallback(Config* fallback) { fallback = fallback; }
         void setOption(const std::string& option, const std::string& value) { options[option] = value; }
 
         template<typename T>
@@ -46,8 +46,8 @@ namespace VKIntox
             }
 
             // Check fallback config if set
-            if (pFallback)
-                return pFallback->getOption(option, defaultValue);
+            if (fallback)
+                return fallback->getOption(option, defaultValue);
 
             return defaultValue;
         }
@@ -88,7 +88,7 @@ namespace VKIntox
         std::unordered_map<std::string, std::string> overrides;  // In-memory overrides
         std::string                                  configFilePath;
         time_t                                       lastModifiedTime = 0;
-        Config*                                      pFallback = nullptr;
+        Config*                                      fallback = nullptr;
         std::chrono::steady_clock::time_point        lastConfigCheckTime{};  // Throttle stat() calls
 
         void readConfigLine(std::string line);

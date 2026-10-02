@@ -12,18 +12,18 @@ namespace VKIntox
 {
     Logger Logger::s_instance;
 
-    Logger::Logger() : m_minLevel(getMinLogLevel())
+    Logger::Logger() : minLevel(getMinLogLevel())
     {
-        if (m_minLevel != LogLevel::None)
+        if (minLevel != LogLevel::None)
         {
             std::string filename = getFileName();
             if (filename == "stderr")
             {
-                m_outStream = {&std::cerr, {false}};
+                outStream = {&std::cerr, {false}};
             }
             else if (filename == "stdout")
             {
-                m_outStream = {&std::cout, {false}};
+                outStream = {&std::cout, {false}};
             }
             else
             {
@@ -44,9 +44,9 @@ namespace VKIntox
 
                 auto file = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::app);
                 if (*file)
-                    m_outStream = {file.release(), {true}};
+                    outStream = {file.release(), {true}};
                 else
-                    m_outStream = {&std::cerr, {false}};
+                    outStream = {&std::cerr, {false}};
             }
         }
     }
@@ -88,20 +88,20 @@ namespace VKIntox
     void Logger::emitMsg(LogLevel level, const std::string& message)
     {
         // Early-out before taking lock if nothing to do
-        if (level < m_minLevel && !m_historyEnabled)
+        if (level < minLevel && !historyEnabled)
             return;
 
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::lock_guard<std::mutex> lock(mutex);
 
         // Store in history only if enabled (to save memory when debug window is off)
-        if (m_historyEnabled)
+        if (historyEnabled)
         {
-            m_history.push_back({level, message});
-            if (m_history.size() > MAX_HISTORY_SIZE)
-                m_history.pop_front();
+            history.push_back({level, message});
+            if (history.size() > MAX_HISTORY_SIZE)
+                history.pop_front();
         }
 
-        if (level >= m_minLevel)
+        if (level >= minLevel)
         {
             static std::array<const char*, 5> s_prefixes = {
                 {"VKIntox trace: ", "VKIntox debug: ", "VKIntox info:  ", "VKIntox warn:  ", "VKIntox err:   "}};
@@ -119,38 +119,38 @@ namespace VKIntox
 
             while (std::getline(stream, line, '\n'))
             {
-                *m_outStream << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S")
+                *outStream << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S")
                              << '.' << std::setfill('0') << std::setw(3) << milliseconds
                              << ' ' << prefix << line << '\n';
             }
-            m_outStream->flush();
+            outStream->flush();
         }
     }
 
     std::vector<LogEntry> Logger::getHistory()
     {
-        std::lock_guard<std::mutex> lock(s_instance.m_mutex);
-        return std::vector<LogEntry>(s_instance.m_history.begin(), s_instance.m_history.end());
+        std::lock_guard<std::mutex> lock(s_instance.mutex);
+        return std::vector<LogEntry>(s_instance.history.begin(), s_instance.history.end());
     }
 
     void Logger::clearHistory()
     {
-        std::lock_guard<std::mutex> lock(s_instance.m_mutex);
-        s_instance.m_history.clear();
+        std::lock_guard<std::mutex> lock(s_instance.mutex);
+        s_instance.history.clear();
     }
 
     void Logger::setHistoryEnabled(bool enabled)
     {
-        std::lock_guard<std::mutex> lock(s_instance.m_mutex);
-        s_instance.m_historyEnabled = enabled;
+        std::lock_guard<std::mutex> lock(s_instance.mutex);
+        s_instance.historyEnabled = enabled;
         if (!enabled)
-            s_instance.m_history.clear();  // Free memory when disabled
+            s_instance.history.clear();  // Free memory when disabled
     }
 
     bool Logger::isHistoryEnabled()
     {
-        std::lock_guard<std::mutex> lock(s_instance.m_mutex);
-        return s_instance.m_historyEnabled;
+        std::lock_guard<std::mutex> lock(s_instance.mutex);
+        return s_instance.historyEnabled;
     }
 
     const char* Logger::levelName(LogLevel level)
@@ -177,10 +177,10 @@ namespace VKIntox
 
         const std::string logLevelStr = envVar ? envVar : "";
 
-        for (const auto& pair : logLevels)
+        for (const auto& [name, level] : logLevels)
         {
-            if (logLevelStr == pair.first)
-                return pair.second;
+            if (logLevelStr == name)
+                return level;
         }
 
         return LogLevel::Info;

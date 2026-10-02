@@ -14,7 +14,7 @@
 namespace VKIntox
 {
     std::vector<VkFramebuffer>
-    createFramebuffers(LogicalDevice* pLogicalDevice, VkRenderPass renderPass, VkExtent2D& extent, std::vector<std::vector<VkImageView>> imageViews);
+    createFramebuffers(LogicalDevice* logicalDevice, VkRenderPass renderPass, VkExtent2D& extent, std::vector<std::vector<VkImageView>> imageViews);
 }
 
 #endif // FRAMEBUFFER_HPP_INCLUDED

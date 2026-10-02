@@ -29,12 +29,12 @@ namespace VKIntox
     class ReshadeEffect : public Effect
     {
     public:
-        ReshadeEffect(LogicalDevice*       pLogicalDevice,
+        ReshadeEffect(LogicalDevice*       logicalDevice,
                       VkFormat             format,
                       VkExtent2D           imageExtent,
                       std::vector<VkImage> inputImages,
                       std::vector<VkImage> outputImages,
-                      EffectRegistry*      pEffectRegistry,
+                      EffectRegistry*      effectRegistry,
                       std::string          effectName,
                       std::string          effectPath = "",  // Optional: explicit path to .fx file
                       std::vector<PreprocessorDefinition> customDefs = {});  // Custom preprocessor definitions
@@ -59,7 +59,7 @@ namespace VKIntox
         std::set<VkImage>     collectOwnedImages() const;
 
     private:
-        LogicalDevice*           pLogicalDevice;
+        LogicalDevice*           logicalDevice;
         std::vector<VkImage>     inputImages;
         std::vector<VkImage>     outputImages;
         std::vector<VkImageView> inputImageViewsSRGB;
@@ -107,7 +107,7 @@ namespace VKIntox
         VkPipelineLayout                      pipelineLayout;
         VkExtent2D                            imageExtent;
         std::vector<VkSampler>                samplers;
-        EffectRegistry*                       pEffectRegistry;
+        EffectRegistry*                       effectRegistry;
         std::string                           effectName;
         std::string                           effectPath;  // Path to .fx file (may differ from effectName)
         std::vector<PreprocessorDefinition>   customPreprocessorDefs;  // User-defined macros

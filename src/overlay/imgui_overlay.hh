@@ -98,7 +98,7 @@ namespace VKIntox
         void updateState(OverlayState newState);
 
         // Returns modified parameters when Apply is clicked, empty otherwise
-        std::vector<std::unique_ptr<EffectParam>> getModifiedParams();
+        std::vector<std::unique_ptr<EffectParam>> getModifiedParams() const;
         bool hasModifiedParams() const { return applyRequested; }
         void clearApplyRequest() { applyRequested = false; }
 
@@ -119,7 +119,7 @@ namespace VKIntox
         void clearToggleEffectsRequest() { toggleEffectsRequested = false; }
 
         // Set the effect registry (single source of truth for enabled states)
-        void setEffectRegistry(EffectRegistry* registry) { pEffectRegistry = registry; }
+        void setEffectRegistry(EffectRegistry* registry) { effectRegistry = registry; }
 
         // Set game/profile info for auto-save (called from vkintox.cpp after detection)
         void setGameProfile(const std::string& gameName, const std::string& profileName, const std::string& profilePath)
@@ -188,9 +188,9 @@ namespace VKIntox
         void applyDepthPinRequests();  // Flush UI depth-pin/clear requests to LogicalDevice
         void renderToasts();       // Persistent top-right notifications
 
-        LogicalDevice* pLogicalDevice;
+        LogicalDevice* logicalDevice;
         OverlayPersistentState* pPersistentState;
-        EffectRegistry* pEffectRegistry = nullptr;  // Single source of truth for enabled states
+        EffectRegistry* effectRegistry = nullptr;  // Single source of truth for enabled states
         VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
         VkRenderPass renderPass = VK_NULL_HANDLE;
         VkCommandPool commandPool = VK_NULL_HANDLE;

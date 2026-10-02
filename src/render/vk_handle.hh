@@ -103,7 +103,7 @@ namespace VKIntox
         // driver objects that the layer silently forgot about.
         size_t pending() const
         {
-            return m_pending.size();
+            return pendingReleases.size();
         }
 
         // Drops pending releases without running them. Only for the case where
@@ -114,8 +114,8 @@ namespace VKIntox
     private:
         DeferredDestroyQueue() = default;
 
-        std::vector<DeferredRelease> m_pending;
-        uint64_t                     m_nextSequence = 0;
+        std::vector<DeferredRelease> pendingReleases;
+        uint64_t                     nextSequence = 0;
     };
 
 } // namespace VKIntox

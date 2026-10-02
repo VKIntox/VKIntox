@@ -25,10 +25,10 @@ namespace VKIntox
 
     void ImGuiOverlay::renderAddEffectsView()
     {
-        if (!pEffectRegistry)
+        if (!effectRegistry)
             return;
 
-        std::vector<std::string> selectedEffects = pEffectRegistry->getSelectedEffects();
+        std::vector<std::string> selectedEffects = effectRegistry->getSelectedEffects();
 
         // Handle ESC to clear search
         if (ImGui::IsKeyPressed(ImGuiKey_Escape) && addEffectsSearch[0] != '\0')
@@ -261,12 +261,12 @@ namespace VKIntox
             {
                 selectedEffects.insert(selectedEffects.begin() + pos, instanceName);
                 pos++;
-                pEffectRegistry->ensureEffect(instanceName, effectType);
-                pEffectRegistry->setEffectEnabled(instanceName, true);
+                effectRegistry->ensureEffect(instanceName, effectType);
+                effectRegistry->setEffectEnabled(instanceName, true);
             }
             if (!pendingAddEffects.empty())
             {
-                pEffectRegistry->setSelectedEffects(selectedEffects);
+                effectRegistry->setSelectedEffects(selectedEffects);
                 applyRequested = true;
                 profileDirty = true;
             }

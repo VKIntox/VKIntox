@@ -18,12 +18,12 @@ namespace VKIntox
     class FxaaEffect : public SimpleEffect
     {
     public:
-        FxaaEffect(LogicalDevice*       pLogicalDevice,
+        FxaaEffect(LogicalDevice*       logicalDevice,
                    VkFormat             format,
                    VkExtent2D           imageExtent,
                    std::vector<VkImage> inputImages,
                    std::vector<VkImage> outputImages,
-                   Config*              pConfig);
+                   Config*              config);
         ~FxaaEffect();
     };
 } // namespace VKIntox

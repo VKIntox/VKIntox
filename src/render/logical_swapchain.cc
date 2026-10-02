@@ -4,7 +4,7 @@
 
 namespace VKIntox
 {
-    void destroyDepthResolveResources(LogicalSwapchain* pLogicalSwapchain);
+    void destroyDepthResolveResources(LogicalSwapchain* logicalSwapchain);
 
     void LogicalSwapchain::destroy()
     {
@@ -12,7 +12,7 @@ namespace VKIntox
         {
             // Wait for GPU to finish before destroying resources
             Logger::info("[DESTROY-TRACE] LogicalSwapchain::destroy: QueueWaitIdle");
-            pLogicalDevice->vkd.QueueWaitIdle(pLogicalDevice->queue);
+            logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
 
             // Reset the command pool BEFORE destroying effects.  This puts all
             // allocated command buffers back into the initial state, clearing
@@ -20,19 +20,19 @@ namespace VKIntox
             // they reference.  Some NVIDIA driver versions crash if effect
             // objects are destroyed while the driver still has tracking records.
             Logger::info("[DESTROY-TRACE] ResetCommandPool");
-            pLogicalDevice->vkd.ResetCommandPool(pLogicalDevice->device, pLogicalDevice->commandPool, 0);
+            logicalDevice->vkd.ResetCommandPool(logicalDevice->device, logicalDevice->commandPool, 0);
 
             // Free command buffers
             if (!commandBuffersEffect.empty())
             {
-                pLogicalDevice->vkd.FreeCommandBuffers(
-                    pLogicalDevice->device, pLogicalDevice->commandPool, commandBuffersEffect.size(), commandBuffersEffect.data());
+                logicalDevice->vkd.FreeCommandBuffers(
+                    logicalDevice->device, logicalDevice->commandPool, commandBuffersEffect.size(), commandBuffersEffect.data());
                 commandBuffersEffect.clear();
             }
             if (!commandBuffersNoEffect.empty())
             {
-                pLogicalDevice->vkd.FreeCommandBuffers(
-                    pLogicalDevice->device, pLogicalDevice->commandPool, commandBuffersNoEffect.size(), commandBuffersNoEffect.data());
+                logicalDevice->vkd.FreeCommandBuffers(
+                    logicalDevice->device, logicalDevice->commandPool, commandBuffersNoEffect.size(), commandBuffersNoEffect.data());
                 commandBuffersNoEffect.clear();
             }
             Logger::info("[DESTROY-TRACE] command buffers freed");
@@ -61,11 +61,11 @@ namespace VKIntox
             // from the GPU's perspective, but not from the allocator's.
             for (uint32_t i = 0; i < fakeImages.size(); i++)
             {
-                pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, fakeImages[i], nullptr);
+                logicalDevice->vkd.DestroyImage(logicalDevice->device, fakeImages[i], nullptr);
             }
 
             for (VkDeviceMemory mem : fakeImageMemories)
-                pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, mem, nullptr);
+                logicalDevice->vkd.FreeMemory(logicalDevice->device, mem, nullptr);
             fakeImageMemories.clear();
 
             // Walked per vector rather than indexed by imageCount: the two
@@ -75,14 +75,14 @@ namespace VKIntox
             for (auto sem : semaphores)
             {
                 if (sem != VK_NULL_HANDLE)
-                    pLogicalDevice->vkd.DestroySemaphore(pLogicalDevice->device, sem, nullptr);
+                    logicalDevice->vkd.DestroySemaphore(logicalDevice->device, sem, nullptr);
             }
             semaphores.clear();
 
             for (auto sem : overlaySemaphores)
             {
                 if (sem != VK_NULL_HANDLE)
-                    pLogicalDevice->vkd.DestroySemaphore(pLogicalDevice->device, sem, nullptr);
+                    logicalDevice->vkd.DestroySemaphore(logicalDevice->device, sem, nullptr);
             }
             overlaySemaphores.clear();
 
@@ -90,7 +90,7 @@ namespace VKIntox
             for (VkFence f : effectSubmitFences)
             {
                 if (f != VK_NULL_HANDLE)
-                    pLogicalDevice->vkd.DestroyFence(pLogicalDevice->device, f, nullptr);
+                    logicalDevice->vkd.DestroyFence(logicalDevice->device, f, nullptr);
             }
             effectSubmitFences.clear();
 
@@ -99,7 +99,7 @@ namespace VKIntox
             // Destroy image views for overlay
             for (auto& view : imageViews)
             {
-                pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, view, nullptr);
+                logicalDevice->vkd.DestroyImageView(logicalDevice->device, view, nullptr);
             }
             imageViews.clear();
 

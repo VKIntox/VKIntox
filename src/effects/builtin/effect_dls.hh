@@ -17,12 +17,12 @@ namespace VKIntox
     class DlsEffect : public SimpleEffect
     {
     public:
-        DlsEffect(LogicalDevice*       pLogicalDevice,
+        DlsEffect(LogicalDevice*       logicalDevice,
                   VkFormat             format,
                   VkExtent2D           imageExtent,
                   std::vector<VkImage> inputImages,
                   std::vector<VkImage> outputImages,
-                  Config*              pConfig);
+                  Config*              config);
         ~DlsEffect();
     };
 } // namespace VKIntox

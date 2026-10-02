@@ -6,7 +6,7 @@
 
 namespace VKIntox
 {
-    std::vector<VkImage> createFakeSwapchainImages(LogicalDevice*               pLogicalDevice,
+    std::vector<VkImage> createFakeSwapchainImages(LogicalDevice*               logicalDevice,
                                                    VkSwapchainCreateInfoKHR     swapchainCreateInfo,
                                                    uint32_t                    count,
                                                    std::vector<VkDeviceMemory>& deviceMemories)
@@ -56,30 +56,30 @@ namespace VKIntox
         VkResult result;
         for (uint32_t i = 0; i < count; i++)
         {
-            result = pLogicalDevice->vkd.CreateImage(pLogicalDevice->device, &imageCreateInfo, nullptr, &(fakeImages[i]));
+            result = logicalDevice->vkd.CreateImage(logicalDevice->device, &imageCreateInfo, nullptr, &(fakeImages[i]));
             if (result != VK_SUCCESS)
             {
                 Logger::err("createFakeSwapchainImages: CreateImage[" + std::to_string(i) + "] failed: " + std::to_string(result));
                 for (VkImage img : fakeImages)
                     if (img != VK_NULL_HANDLE)
-                        pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, img, nullptr);
+                        logicalDevice->vkd.DestroyImage(logicalDevice->device, img, nullptr);
                 return {};
             }
         }
 
         // Get memory requirements from first image
         VkMemoryRequirements memoryRequirements;
-        pLogicalDevice->vkd.GetImageMemoryRequirements(pLogicalDevice->device, fakeImages[0], &memoryRequirements);
+        logicalDevice->vkd.GetImageMemoryRequirements(logicalDevice->device, fakeImages[0], &memoryRequirements);
 
         Logger::debug("fake image size: " + std::to_string(memoryRequirements.size));
         Logger::debug("fake image alignment: " + std::to_string(memoryRequirements.alignment));
 
-        auto memoryTypeIndex = findMemoryTypeIndex(pLogicalDevice, memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        auto memoryTypeIndex = findMemoryTypeIndex(logicalDevice, memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         if (memoryTypeIndex == 0xFFFFFFFF)
         {
             Logger::err("createFakeSwapchainImages: no valid memory type");
             for (VkImage img : fakeImages)
-                pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, img, nullptr);
+                logicalDevice->vkd.DestroyImage(logicalDevice->device, img, nullptr);
             return {};
         }
 
@@ -97,7 +97,7 @@ namespace VKIntox
         allocInfo.memoryTypeIndex  = memoryTypeIndex;
 
         VkDeviceMemory bulkMemory = VK_NULL_HANDLE;
-        result = pLogicalDevice->vkd.AllocateMemory(pLogicalDevice->device, &allocInfo, nullptr, &bulkMemory);
+        result = logicalDevice->vkd.AllocateMemory(logicalDevice->device, &allocInfo, nullptr, &bulkMemory);
 
         if (result == VK_SUCCESS)
         {
@@ -106,7 +106,7 @@ namespace VKIntox
             bool bindOk = true;
             for (uint32_t i = 0; i < count; i++)
             {
-                result = pLogicalDevice->vkd.BindImageMemory(pLogicalDevice->device, fakeImages[i], bulkMemory, alignedSize * i);
+                result = logicalDevice->vkd.BindImageMemory(logicalDevice->device, fakeImages[i], bulkMemory, alignedSize * i);
                 if (result != VK_SUCCESS)
                 {
                     Logger::err("createFakeSwapchainImages: BindImageMemory[" + std::to_string(i) + "] failed: " + std::to_string(result));
@@ -121,7 +121,7 @@ namespace VKIntox
                 return fakeImages;
             }
 
-            pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, bulkMemory, nullptr);
+            logicalDevice->vkd.FreeMemory(logicalDevice->device, bulkMemory, nullptr);
         }
         else
         {
@@ -139,7 +139,7 @@ namespace VKIntox
         for (uint32_t i = 0; i < count; i++)
         {
             VkDeviceMemory imgMem = VK_NULL_HANDLE;
-            result = pLogicalDevice->vkd.AllocateMemory(pLogicalDevice->device, &allocInfo, nullptr, &imgMem);
+            result = logicalDevice->vkd.AllocateMemory(logicalDevice->device, &allocInfo, nullptr, &imgMem);
             if (result != VK_SUCCESS)
             {
                 Logger::err("createFakeSwapchainImages: per-image AllocateMemory[" + std::to_string(i)
@@ -153,18 +153,18 @@ namespace VKIntox
                 // have one: it turns a clean "could not allocate" into a crash
                 // or a corrupted heap.
                 for (VkImage img : fakeImages)
-                    pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, img, nullptr);
+                    logicalDevice->vkd.DestroyImage(logicalDevice->device, img, nullptr);
                 for (VkDeviceMemory m : deviceMemories)
-                    pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, m, nullptr);
+                    logicalDevice->vkd.FreeMemory(logicalDevice->device, m, nullptr);
                 return {};
             }
 
-            result = pLogicalDevice->vkd.BindImageMemory(pLogicalDevice->device, fakeImages[i], imgMem, 0);
+            result = logicalDevice->vkd.BindImageMemory(logicalDevice->device, fakeImages[i], imgMem, 0);
             if (result != VK_SUCCESS)
             {
                 Logger::err("createFakeSwapchainImages: per-image BindImageMemory[" + std::to_string(i)
                              + "] failed: " + std::to_string(result));
-                pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, imgMem, nullptr);
+                logicalDevice->vkd.FreeMemory(logicalDevice->device, imgMem, nullptr);
                 // Images before their memory, in this rollback and the two
                 // below it. Freeing the allocation first returns it to the
                 // driver while the image bound to it is still alive, and
@@ -173,9 +173,9 @@ namespace VKIntox
                 // have one: it turns a clean "could not allocate" into a crash
                 // or a corrupted heap.
                 for (VkImage img : fakeImages)
-                    pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, img, nullptr);
+                    logicalDevice->vkd.DestroyImage(logicalDevice->device, img, nullptr);
                 for (VkDeviceMemory m : deviceMemories)
-                    pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, m, nullptr);
+                    logicalDevice->vkd.FreeMemory(logicalDevice->device, m, nullptr);
                 return {};
             }
 

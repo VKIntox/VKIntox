@@ -2,7 +2,7 @@
 
 namespace VKIntox
 {
-    std::vector<VkImageView> createImageViews(LogicalDevice*       pLogicalDevice,
+    std::vector<VkImageView> createImageViews(LogicalDevice*       logicalDevice,
                                               VkFormat             format,
                                               const std::vector<VkImage>& images,
                                               VkImageViewType      viewType,
@@ -33,21 +33,21 @@ namespace VKIntox
         for (uint32_t i = 0; i < images.size(); i++)
         {
             imageViewCreateInfo.image = images[i];
-            VkResult result           = pLogicalDevice->vkd.CreateImageView(pLogicalDevice->device, &imageViewCreateInfo, nullptr, &(imageViews[i]));
+            VkResult result           = logicalDevice->vkd.CreateImageView(logicalDevice->device, &imageViewCreateInfo, nullptr, &(imageViews[i]));
             ASSERT_VULKAN_VAL(result, {})
         }
 
         return imageViews;
     }
 
-    VkImageView createSingleImageView(LogicalDevice*     pLogicalDevice,
+    VkImageView createSingleImageView(LogicalDevice*     logicalDevice,
                                       VkFormat           format,
                                       VkImage            image,
                                       VkImageViewType    viewType,
                                       VkImageAspectFlags aspectMask,
                                       uint32_t           mipLevels)
     {
-        std::vector<VkImageView> imageViews = createImageViews(pLogicalDevice, format, std::vector<VkImage>{image}, viewType, aspectMask, mipLevels);
+        std::vector<VkImageView> imageViews = createImageViews(logicalDevice, format, std::vector<VkImage>{image}, viewType, aspectMask, mipLevels);
         if (imageViews.empty())
             return VK_NULL_HANDLE;
         return imageViews[0];

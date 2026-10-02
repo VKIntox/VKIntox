@@ -15,16 +15,16 @@
 
 namespace VKIntox
 {
-    FxaaEffect::FxaaEffect(LogicalDevice*       pLogicalDevice,
+    FxaaEffect::FxaaEffect(LogicalDevice*       logicalDevice,
                            VkFormat             format,
                            VkExtent2D           imageExtent,
                            std::vector<VkImage> inputImages,
                            std::vector<VkImage> outputImages,
-                           Config*              pConfig)
+                           Config*              config)
     {
-        float fxaaQualitySubpix           = pConfig->getOption<float>("fxaaQualitySubpix", 0.75f);
-        float fxaaQualityEdgeThreshold    = pConfig->getOption<float>("fxaaQualityEdgeThreshold", 0.125f);
-        float fxaaQualityEdgeThresholdMin = pConfig->getOption<float>("fxaaQualityEdgeThresholdMin", 0.0312f);
+        float fxaaQualitySubpix           = config->getOption<float>("fxaaQualitySubpix", 0.75f);
+        float fxaaQualityEdgeThreshold    = config->getOption<float>("fxaaQualityEdgeThreshold", 0.125f);
+        float fxaaQualityEdgeThresholdMin = config->getOption<float>("fxaaQualityEdgeThresholdMin", 0.0312f);
 
         vertexCode   = full_screen_triangle_vert;
         fragmentCode = fxaa_frag;
@@ -46,10 +46,10 @@ namespace VKIntox
         fragmentSpecializationInfo.dataSize      = sizeof(float) * specData.size();
         fragmentSpecializationInfo.pData         = specData.data();
 
-        pVertexSpecInfo   = nullptr;
-        pFragmentSpecInfo = &fragmentSpecializationInfo;
+        vertexSpecInfo   = nullptr;
+        fragmentSpecInfo = &fragmentSpecializationInfo;
 
-        init(pLogicalDevice, format, imageExtent, inputImages, outputImages, pConfig);
+        init(logicalDevice, format, imageExtent, inputImages, outputImages, config);
     }
     FxaaEffect::~FxaaEffect()
     {

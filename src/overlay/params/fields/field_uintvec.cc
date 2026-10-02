@@ -46,11 +46,11 @@ namespace VKIntox
             {
                 if (ImGui::MenuItem("Enter Custom Value..."))
                 {
-                    m_activeModalParam = paramAddr;
+                    activeModalParam = paramAddr;
                     formatValues(p);
-                    m_popupPosition = ImGui::GetMousePos();
-                    m_focusCustomValueInput = true;
-                    m_modalOpenRequested = true;
+                    popupPosition = ImGui::GetMousePos();
+                    focusCustomValueInput = true;
+                    modalOpenRequested = true;
                 }
                 if (ImGui::MenuItem("Reset to default"))
                 {
@@ -62,20 +62,20 @@ namespace VKIntox
 
             bool popupOpenedThisFrame = false;
             // === Deferred modal opening ===
-            if (m_modalOpenRequested && m_activeModalParam == paramAddr)
+            if (modalOpenRequested && activeModalParam == paramAddr)
             {
-                m_modalOpenRequested = false;
+                modalOpenRequested = false;
                 const ImGuiViewport* viewport = ImGui::GetMainViewport();
                 const ImVec2 popupSize = ImVec2(380.0f, 190.0f);
                 ImGui::SetNextWindowPos(customValuePopupPosition(
-                    m_popupPosition, viewport->Pos, viewport->Size, popupSize), ImGuiCond_Appearing);
+                    popupPosition, viewport->Pos, viewport->Size, popupSize), ImGuiCond_Appearing);
                 ImGui::SetNextWindowSize(popupSize, ImGuiCond_Appearing);
                 ImGui::OpenPopup(modalId);
                 popupOpenedThisFrame = true;
             }
 
             // === Render custom value popup ===
-            if (m_activeModalParam == paramAddr &&
+            if (activeModalParam == paramAddr &&
                 !popupOpenedThisFrame && ImGui::BeginPopup(modalId))
             {
                 ImGui::Text("Custom values: %s", p.label.c_str());
@@ -86,13 +86,13 @@ namespace VKIntox
                 ImGui::Spacing();
 
                 ImGui::SetNextItemWidth(280.0f);
-                if (m_focusCustomValueInput)
+                if (focusCustomValueInput)
                 {
                     ImGui::SetKeyboardFocusHere();
-                    m_focusCustomValueInput = false;
+                    focusCustomValueInput = false;
                 }
-                bool submit = ImGui::InputText(inputId, m_customValueBuf,
-                    sizeof(m_customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                bool submit = ImGui::InputText(inputId, customValueBuf,
+                    sizeof(customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue);
 
                 ImGui::Spacing();
                 bool ok = ImGui::Button("OK", ImVec2(100, 0));
@@ -103,13 +103,13 @@ namespace VKIntox
                 {
                     changed |= parseAndApply(p);
                     ImGui::CloseCurrentPopup();
-                    m_activeModalParam = nullptr;
+                    activeModalParam = nullptr;
                 }
 
                 if (cancel || ImGui::IsKeyPressed(ImGuiKey_Escape))
                 {
                     ImGui::CloseCurrentPopup();
-                    m_activeModalParam = nullptr;
+                    activeModalParam = nullptr;
                 }
 
                 ImGui::EndPopup();
@@ -129,20 +129,20 @@ namespace VKIntox
             switch (p.componentCount)
             {
                 case 2:
-                    snprintf(m_customValueBuf, sizeof(m_customValueBuf),
+                    snprintf(customValueBuf, sizeof(customValueBuf),
                         "%u, %u", p.value[0], p.value[1]);
                     break;
                 case 3:
-                    snprintf(m_customValueBuf, sizeof(m_customValueBuf),
+                    snprintf(customValueBuf, sizeof(customValueBuf),
                         "%u, %u, %u", p.value[0], p.value[1], p.value[2]);
                     break;
                 case 4:
-                    snprintf(m_customValueBuf, sizeof(m_customValueBuf),
+                    snprintf(customValueBuf, sizeof(customValueBuf),
                         "%u, %u, %u, %u",
                         p.value[0], p.value[1], p.value[2], p.value[3]);
                     break;
                 default:
-                    snprintf(m_customValueBuf, sizeof(m_customValueBuf), "%u", p.value[0]);
+                    snprintf(customValueBuf, sizeof(customValueBuf), "%u", p.value[0]);
                     break;
             }
         }
@@ -150,7 +150,7 @@ namespace VKIntox
         bool parseAndApply(UintVecParam& p)
         {
             unsigned int vals[4] = { p.value[0], p.value[1], p.value[2], p.value[3] };
-            int count = sscanf(m_customValueBuf, "%u, %u, %u, %u",
+            int count = sscanf(customValueBuf, "%u, %u, %u, %u",
                 &vals[0], &vals[1], &vals[2], &vals[3]);
 
             if (count >= static_cast<int>(p.componentCount))
@@ -163,11 +163,11 @@ namespace VKIntox
         }
 
         static constexpr size_t BUF_SIZE = 256;
-        char m_customValueBuf[BUF_SIZE] = "";
-        const void* m_activeModalParam = nullptr;
-        bool m_modalOpenRequested = false;
-        bool m_focusCustomValueInput = false;
-        ImVec2 m_popupPosition = ImVec2(0.0f, 0.0f);
+        char customValueBuf[BUF_SIZE] = "";
+        const void* activeModalParam = nullptr;
+        bool modalOpenRequested = false;
+        bool focusCustomValueInput = false;
+        ImVec2 popupPosition = ImVec2(0.0f, 0.0f);
     };
 
     REGISTER_FIELD_EDITOR(ParamType::UintVec, UintVecFieldEditor)

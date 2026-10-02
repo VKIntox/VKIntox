@@ -12,21 +12,21 @@ namespace VKIntox
 {
     struct LogicalSwapchain;
 
-    std::vector<VkCommandBuffer> allocateCommandBuffer(LogicalDevice* pLogicalDevice, uint32_t count);
+    std::vector<VkCommandBuffer> allocateCommandBuffer(LogicalDevice* logicalDevice, uint32_t count);
 
-    void writeCommandBuffers(LogicalDevice*                                 pLogicalDevice,
-                             LogicalSwapchain*                              pLogicalSwapchain,
+    void writeCommandBuffers(LogicalDevice*                                 logicalDevice,
+                             LogicalSwapchain*                              logicalSwapchain,
                              std::vector<std::shared_ptr<VKIntox::Effect>> effects,
                              std::vector<VkCommandBuffer>                   commandBuffers,
                              const DepthState&                              depthState);
 
-    void recordDepthResolveSnapshot(LogicalDevice*            pLogicalDevice,
-                                    LogicalSwapchain*         pLogicalSwapchain,
+    void recordDepthResolveSnapshot(LogicalDevice*            logicalDevice,
+                                    LogicalSwapchain*         logicalSwapchain,
                                     VkCommandBuffer           commandBuffer,
                                     uint32_t                  imageIndex,
                                     const DepthState&         depthState);
 
-    std::vector<VkSemaphore> createSemaphores(LogicalDevice* pLogicalDevice, uint32_t count);
+    std::vector<VkSemaphore> createSemaphores(LogicalDevice* logicalDevice, uint32_t count);
 } // namespace VKIntox
 
 #endif // COMMAND_BUFFER_HPP_INCLUDED

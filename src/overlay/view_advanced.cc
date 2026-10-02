@@ -77,16 +77,16 @@ namespace VKIntox
 
     void ImGuiOverlay::gatherDepthInfo()
     {
-        if (!pLogicalDevice)
+        if (!logicalDevice)
             return;
 
         std::lock_guard<std::mutex> l(globalLock);
 
-        depthInfo.supportedResolveModes = pLogicalDevice->supportedDepthResolveModes;
+        depthInfo.supportedResolveModes = logicalDevice->supportedDepthResolveModes;
         depthInfo.depthCaptureEnabled   = settingsManager.getDepthCapture();
 
         const int modePref = settingsManager.getDepthResolveMode();
-        const bool avgSupported = (pLogicalDevice->supportedDepthResolveModes & VK_RESOLVE_MODE_AVERAGE_BIT) != 0;
+        const bool avgSupported = (logicalDevice->supportedDepthResolveModes & VK_RESOLVE_MODE_AVERAGE_BIT) != 0;
         if (modePref == 2 && avgSupported)
             depthInfo.depthResolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
         else
@@ -95,13 +95,13 @@ namespace VKIntox
         // Snapshot pin state from the device.  If the pinned view was destroyed
         // by the render thread since last frame, clear the stale pin here so the
         // UI immediately falls back to auto instead of showing a ghost pin.
-        depthInfo.pinnedView = pLogicalDevice->pinnedDepthImageView;
+        depthInfo.pinnedView = logicalDevice->pinnedDepthImageView;
         depthInfo.depthIsPinned = (depthInfo.pinnedView != VK_NULL_HANDLE);
 
         if (depthInfo.depthIsPinned)
         {
-            auto it = pLogicalDevice->depthViewStates.find(depthInfo.pinnedView);
-            if (it != pLogicalDevice->depthViewStates.end())
+            auto it = logicalDevice->depthViewStates.find(depthInfo.pinnedView);
+            if (it != logicalDevice->depthViewStates.end())
             {
                 // Pinned view is still valid — show it as the active buffer.
                 const DepthState& pinned = it->second;
@@ -111,13 +111,13 @@ namespace VKIntox
                 depthInfo.active.samples         = pinned.samples;
                 depthInfo.active.observedLayout  = pinned.observedLayout;
                 depthInfo.active.transient       = pinned.transient;
-                depthInfo.active.drawCount = pLogicalDevice->bestDepthCandidate.valid
-                                              && pLogicalDevice->bestDepthCandidate.depthState.imageView == pinned.imageView
-                                              ? pLogicalDevice->bestDepthCandidate.drawCount : 0;
+                depthInfo.active.drawCount = logicalDevice->bestDepthCandidate.valid
+                                              && logicalDevice->bestDepthCandidate.depthState.imageView == pinned.imageView
+                                              ? logicalDevice->bestDepthCandidate.drawCount : 0;
                 depthInfo.active.hasPresentableSnapshotTarget =
-                    pLogicalDevice->bestDepthCandidate.valid
-                    && pLogicalDevice->bestDepthCandidate.depthState.imageView == pinned.imageView
-                    ? pLogicalDevice->bestDepthCandidate.hasPresentableSnapshotTarget : false;
+                    logicalDevice->bestDepthCandidate.valid
+                    && logicalDevice->bestDepthCandidate.depthState.imageView == pinned.imageView
+                    ? logicalDevice->bestDepthCandidate.hasPresentableSnapshotTarget : false;
             }
             else
             {
@@ -125,7 +125,7 @@ namespace VKIntox
                 // so we fall back to auto.  getDepthState() in vkintox.cpp does the
                 // same check, but we need it here too so the UI is consistent.
                 Logger::debug("gatherDepthInfo: pinned view no longer tracked, clearing stale pin");
-                pLogicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+                logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
                 depthInfo.depthIsPinned = false;
                 depthInfo.pinnedView    = VK_NULL_HANDLE;
                 // Don't set active here — fall through to the auto path below.
@@ -135,23 +135,23 @@ namespace VKIntox
         // Auto path (also handles the case where the pin was just cleared above).
         if (!depthInfo.depthIsPinned)
         {
-            const DepthState& active = pLogicalDevice->activeDepthState;
+            const DepthState& active = logicalDevice->activeDepthState;
             depthInfo.active.imageView       = active.imageView;
             depthInfo.active.format          = active.format;
             depthInfo.active.extent          = active.extent;
             depthInfo.active.samples         = active.samples;
             depthInfo.active.observedLayout  = active.observedLayout;
             depthInfo.active.transient       = active.transient;
-            depthInfo.active.drawCount       = pLogicalDevice->bestDepthCandidate.valid
-                                                 ? pLogicalDevice->bestDepthCandidate.drawCount : 0;
+            depthInfo.active.drawCount       = logicalDevice->bestDepthCandidate.valid
+                                                 ? logicalDevice->bestDepthCandidate.drawCount : 0;
             depthInfo.active.hasPresentableSnapshotTarget =
-                pLogicalDevice->bestDepthCandidate.hasPresentableSnapshotTarget;
+                logicalDevice->bestDepthCandidate.hasPresentableSnapshotTarget;
         }
         depthInfo.depthResolveIsMsaa = depthInfo.active.samples != VK_SAMPLE_COUNT_1_BIT;
 
         // Populate candidate list from all tracked depth views.
         depthInfo.candidates.clear();
-        for (const auto& [view, ds] : pLogicalDevice->depthViewStates)
+        for (const auto& [view, ds] : logicalDevice->depthViewStates)
         {
             DepthCandidateInfo c;
             c.imageView      = view;
@@ -160,12 +160,12 @@ namespace VKIntox
             c.samples        = ds.samples;
             c.observedLayout = ds.observedLayout;
             c.transient      = ds.transient;
-            if (pLogicalDevice->bestDepthCandidate.valid &&
-                pLogicalDevice->bestDepthCandidate.depthState.imageView == view)
+            if (logicalDevice->bestDepthCandidate.valid &&
+                logicalDevice->bestDepthCandidate.depthState.imageView == view)
             {
-                c.drawCount = pLogicalDevice->bestDepthCandidate.drawCount;
+                c.drawCount = logicalDevice->bestDepthCandidate.drawCount;
                 c.hasPresentableSnapshotTarget =
-                    pLogicalDevice->bestDepthCandidate.hasPresentableSnapshotTarget;
+                    logicalDevice->bestDepthCandidate.hasPresentableSnapshotTarget;
             }
             depthInfo.candidates.push_back(c);
         }
@@ -178,22 +178,22 @@ namespace VKIntox
 
     void ImGuiOverlay::applyDepthPinRequests()
     {
-        if (!pLogicalDevice)
+        if (!logicalDevice)
             return;
 
         if (depthPinPendingView != VK_NULL_HANDLE)
         {
             std::lock_guard<std::mutex> l(globalLock);
-            auto it = pLogicalDevice->depthViewStates.find(depthPinPendingView);
-            if (it != pLogicalDevice->depthViewStates.end())
+            auto it = logicalDevice->depthViewStates.find(depthPinPendingView);
+            if (it != logicalDevice->depthViewStates.end())
             {
-                pLogicalDevice->pinnedDepthImageView = depthPinPendingView;
+                logicalDevice->pinnedDepthImageView = depthPinPendingView;
                 Logger::info("depth manual pin set to view 0x" +
                     std::to_string(reinterpret_cast<uintptr_t>(depthPinPendingView)));
                 depthPinChanged = true;
                 // Force deferred realloc so descriptor sets + MSAA framebuffers
                 // get rebuilt for the new depth source view.
-                pLogicalDevice->depthReallocPending = true;
+                logicalDevice->depthReallocPending = true;
             }
             else
             {
@@ -205,11 +205,11 @@ namespace VKIntox
         if (depthPinPendingClear)
         {
             std::lock_guard<std::mutex> l(globalLock);
-            pLogicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+            logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
             depthPinPendingClear = false;
             depthPinChanged = true;
             // Same: force realloc so we stop using the just-unpinned view.
-            pLogicalDevice->depthReallocPending = true;
+            logicalDevice->depthReallocPending = true;
             Logger::info("depth manual pin cleared (back to auto-promotion)");
         }
     }
@@ -586,9 +586,9 @@ namespace VKIntox
         if (ImGui::Button("Force Re-detect"))
         {
             std::lock_guard<std::mutex> l(globalLock);
-            pLogicalDevice->activeDepthState    = DepthState{};
-            pLogicalDevice->bestDepthCandidate  = LogicalDevice::DepthCandidateTrackingState{};
-            pLogicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+            logicalDevice->activeDepthState    = DepthState{};
+            logicalDevice->bestDepthCandidate  = LogicalDevice::DepthCandidateTrackingState{};
+            logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
             depthPinChanged = true;
             Logger::info("depth re-detect requested from Advanced UI");
         }

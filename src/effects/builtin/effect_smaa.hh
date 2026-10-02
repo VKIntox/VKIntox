@@ -20,12 +20,12 @@ namespace VKIntox
     class SmaaEffect : public Effect
     {
     public:
-        SmaaEffect(LogicalDevice*       pLogicalDevice,
+        SmaaEffect(LogicalDevice*       logicalDevice,
                    VkFormat             format,
                    VkExtent2D           imageExtent,
                    std::vector<VkImage> inputImages,
                    std::vector<VkImage> outputImages,
-                   Config*              pConfig);
+                   Config*              config);
         void applyEffect(uint32_t imageIndex, VkCommandBuffer commandBuffer) override;
         ~SmaaEffect();
 
@@ -33,7 +33,7 @@ namespace VKIntox
         // Vulkan handles default to VK_NULL_HANDLE so a partially constructed
         // effect still hands well-defined null handles to the destroy calls in
         // ~SmaaEffect. Matches the null-guard discipline in SimpleEffect/LutEffect.
-        LogicalDevice*               pLogicalDevice = nullptr;
+        LogicalDevice*               logicalDevice = nullptr;
         std::vector<VkImage>         inputImages;
         std::vector<VkImage>         edgeImages;
         std::vector<VkImage>         blendImages;
@@ -71,7 +71,7 @@ namespace VKIntox
         VkDeviceMemory               searchMemory                    = VK_NULL_HANDLE;
         VkSampler                    sampler                         = VK_NULL_HANDLE;
 
-        Config* pConfig = nullptr;
+        Config* config = nullptr;
     };
 } // namespace VKIntox
 

@@ -18,12 +18,12 @@ namespace VKIntox
     class DebandEffect : public SimpleEffect
     {
     public:
-        DebandEffect(LogicalDevice*       pLogicalDevice,
+        DebandEffect(LogicalDevice*       logicalDevice,
                      VkFormat             format,
                      VkExtent2D           imageExtent,
                      std::vector<VkImage> inputImages,
                      std::vector<VkImage> outputImages,
-                     Config*              pConfig);
+                     Config*              config);
         ~DebandEffect();
     };
 } // namespace VKIntox

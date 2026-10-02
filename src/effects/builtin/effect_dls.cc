@@ -15,15 +15,15 @@
 
 namespace VKIntox
 {
-    DlsEffect::DlsEffect(LogicalDevice*       pLogicalDevice,
+    DlsEffect::DlsEffect(LogicalDevice*       logicalDevice,
                          VkFormat             format,
                          VkExtent2D           imageExtent,
                          std::vector<VkImage> inputImages,
                          std::vector<VkImage> outputImages,
-                         Config*              pConfig)
+                         Config*              config)
     {
-        float sharpness = pConfig->getOption<float>("dlsSharpness", 0.5f);
-        float denoise   = pConfig->getOption<float>("dlsDenoise", 0.17f);
+        float sharpness = config->getOption<float>("dlsSharpness", 0.5f);
+        float denoise   = config->getOption<float>("dlsDenoise", 0.17f);
 
         float specData[2] = {sharpness, denoise};
 
@@ -44,10 +44,10 @@ namespace VKIntox
         fragmentSpecializationInfo.dataSize      = sizeof(float) * 2;
         fragmentSpecializationInfo.pData         = specData;
 
-        pVertexSpecInfo   = nullptr;
-        pFragmentSpecInfo = &fragmentSpecializationInfo;
+        vertexSpecInfo   = nullptr;
+        fragmentSpecInfo = &fragmentSpecializationInfo;
 
-        init(pLogicalDevice, format, imageExtent, inputImages, outputImages, pConfig);
+        init(logicalDevice, format, imageExtent, inputImages, outputImages, config);
     }
     DlsEffect::~DlsEffect()
     {

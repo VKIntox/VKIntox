@@ -5,7 +5,7 @@
 
 namespace VKIntox
 {
-    void createShaderModule(LogicalDevice* pLogicalDevice, const std::vector<char>& code, VkShaderModule* shaderModule)
+    void createShaderModule(LogicalDevice* logicalDevice, const std::vector<char>& code, VkShaderModule* shaderModule)
     {
         VkShaderModuleCreateInfo shaderCreateInfo;
 
@@ -15,11 +15,11 @@ namespace VKIntox
         shaderCreateInfo.codeSize = code.size();
         shaderCreateInfo.pCode    = (uint32_t*) code.data();
 
-        VkResult result = pLogicalDevice->vkd.CreateShaderModule(pLogicalDevice->device, &shaderCreateInfo, nullptr, shaderModule);
+        VkResult result = logicalDevice->vkd.CreateShaderModule(logicalDevice->device, &shaderCreateInfo, nullptr, shaderModule);
         ASSERT_VULKAN(result);
     }
 
-    void createShaderModule(LogicalDevice* pLogicalDevice, const std::vector<uint32_t>& code, VkShaderModule* shaderModule)
+    void createShaderModule(LogicalDevice* logicalDevice, const std::vector<uint32_t>& code, VkShaderModule* shaderModule)
     {
         VkShaderModuleCreateInfo shaderCreateInfo;
 
@@ -29,7 +29,7 @@ namespace VKIntox
         shaderCreateInfo.codeSize = code.size() * sizeof(uint32_t);
         shaderCreateInfo.pCode    = code.data();
 
-        VkResult result = pLogicalDevice->vkd.CreateShaderModule(pLogicalDevice->device, &shaderCreateInfo, nullptr, shaderModule);
+        VkResult result = logicalDevice->vkd.CreateShaderModule(logicalDevice->device, &shaderCreateInfo, nullptr, shaderModule);
         ASSERT_VULKAN(result);
     }
 } // namespace VKIntox

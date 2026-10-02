@@ -24,11 +24,11 @@ namespace VKIntox
     // Parse a ReShade .fx file and extract its parameters without creating Vulkan resources.
     // effectName: display name for the effect (used in EffectParam.effectName)
     // effectPath: full path to the .fx file
-    // pConfig: config for getting includePath and current param values
+    // config: config for getting includePath and current param values
     std::vector<std::unique_ptr<EffectParam>> parseReshadeEffect(
         const std::string& effectName,
         const std::string& effectPath,
-        Config* pConfig,
+        Config* config,
         std::vector<std::string>* techniqueNames = nullptr);
 
     // Test a ReShade .fx shader for compilation errors without creating Vulkan resources.

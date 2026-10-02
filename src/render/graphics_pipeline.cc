@@ -2,7 +2,7 @@
 
 namespace VKIntox
 {
-    VkPipelineLayout createGraphicsPipelineLayout(LogicalDevice* pLogicalDevice, 
+    VkPipelineLayout createGraphicsPipelineLayout(LogicalDevice* logicalDevice, 
                                                    std::vector<VkDescriptorSetLayout> descriptorSetLayouts,
                                                    std::vector<VkPushConstantRange> pushConstantRanges)
     {
@@ -16,12 +16,12 @@ namespace VKIntox
         pipelineLayoutCreateInfo.pPushConstantRanges    = pushConstantRanges.empty() ? nullptr : pushConstantRanges.data();
 
         VkPipelineLayout pipelineLayout;
-        VkResult result = pLogicalDevice->vkd.CreatePipelineLayout(pLogicalDevice->device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayout);
+        VkResult result = logicalDevice->vkd.CreatePipelineLayout(logicalDevice->device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayout);
         ASSERT_VULKAN_VAL(result, VK_NULL_HANDLE);
         return pipelineLayout;
     }
 
-    VkPipeline createGraphicsPipeline(LogicalDevice*        pLogicalDevice,
+    VkPipeline createGraphicsPipeline(LogicalDevice*        logicalDevice,
                                       VkShaderModule        vertexModule,
                                       VkSpecializationInfo* vertexSpecializationInfo,
                                       std::string           vertexEntryPoint,
@@ -176,7 +176,7 @@ namespace VKIntox
         pipelineCreateInfo.basePipelineHandle  = VK_NULL_HANDLE;
         pipelineCreateInfo.basePipelineIndex   = -1;
 
-        result = pLogicalDevice->vkd.CreateGraphicsPipelines(pLogicalDevice->device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline);
+        result = logicalDevice->vkd.CreateGraphicsPipelines(logicalDevice->device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline);
         ASSERT_VULKAN_VAL(result, VK_NULL_HANDLE);
 
         return pipeline;

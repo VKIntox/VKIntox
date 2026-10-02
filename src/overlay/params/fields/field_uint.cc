@@ -43,11 +43,11 @@ namespace VKIntox
             {
                 if (ImGui::MenuItem("Enter Custom Value..."))
                 {
-                    m_activeModalParam = paramAddr;
-                    snprintf(m_customValueBuf, sizeof(m_customValueBuf), "%u", p.value);
-                    m_popupPosition = ImGui::GetMousePos();
-                    m_focusCustomValueInput = true;
-                    m_modalOpenRequested = true;
+                    activeModalParam = paramAddr;
+                    snprintf(customValueBuf, sizeof(customValueBuf), "%u", p.value);
+                    popupPosition = ImGui::GetMousePos();
+                    focusCustomValueInput = true;
+                    modalOpenRequested = true;
                 }
                 if (ImGui::MenuItem("Reset to default"))
                 {
@@ -59,20 +59,20 @@ namespace VKIntox
 
             bool popupOpenedThisFrame = false;
             // === Deferred modal opening ===
-            if (m_modalOpenRequested && m_activeModalParam == paramAddr)
+            if (modalOpenRequested && activeModalParam == paramAddr)
             {
-                m_modalOpenRequested = false;
+                modalOpenRequested = false;
                 const ImGuiViewport* viewport = ImGui::GetMainViewport();
                 const ImVec2 popupSize = ImVec2(320.0f, 190.0f);
                 ImGui::SetNextWindowPos(customValuePopupPosition(
-                    m_popupPosition, viewport->Pos, viewport->Size, popupSize), ImGuiCond_Appearing);
+                    popupPosition, viewport->Pos, viewport->Size, popupSize), ImGuiCond_Appearing);
                 ImGui::SetNextWindowSize(popupSize, ImGuiCond_Appearing);
                 ImGui::OpenPopup(modalId);
                 popupOpenedThisFrame = true;
             }
 
             // === Render custom value popup ===
-            if (m_activeModalParam == paramAddr &&
+            if (activeModalParam == paramAddr &&
                 !popupOpenedThisFrame && ImGui::BeginPopup(modalId))
             {
                 ImGui::Text("Custom value: %s", p.label.c_str());
@@ -82,13 +82,13 @@ namespace VKIntox
                 ImGui::Spacing();
 
                 ImGui::SetNextItemWidth(220.0f);
-                if (m_focusCustomValueInput)
+                if (focusCustomValueInput)
                 {
                     ImGui::SetKeyboardFocusHere();
-                    m_focusCustomValueInput = false;
+                    focusCustomValueInput = false;
                 }
-                bool submit = ImGui::InputText(inputId, m_customValueBuf,
-                    sizeof(m_customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                bool submit = ImGui::InputText(inputId, customValueBuf,
+                    sizeof(customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue);
 
                 ImGui::Spacing();
                 bool ok = ImGui::Button("OK", ImVec2(100, 0));
@@ -98,19 +98,19 @@ namespace VKIntox
                 if (submit || ok)
                 {
                     unsigned int newVal;
-                    if (sscanf(m_customValueBuf, "%u", &newVal) == 1)
+                    if (sscanf(customValueBuf, "%u", &newVal) == 1)
                     {
                         p.value = newVal;
                         changed = true;
                     }
                     ImGui::CloseCurrentPopup();
-                    m_activeModalParam = nullptr;
+                    activeModalParam = nullptr;
                 }
 
                 if (cancel || ImGui::IsKeyPressed(ImGuiKey_Escape))
                 {
                     ImGui::CloseCurrentPopup();
-                    m_activeModalParam = nullptr;
+                    activeModalParam = nullptr;
                 }
 
                 ImGui::EndPopup();
@@ -126,11 +126,11 @@ namespace VKIntox
 
     private:
         static constexpr size_t BUF_SIZE = 128;
-        char m_customValueBuf[BUF_SIZE] = "";
-        const void* m_activeModalParam = nullptr;
-        bool m_modalOpenRequested = false;
-        bool m_focusCustomValueInput = false;
-        ImVec2 m_popupPosition = ImVec2(0.0f, 0.0f);
+        char customValueBuf[BUF_SIZE] = "";
+        const void* activeModalParam = nullptr;
+        bool modalOpenRequested = false;
+        bool focusCustomValueInput = false;
+        ImVec2 popupPosition = ImVec2(0.0f, 0.0f);
     };
 
     REGISTER_FIELD_EDITOR(ParamType::Uint, UintFieldEditor)

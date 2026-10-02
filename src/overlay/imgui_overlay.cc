@@ -133,7 +133,7 @@ namespace VKIntox
     }
 
     ImGuiOverlay::ImGuiOverlay(LogicalDevice* device, VkFormat swapchainFormat, uint32_t imageCount, OverlayPersistentState* persistentState)
-        : pLogicalDevice(device), pPersistentState(persistentState)
+        : logicalDevice(device), pPersistentState(persistentState)
     {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -285,7 +285,7 @@ namespace VKIntox
         if ((profileDirty || paramsDirty) && (!activeProfilePath.empty() || !activeShaderProfilePath.empty()))
             autoSaveProfile();
 
-        pLogicalDevice->vkd.QueueWaitIdle(pLogicalDevice->queue);
+        logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
 
         // Clean up Wayland resources before destroying the event queue
         if (isWayland())
@@ -312,8 +312,8 @@ namespace VKIntox
         // Handing the handles over means the flush at device destroy decides when
         // they actually go, and the handle is still valid when it does.
         auto& queue   = DeferredDestroyQueue::instance();
-        auto  device = pLogicalDevice->device;
-        auto& vkd    = pLogicalDevice->vkd;
+        auto  device = logicalDevice->device;
+        auto& vkd    = logicalDevice->vkd;
 
         const VkDeviceMemory   iconMem = titleIconMemory;
         const VkImage         iconImg = titleIconImage;
@@ -557,36 +557,36 @@ namespace VKIntox
     {
         state = std::move(newState);
 
-        if (!pEffectRegistry)
+        if (!effectRegistry)
             return;
 
         // Registry is already initialized from config at swapchain creation
         // Just ensure any newly added effects are in the registry
-        const auto& selectedEffects = pEffectRegistry->getSelectedEffects();
+        const auto& selectedEffects = effectRegistry->getSelectedEffects();
         for (const auto& effectName : selectedEffects)
         {
-            if (!pEffectRegistry->hasEffect(effectName))
-                pEffectRegistry->ensureEffect(effectName);
+            if (!effectRegistry->hasEffect(effectName))
+                effectRegistry->ensureEffect(effectName);
         }
         // No editableParams merging needed - Registry IS the source of truth
     }
 
-    std::vector<std::unique_ptr<EffectParam>> ImGuiOverlay::getModifiedParams()
+    std::vector<std::unique_ptr<EffectParam>> ImGuiOverlay::getModifiedParams() const
     {
-        if (!pEffectRegistry)
+        if (!effectRegistry)
             return {};
-        return pEffectRegistry->getAllParameters();
+        return effectRegistry->getAllParameters();
     }
 
     std::vector<std::string> ImGuiOverlay::getActiveEffects() const
     {
         std::vector<std::string> activeEffects;
-        if (!pEffectRegistry)
+        if (!effectRegistry)
             return activeEffects;
 
-        for (const auto& effectName : pEffectRegistry->getSelectedEffects())
+        for (const auto& effectName : effectRegistry->getSelectedEffects())
         {
-            if (pEffectRegistry->isEffectEnabled(effectName))
+            if (effectRegistry->isEffectEnabled(effectName))
                 activeEffects.push_back(effectName);
         }
         return activeEffects;
@@ -595,7 +595,7 @@ namespace VKIntox
     const std::vector<std::string>& ImGuiOverlay::getSelectedEffects() const
     {
         static std::vector<std::string> empty;
-        return pEffectRegistry ? pEffectRegistry->getSelectedEffects() : empty;
+        return effectRegistry ? effectRegistry->getSelectedEffects() : empty;
     }
 
     void ImGuiOverlay::collectSaveData(
@@ -606,15 +606,15 @@ namespace VKIntox
         std::vector<PreprocessorDefinition>& allDefs,
         std::vector<ConfigParam>& disabledEffectParams)
     {
-        if (!pEffectRegistry)
+        if (!effectRegistry)
             return;
 
-        effects = pEffectRegistry->getSelectedEffects();
+        effects = effectRegistry->getSelectedEffects();
 
         for (const auto& effectName : effects)
         {
-            const bool effectEnabled = pEffectRegistry->isEffectEnabled(effectName);
-            for (auto* p : pEffectRegistry->getParametersForEffect(effectName))
+            const bool effectEnabled = effectRegistry->isEffectEnabled(effectName);
+            for (auto* p : effectRegistry->getParametersForEffect(effectName))
             {
                 if (p->noSave)
                     continue;
@@ -634,19 +634,19 @@ namespace VKIntox
             if (!effectEnabled)
                 disabledEffects.push_back(effectName);
 
-            if (pEffectRegistry->isEffectBuiltIn(effectName))
+            if (effectRegistry->isEffectBuiltIn(effectName))
             {
-                std::string effectType = pEffectRegistry->getEffectType(effectName);
+                std::string effectType = effectRegistry->getEffectType(effectName);
                 if (!effectType.empty())
                     effectPaths[effectName] = effectType;
             }
             else
             {
-                std::string path = pEffectRegistry->getEffectFilePath(effectName);
+                std::string path = effectRegistry->getEffectFilePath(effectName);
                 if (!path.empty())
                     effectPaths[effectName] = path;
 
-                const auto& defs = pEffectRegistry->getPreprocessorDefs(effectName);
+                const auto& defs = effectRegistry->getPreprocessorDefs(effectName);
                 for (const auto& def : defs)
                 {
                     allDefs.push_back(def);
@@ -659,7 +659,7 @@ namespace VKIntox
 
     void ImGuiOverlay::saveCurrentConfig()
     {
-        if (!pEffectRegistry)
+        if (!effectRegistry)
             return;
 
         std::vector<std::string> effects, disabledEffects;
@@ -675,7 +675,7 @@ namespace VKIntox
 
     bool ImGuiOverlay::autoSaveProfile()
     {
-        if (!pEffectRegistry)
+        if (!effectRegistry)
             return false;
         if (activeProfilePath.empty() && activeShaderProfilePath.empty())
             return true;
@@ -705,7 +705,7 @@ namespace VKIntox
         {
             std::vector<ConfigParam> shaderParams = params;
             std::set<std::string> disabledFiles;
-            const auto& allEffects = pEffectRegistry->getAllEffects();
+            const auto& allEffects = effectRegistry->getAllEffects();
             for (const auto& effectName : disabledEffects)
             {
                 const auto effect = std::find_if(allEffects.begin(), allEffects.end(), [&effectName](const EffectConfig& item) {
@@ -742,7 +742,7 @@ namespace VKIntox
                 }), disabledEffectParams.end());
             std::vector<std::string> enabledTechniques;
             std::vector<std::string> techniqueSorting;
-            const auto& selected = pEffectRegistry->getSelectedEffects();
+            const auto& selected = effectRegistry->getSelectedEffects();
             for (const auto& name : selected)
             {
                 auto effect = std::find_if(allEffects.begin(), allEffects.end(), [&name](const EffectConfig& item) {
@@ -755,7 +755,7 @@ namespace VKIntox
                 {
                     const std::string entry = technique + "@" + filename;
                     techniqueSorting.push_back(entry);
-                    if (pEffectRegistry->isEffectEnabled(name))
+                    if (effectRegistry->isEffectEnabled(name))
                         enabledTechniques.push_back(entry);
                 }
             }
@@ -776,10 +776,10 @@ namespace VKIntox
     void ImGuiOverlay::setSelectedEffects(const std::vector<std::string>& effects,
                                           const std::vector<std::string>& disabledEffects)
     {
-        if (!pEffectRegistry)
+        if (!effectRegistry)
             return;
 
-        pEffectRegistry->setSelectedEffects(effects);
+        effectRegistry->setSelectedEffects(effects);
 
         // Build set of disabled effects for quick lookup
         std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());
@@ -788,14 +788,14 @@ namespace VKIntox
         for (const auto& effectName : effects)
         {
             bool enabled = (disabledSet.find(effectName) == disabledSet.end());
-            pEffectRegistry->setEffectEnabled(effectName, enabled);
+            effectRegistry->setEffectEnabled(effectName, enabled);
         }
     }
 
     void ImGuiOverlay::initVulkanBackend(VkFormat swapchainFormat, uint32_t imageCount)
     {
         // Load Vulkan functions for ImGui using VKIntox's dispatch tables
-        bool loaded = ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_3, imguiVulkanLoaderDummy, pLogicalDevice);
+        bool loaded = ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_3, imguiVulkanLoaderDummy, logicalDevice);
         if (!loaded)
         {
             Logger::err("Failed to load Vulkan functions for ImGui");
@@ -815,7 +815,7 @@ namespace VKIntox
         poolInfo.poolSizeCount = 1;
         poolInfo.pPoolSizes = poolSizes;
 
-        VkResult vr = pLogicalDevice->vkd.CreateDescriptorPool(pLogicalDevice->device, &poolInfo, nullptr, &descriptorPool);
+        VkResult vr = logicalDevice->vkd.CreateDescriptorPool(logicalDevice->device, &poolInfo, nullptr, &descriptorPool);
         if (vr != VK_SUCCESS)
         {
             Logger::err("Failed to create ImGui descriptor pool: " + std::to_string(vr));
@@ -877,7 +877,7 @@ namespace VKIntox
         renderPassInfo.dependencyCount = 2;
         renderPassInfo.pDependencies = dependencies;
 
-        vr = pLogicalDevice->vkd.CreateRenderPass(pLogicalDevice->device, &renderPassInfo, nullptr, &renderPass);
+        vr = logicalDevice->vkd.CreateRenderPass(logicalDevice->device, &renderPassInfo, nullptr, &renderPass);
         if (vr != VK_SUCCESS)
         {
             Logger::err("Failed to create ImGui render pass: " + std::to_string(vr));
@@ -887,11 +887,11 @@ namespace VKIntox
         // Initialize ImGui Vulkan backend
         ImGui_ImplVulkan_InitInfo initInfo = {};
         initInfo.ApiVersion = VK_API_VERSION_1_3;
-        initInfo.Instance = pLogicalDevice->instance;
-        initInfo.PhysicalDevice = pLogicalDevice->physicalDevice;
-        initInfo.Device = pLogicalDevice->device;
-        initInfo.QueueFamily = pLogicalDevice->queueFamilyIndex;
-        initInfo.Queue = pLogicalDevice->queue;
+        initInfo.Instance = logicalDevice->instance;
+        initInfo.PhysicalDevice = logicalDevice->physicalDevice;
+        initInfo.Device = logicalDevice->device;
+        initInfo.QueueFamily = logicalDevice->queueFamilyIndex;
+        initInfo.Queue = logicalDevice->queue;
         initInfo.DescriptorPool = descriptorPool;
         // ImageCount MUST match the actual swapchain image count.
         // Hardcoding 2 while the real swapchain has 3 (triple-buffering)
@@ -916,19 +916,19 @@ namespace VKIntox
         iconInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         iconInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         iconInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VkResult iconResult = pLogicalDevice->vkd.CreateImage(pLogicalDevice->device, &iconInfo, nullptr, &titleIconImage);
+        VkResult iconResult = logicalDevice->vkd.CreateImage(logicalDevice->device, &iconInfo, nullptr, &titleIconImage);
         if (iconResult == VK_SUCCESS)
         {
             VkMemoryRequirements requirements{};
-            pLogicalDevice->vkd.GetImageMemoryRequirements(pLogicalDevice->device, titleIconImage, &requirements);
+            logicalDevice->vkd.GetImageMemoryRequirements(logicalDevice->device, titleIconImage, &requirements);
             VkMemoryAllocateInfo allocation{};
             allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             allocation.allocationSize = requirements.size;
-            allocation.memoryTypeIndex = findMemoryTypeIndex(pLogicalDevice, requirements.memoryTypeBits,
+            allocation.memoryTypeIndex = findMemoryTypeIndex(logicalDevice, requirements.memoryTypeBits,
                                                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            iconResult = pLogicalDevice->vkd.AllocateMemory(pLogicalDevice->device, &allocation, nullptr, &titleIconMemory);
+            iconResult = logicalDevice->vkd.AllocateMemory(logicalDevice->device, &allocation, nullptr, &titleIconMemory);
             if (iconResult == VK_SUCCESS)
-                iconResult = pLogicalDevice->vkd.BindImageMemory(pLogicalDevice->device, titleIconImage, titleIconMemory, 0);
+                iconResult = logicalDevice->vkd.BindImageMemory(logicalDevice->device, titleIconImage, titleIconMemory, 0);
         }
         if (iconResult == VK_SUCCESS)
         {
@@ -944,7 +944,7 @@ namespace VKIntox
             }
             else
             {
-                uploadToImage(pLogicalDevice, titleIconImage,
+                uploadToImage(logicalDevice, titleIconImage,
                               {static_cast<uint32_t>(iconWidth), static_cast<uint32_t>(iconHeight), 1},
                               static_cast<uint32_t>(iconWidth * iconHeight * 4), iconPixels);
                 stbi_image_free(iconPixels);
@@ -958,7 +958,7 @@ namespace VKIntox
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
             viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
             viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            iconResult = pLogicalDevice->vkd.CreateImageView(pLogicalDevice->device, &viewInfo, nullptr, &titleIconView);
+            iconResult = logicalDevice->vkd.CreateImageView(logicalDevice->device, &viewInfo, nullptr, &titleIconView);
         }
         if (iconResult == VK_SUCCESS)
         {
@@ -971,7 +971,7 @@ namespace VKIntox
             samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
             samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
             samplerInfo.maxLod = 0.0f;
-            iconResult = pLogicalDevice->vkd.CreateSampler(pLogicalDevice->device, &samplerInfo, nullptr, &titleIconSampler);
+            iconResult = logicalDevice->vkd.CreateSampler(logicalDevice->device, &samplerInfo, nullptr, &titleIconSampler);
         }
         if (iconResult == VK_SUCCESS)
             titleIconDescriptor = ImGui_ImplVulkan_AddTexture(titleIconSampler, titleIconView,
@@ -987,38 +987,38 @@ namespace VKIntox
             for (auto fence : commandBufferFences)
             {
                 if (fence != VK_NULL_HANDLE)
-                    pLogicalDevice->vkd.DestroyFence(pLogicalDevice->device, fence, nullptr);
+                    logicalDevice->vkd.DestroyFence(logicalDevice->device, fence, nullptr);
             }
             commandBufferFences.clear();
 
             if (commandBuffersAllocated && !commandBuffers.empty() && commandPool != VK_NULL_HANDLE)
             {
-                pLogicalDevice->vkd.FreeCommandBuffers(
-                    pLogicalDevice->device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+                logicalDevice->vkd.FreeCommandBuffers(
+                    logicalDevice->device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
             }
             commandBuffers.clear();
 
             for (auto fb : framebuffers)
             {
                 if (fb != VK_NULL_HANDLE)
-                    pLogicalDevice->vkd.DestroyFramebuffer(pLogicalDevice->device, fb, nullptr);
+                    logicalDevice->vkd.DestroyFramebuffer(logicalDevice->device, fb, nullptr);
             }
             framebuffers.clear();
             framebufferImageViews.clear();
 
             if (commandPool != VK_NULL_HANDLE)
             {
-                pLogicalDevice->vkd.DestroyCommandPool(pLogicalDevice->device, commandPool, nullptr);
+                logicalDevice->vkd.DestroyCommandPool(logicalDevice->device, commandPool, nullptr);
                 commandPool = VK_NULL_HANDLE;
             }
             if (renderPass != VK_NULL_HANDLE)
             {
-                pLogicalDevice->vkd.DestroyRenderPass(pLogicalDevice->device, renderPass, nullptr);
+                logicalDevice->vkd.DestroyRenderPass(logicalDevice->device, renderPass, nullptr);
                 renderPass = VK_NULL_HANDLE;
             }
             if (descriptorPool != VK_NULL_HANDLE)
             {
-                pLogicalDevice->vkd.DestroyDescriptorPool(pLogicalDevice->device, descriptorPool, nullptr);
+                logicalDevice->vkd.DestroyDescriptorPool(logicalDevice->device, descriptorPool, nullptr);
                 descriptorPool = VK_NULL_HANDLE;
             }
 
@@ -1030,8 +1030,8 @@ namespace VKIntox
         VkCommandPoolCreateInfo poolCreateInfo = {};
         poolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        poolCreateInfo.queueFamilyIndex = pLogicalDevice->queueFamilyIndex;
-        vr = pLogicalDevice->vkd.CreateCommandPool(pLogicalDevice->device, &poolCreateInfo, nullptr, &commandPool);
+        poolCreateInfo.queueFamilyIndex = logicalDevice->queueFamilyIndex;
+        vr = logicalDevice->vkd.CreateCommandPool(logicalDevice->device, &poolCreateInfo, nullptr, &commandPool);
         if (vr != VK_SUCCESS)
         {
             Logger::err("Failed to create ImGui command pool: " + std::to_string(vr));
@@ -1046,7 +1046,7 @@ namespace VKIntox
         allocInfo.commandPool = commandPool;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = imageCount;
-        vr = pLogicalDevice->vkd.AllocateCommandBuffers(pLogicalDevice->device, &allocInfo, commandBuffers.data());
+        vr = logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &allocInfo, commandBuffers.data());
         if (vr != VK_SUCCESS)
         {
             Logger::err("Failed to allocate ImGui command buffers: " + std::to_string(vr));
@@ -1062,7 +1062,7 @@ namespace VKIntox
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
         for (uint32_t i = 0; i < imageCount; i++)
         {
-            vr = pLogicalDevice->vkd.CreateFence(pLogicalDevice->device, &fenceInfo, nullptr, &commandBufferFences[i]);
+            vr = logicalDevice->vkd.CreateFence(logicalDevice->device, &fenceInfo, nullptr, &commandBufferFences[i]);
             if (vr != VK_SUCCESS)
             {
                 Logger::err("Failed to create ImGui fence " + std::to_string(i) + ": " + std::to_string(vr));
@@ -1098,7 +1098,7 @@ namespace VKIntox
         VkFence fence = commandBufferFences[imageIndex];
         uint64_t timeoutNs = static_cast<uint64_t>(
             std::clamp(avgFrameTimeMs * 4.0f, 2.0f, 50.0f) * 1'000'000.0f);
-        VkResult fenceResult = pLogicalDevice->vkd.WaitForFences(pLogicalDevice->device, 1, &fence, VK_TRUE, timeoutNs);
+        VkResult fenceResult = logicalDevice->vkd.WaitForFences(logicalDevice->device, 1, &fence, VK_TRUE, timeoutNs);
         if (fenceResult == VK_TIMEOUT)
         {
             Logger::warn("ImGui fence wait timed out for image " + std::to_string(imageIndex));
@@ -1109,7 +1109,7 @@ namespace VKIntox
             Logger::err("ImGui fence wait failed: " + std::to_string(fenceResult));
             return VK_NULL_HANDLE;
         }
-        VkResult resetResult = pLogicalDevice->vkd.ResetFences(pLogicalDevice->device, 1, &fence);
+        VkResult resetResult = logicalDevice->vkd.ResetFences(logicalDevice->device, 1, &fence);
         if (resetResult != VK_SUCCESS)
         {
             Logger::err("Failed to reset ImGui fence: " + std::to_string(resetResult));
@@ -1122,7 +1122,7 @@ namespace VKIntox
         VkCommandBufferBeginInfo beginInfo = {};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        VkResult vr = pLogicalDevice->vkd.BeginCommandBuffer(cmd, &beginInfo);
+        VkResult vr = logicalDevice->vkd.BeginCommandBuffer(cmd, &beginInfo);
         if (vr != VK_SUCCESS)
         {
             Logger::err("Failed to begin ImGui command buffer: " + std::to_string(vr));
@@ -1144,7 +1144,7 @@ namespace VKIntox
         if (needRecreate)
         {
             if (framebuffers[imageIndex] != VK_NULL_HANDLE)
-                pLogicalDevice->vkd.DestroyFramebuffer(pLogicalDevice->device, framebuffers[imageIndex], nullptr);
+                logicalDevice->vkd.DestroyFramebuffer(logicalDevice->device, framebuffers[imageIndex], nullptr);
 
             VkFramebufferCreateInfo fbInfo = {};
             fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -1154,11 +1154,11 @@ namespace VKIntox
             fbInfo.width = width;
             fbInfo.height = height;
             fbInfo.layers = 1;
-            vr = pLogicalDevice->vkd.CreateFramebuffer(pLogicalDevice->device, &fbInfo, nullptr, &framebuffers[imageIndex]);
+            vr = logicalDevice->vkd.CreateFramebuffer(logicalDevice->device, &fbInfo, nullptr, &framebuffers[imageIndex]);
             if (vr != VK_SUCCESS)
             {
                 Logger::err("Failed to create ImGui framebuffer: " + std::to_string(vr));
-                pLogicalDevice->vkd.EndCommandBuffer(cmd);
+                logicalDevice->vkd.EndCommandBuffer(cmd);
                 return VK_NULL_HANDLE;
             }
             framebufferImageViews[imageIndex] = imageView;
@@ -1235,11 +1235,11 @@ namespace VKIntox
             rpBegin.renderArea.extent.width = width;
             rpBegin.renderArea.extent.height = height;
 
-            pLogicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+            logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
             ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-            pLogicalDevice->vkd.CmdEndRenderPass(cmd);
+            logicalDevice->vkd.CmdEndRenderPass(cmd);
 
-            VkResult endRes = pLogicalDevice->vkd.EndCommandBuffer(cmd);
+            VkResult endRes = logicalDevice->vkd.EndCommandBuffer(cmd);
             if (endRes != VK_SUCCESS)
             {
                 Logger::err("Failed to end ImGui command buffer (toast-only): " + std::to_string(endRes));
@@ -1427,11 +1427,11 @@ namespace VKIntox
         rpBegin.renderArea.extent.width = width;
         rpBegin.renderArea.extent.height = height;
 
-        pLogicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+        logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
-        pLogicalDevice->vkd.CmdEndRenderPass(cmd);
+        logicalDevice->vkd.CmdEndRenderPass(cmd);
 
-        vr = pLogicalDevice->vkd.EndCommandBuffer(cmd);
+        vr = logicalDevice->vkd.EndCommandBuffer(cmd);
         if (vr != VK_SUCCESS)
         {
             Logger::err("Failed to end ImGui command buffer: " + std::to_string(vr));

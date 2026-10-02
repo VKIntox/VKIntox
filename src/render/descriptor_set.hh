@@ -13,26 +13,26 @@
 
 namespace VKIntox
 {
-    VkDescriptorPool createDescriptorPool(LogicalDevice* pLogicalDevice, const std::vector<VkDescriptorPoolSize>& poolSizes);
+    VkDescriptorPool createDescriptorPool(LogicalDevice* logicalDevice, const std::vector<VkDescriptorPoolSize>& poolSizes);
 
-    VkDescriptorSetLayout createUniformBufferDescriptorSetLayout(LogicalDevice* pLogicalDevice);
+    VkDescriptorSetLayout createUniformBufferDescriptorSetLayout(LogicalDevice* logicalDevice);
 
-    VkDescriptorSet writeBufferDescriptorSet(LogicalDevice*        pLogicalDevice,
+    VkDescriptorSet writeBufferDescriptorSet(LogicalDevice*        logicalDevice,
                                              VkDescriptorPool      descriptorPool,
                                              VkDescriptorSetLayout descriptorSetLayout,
                                              VkBuffer              buffer);
 
-    VkDescriptorSetLayout createImageSamplerDescriptorSetLayout(LogicalDevice*                         pLogicalDevice,
+    VkDescriptorSetLayout createImageSamplerDescriptorSetLayout(LogicalDevice*                         logicalDevice,
                                                                 const std::vector<VkDescriptorType>& bindingTypes);
-    VkDescriptorSetLayout createImageSamplerDescriptorSetLayout(LogicalDevice* pLogicalDevice, uint32_t count);
+    VkDescriptorSetLayout createImageSamplerDescriptorSetLayout(LogicalDevice* logicalDevice, uint32_t count);
 
-    std::vector<VkDescriptorSet> allocateAndWriteImageSamplerDescriptorSets(LogicalDevice*                        pLogicalDevice,
+    std::vector<VkDescriptorSet> allocateAndWriteImageSamplerDescriptorSets(LogicalDevice*                        logicalDevice,
                                                                             VkDescriptorPool                      descriptorPool,
                                                                             VkDescriptorSetLayout                 descriptorSetLayout,
                                                                             std::vector<VkSampler>                samplers,
                                                                             std::vector<std::vector<VkImageView>> imageViewsVectors,
                                                                             const std::vector<VkDescriptorType>&  bindingTypes);
-    std::vector<VkDescriptorSet> allocateAndWriteImageSamplerDescriptorSets(LogicalDevice*                        pLogicalDevice,
+    std::vector<VkDescriptorSet> allocateAndWriteImageSamplerDescriptorSets(LogicalDevice*                        logicalDevice,
                                                                             VkDescriptorPool                      descriptorPool,
                                                                             VkDescriptorSetLayout                 descriptorSetLayout,
                                                                             std::vector<VkSampler>                samplers,

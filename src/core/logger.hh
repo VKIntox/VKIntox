@@ -66,7 +66,7 @@ namespace VKIntox
 
         static LogLevel logLevel()
         {
-            return s_instance.m_minLevel;
+            return s_instance.minLevel;
         }
 
         // Cheap level check for lazy logging macros. Reads the const min level
@@ -75,7 +75,7 @@ namespace VKIntox
         // the level is filtered out.
         static bool isLevelEnabled(LogLevel level)
         {
-            return level >= s_instance.m_minLevel || s_instance.m_historyEnabled;
+            return level >= s_instance.minLevel || s_instance.historyEnabled;
         }
 
         // Get log history (thread-safe copy)
@@ -95,16 +95,16 @@ namespace VKIntox
         static Logger s_instance;
         static constexpr size_t MAX_HISTORY_SIZE = 1000;
 
-        const LogLevel m_minLevel;
+        const LogLevel minLevel;
 
-        std::mutex m_mutex;
+        std::mutex mutex;
 
         // see LogStreamDeleter above: owned=false for the borrowed standard
         // streams, owned=true for the file stream this Logger opened
-        std::unique_ptr<std::ostream, LogStreamDeleter> m_outStream;
+        std::unique_ptr<std::ostream, LogStreamDeleter> outStream;
 
-        std::deque<LogEntry> m_history;
-        bool m_historyEnabled = false;  // Disabled by default to save memory
+        std::deque<LogEntry> history;
+        bool historyEnabled = false;  // Disabled by default to save memory
 
         void emitMsg(LogLevel level, const std::string& message);
 

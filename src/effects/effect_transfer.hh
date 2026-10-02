@@ -20,22 +20,22 @@ namespace VKIntox
     class TransferEffect : public Effect
     {
     public:
-        TransferEffect(LogicalDevice*       pLogicalDevice,
+        TransferEffect(LogicalDevice*       logicalDevice,
                        VkFormat             format,
                        VkExtent2D           imageExtent,
                        std::vector<VkImage> inputImages,
                        std::vector<VkImage> outputImages,
-                       Config*              pConfig);
+                       Config*              config);
         void virtual applyEffect(uint32_t imageIndex, VkCommandBuffer commandBuffer) override;
         virtual ~TransferEffect();
 
     private:
-        LogicalDevice*       pLogicalDevice;
+        LogicalDevice*       logicalDevice;
         std::vector<VkImage> inputImages;
         std::vector<VkImage> outputImages;
         VkExtent2D           imageExtent;
         VkFormat             format;
-        Config*              pConfig;
+        Config*              config;
     };
 } // namespace VKIntox
 #endif // EFFECT_TRANSFER_HPP_INCLUDED

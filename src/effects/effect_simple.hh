@@ -25,7 +25,7 @@ namespace VKIntox
         virtual ~SimpleEffect();
 
     protected:
-        LogicalDevice*               pLogicalDevice = nullptr;
+        LogicalDevice*               logicalDevice = nullptr;
         std::vector<VkImage>         inputImages;
         std::vector<VkImage>         outputImages;
         std::vector<VkImageView>     inputImageViews;
@@ -42,21 +42,21 @@ namespace VKIntox
         VkExtent2D                   imageExtent = {};
         VkFormat                     format = VK_FORMAT_UNDEFINED;
         VkSampler                    sampler = VK_NULL_HANDLE;
-        Config*                      pConfig = nullptr;
+        Config*                      config = nullptr;
         std::vector<uint32_t>        vertexCode;
         std::vector<uint32_t>        fragmentCode;
-        VkSpecializationInfo*        pVertexSpecInfo = nullptr;
-        VkSpecializationInfo*        pFragmentSpecInfo = nullptr;
+        VkSpecializationInfo*        vertexSpecInfo = nullptr;
+        VkSpecializationInfo*        fragmentSpecInfo = nullptr;
 
         // subclasses can put DescriptorSets in here, but the first one will be the input image descriptorSet
         std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
 
-        void init(LogicalDevice*       pLogicalDevice,
+        void init(LogicalDevice*       logicalDevice,
                   VkFormat             format,
                   VkExtent2D           imageExtent,
                   std::vector<VkImage> inputImages,
                   std::vector<VkImage> outputImages,
-                  Config*              pConfig);
+                  Config*              config);
     };
 } // namespace VKIntox
 

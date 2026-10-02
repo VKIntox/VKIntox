@@ -4,7 +4,7 @@
 namespace VKIntox
 {
 
-    VkDescriptorPool createDescriptorPool(LogicalDevice* pLogicalDevice, const std::vector<VkDescriptorPoolSize>& poolSizes)
+    VkDescriptorPool createDescriptorPool(LogicalDevice* logicalDevice, const std::vector<VkDescriptorPoolSize>& poolSizes)
     {
         uint32_t setCount = 0;
 
@@ -21,12 +21,12 @@ namespace VKIntox
         descriptorPoolCreateInfo.poolSizeCount = poolSizes.size();
         descriptorPoolCreateInfo.pPoolSizes    = poolSizes.data();
 
-        VkResult result = pLogicalDevice->vkd.CreateDescriptorPool(pLogicalDevice->device, &descriptorPoolCreateInfo, nullptr, &descriptorPool);
+        VkResult result = logicalDevice->vkd.CreateDescriptorPool(logicalDevice->device, &descriptorPoolCreateInfo, nullptr, &descriptorPool);
         ASSERT_VULKAN_VAL(result, VK_NULL_HANDLE);
         return descriptorPool;
     }
 
-    VkDescriptorSetLayout createUniformBufferDescriptorSetLayout(LogicalDevice* pLogicalDevice)
+    VkDescriptorSetLayout createUniformBufferDescriptorSetLayout(LogicalDevice* logicalDevice)
     {
         VkDescriptorSetLayout descriptorSetLayout;
 
@@ -46,13 +46,13 @@ namespace VKIntox
         descriptorSetCreateInfo.pBindings    = &descriptorSetLayoutBinding;
 
         VkResult result =
-            pLogicalDevice->vkd.CreateDescriptorSetLayout(pLogicalDevice->device, &descriptorSetCreateInfo, nullptr, &descriptorSetLayout);
+            logicalDevice->vkd.CreateDescriptorSetLayout(logicalDevice->device, &descriptorSetCreateInfo, nullptr, &descriptorSetLayout);
         ASSERT_VULKAN_VAL(result, VK_NULL_HANDLE)
 
         return descriptorSetLayout;
     }
 
-    VkDescriptorSet writeBufferDescriptorSet(LogicalDevice*        pLogicalDevice,
+    VkDescriptorSet writeBufferDescriptorSet(LogicalDevice*        logicalDevice,
                                              VkDescriptorPool      descriptorPool,
                                              VkDescriptorSetLayout descriptorSetLayout,
                                              VkBuffer              buffer)
@@ -66,7 +66,7 @@ namespace VKIntox
         descriptorSetAllocateInfo.descriptorSetCount = 1;
         descriptorSetAllocateInfo.pSetLayouts        = &descriptorSetLayout;
 
-        VkResult result = pLogicalDevice->vkd.AllocateDescriptorSets(pLogicalDevice->device, &descriptorSetAllocateInfo, &descriptorSet);
+        VkResult result = logicalDevice->vkd.AllocateDescriptorSets(logicalDevice->device, &descriptorSetAllocateInfo, &descriptorSet);
         ASSERT_VULKAN_VAL(result, VK_NULL_HANDLE);
 
         VkDescriptorBufferInfo bufferInfo;
@@ -88,12 +88,12 @@ namespace VKIntox
         writeDescriptorSet.pTexelBufferView = nullptr;
 
         Logger::debug("before writing buffer descriptor Sets");
-        pLogicalDevice->vkd.UpdateDescriptorSets(pLogicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
+        logicalDevice->vkd.UpdateDescriptorSets(logicalDevice->device, 1, &writeDescriptorSet, 0, nullptr);
 
         return descriptorSet;
     }
 
-    VkDescriptorSetLayout createImageSamplerDescriptorSetLayout(LogicalDevice*                         pLogicalDevice,
+    VkDescriptorSetLayout createImageSamplerDescriptorSetLayout(LogicalDevice*                         logicalDevice,
                                                                 const std::vector<VkDescriptorType>& bindingTypes)
     {
         VkDescriptorSetLayout descriptorSetLayout;
@@ -118,17 +118,17 @@ namespace VKIntox
         descriptorSetCreateInfo.pBindings    = bindigs.data();
 
         VkResult result =
-            pLogicalDevice->vkd.CreateDescriptorSetLayout(pLogicalDevice->device, &descriptorSetCreateInfo, nullptr, &descriptorSetLayout);
+            logicalDevice->vkd.CreateDescriptorSetLayout(logicalDevice->device, &descriptorSetCreateInfo, nullptr, &descriptorSetLayout);
         ASSERT_VULKAN_VAL(result, VK_NULL_HANDLE)
         return descriptorSetLayout;
     }
-    VkDescriptorSetLayout createImageSamplerDescriptorSetLayout(LogicalDevice* pLogicalDevice, uint32_t count)
+    VkDescriptorSetLayout createImageSamplerDescriptorSetLayout(LogicalDevice* logicalDevice, uint32_t count)
     {
         return createImageSamplerDescriptorSetLayout(
-            pLogicalDevice, std::vector<VkDescriptorType>(count, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
+            logicalDevice, std::vector<VkDescriptorType>(count, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER));
     }
 
-    std::vector<VkDescriptorSet> allocateAndWriteImageSamplerDescriptorSets(LogicalDevice*                        pLogicalDevice,
+    std::vector<VkDescriptorSet> allocateAndWriteImageSamplerDescriptorSets(LogicalDevice*                        logicalDevice,
                                                                             VkDescriptorPool                      descriptorPool,
                                                                             VkDescriptorSetLayout                 descriptorSetLayout,
                                                                             std::vector<VkSampler>                samplers,
@@ -156,7 +156,7 @@ namespace VKIntox
         descriptorSetAllocateInfo.pSetLayouts        = layouts.data();
 
         Logger::debug("before allocating descriptor Sets");
-        VkResult result = pLogicalDevice->vkd.AllocateDescriptorSets(pLogicalDevice->device, &descriptorSetAllocateInfo, descriptorSets.data());
+        VkResult result = logicalDevice->vkd.AllocateDescriptorSets(logicalDevice->device, &descriptorSetAllocateInfo, descriptorSets.data());
         ASSERT_VULKAN_VAL(result, {});
 
         VkDescriptorImageInfo imageInfo;
@@ -199,11 +199,11 @@ namespace VKIntox
                     imageInfos[j].sampler = VK_NULL_HANDLE;
             }
             Logger::debug("before writing descriptor Sets");
-            pLogicalDevice->vkd.UpdateDescriptorSets(pLogicalDevice->device, writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
+            logicalDevice->vkd.UpdateDescriptorSets(logicalDevice->device, writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
         }
         return descriptorSets;
     }
-    std::vector<VkDescriptorSet> allocateAndWriteImageSamplerDescriptorSets(LogicalDevice*                        pLogicalDevice,
+    std::vector<VkDescriptorSet> allocateAndWriteImageSamplerDescriptorSets(LogicalDevice*                        logicalDevice,
                                                                             VkDescriptorPool                      descriptorPool,
                                                                             VkDescriptorSetLayout                 descriptorSetLayout,
                                                                             std::vector<VkSampler>                samplers,
@@ -211,7 +211,7 @@ namespace VKIntox
     {
         const size_t bindingCount = samplers.size();
         return allocateAndWriteImageSamplerDescriptorSets(
-            pLogicalDevice,
+            logicalDevice,
             descriptorPool,
             descriptorSetLayout,
             std::move(samplers),

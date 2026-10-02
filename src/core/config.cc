@@ -82,7 +82,7 @@ namespace VKIntox
     {
         if (overrides.find(option) != overrides.end() || options.find(option) != options.end())
             return true;
-        return pFallback ? pFallback->hasOptionKey(option) : false;
+        return fallback ? fallback->hasOptionKey(option) : false;
     }
 
     bool Config::hasConfigChanged()
@@ -323,8 +323,8 @@ namespace VKIntox
 
     std::unordered_map<std::string, std::string> Config::getEffectDefinitions() const
     {
-        std::unordered_map<std::string, std::string> effects = pFallback
-            ? pFallback->getEffectDefinitions()
+        std::unordered_map<std::string, std::string> effects = fallback
+            ? fallback->getEffectDefinitions()
             : std::unordered_map<std::string, std::string>{};
         for (const auto& [key, value] : options)
         {

@@ -22,7 +22,7 @@ namespace VKIntox
     {
     public:
         // Initialize registry from config file
-        void initialize(Config* pConfig);
+        void initialize(Config* config);
 
         // Get all effect configs (enabled + disabled)
         // NOTE: caller must not hold this reference across effect mutations.
@@ -62,7 +62,7 @@ namespace VKIntox
         std::vector<EffectParam*> getParametersForEffect(const std::string& effectName);
 
         // Get config reference for effects to read values
-        Config* getConfig() const { return pConfig; }
+        Config* getConfig() const { return rootConfig; }
 
         // Check if an effect is a built-in effect
         static bool isBuiltInEffect(const std::string& name);
@@ -117,7 +117,12 @@ namespace VKIntox
         std::list<EffectConfig> effects;
         std::vector<std::string> selectedEffects;  // Ordered list of selected effects for UI
         bool initializedFromConfig = false;        // True once first load from config is complete
-        Config* pConfig = nullptr;
+        // Named rootConfig rather than config: initBuiltInEffect and
+        // initReshadeEffect each build a local EffectConfig called config, and
+        // this is a different type entirely -- the parsed VKIntox.conf. The old
+        // pConfig prefix was doing the job a name has to do, which is to say
+        // which of two same-ish things this is.
+        Config* rootConfig = nullptr;
         mutable std::mutex mutex;
 
         // Initialize built-in effect configs

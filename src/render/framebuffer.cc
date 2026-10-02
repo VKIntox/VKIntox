@@ -4,7 +4,7 @@
 namespace VKIntox
 {
     std::vector<VkFramebuffer>
-    createFramebuffers(LogicalDevice* pLogicalDevice, VkRenderPass renderPass, VkExtent2D& extent, std::vector<std::vector<VkImageView>> imageViews)
+    createFramebuffers(LogicalDevice* logicalDevice, VkRenderPass renderPass, VkExtent2D& extent, std::vector<std::vector<VkImageView>> imageViews)
     {
         if (imageViews.empty() || imageViews[0].empty())
         {
@@ -31,7 +31,7 @@ namespace VKIntox
             framebufferCreateInfo.height          = extent.height;
             framebufferCreateInfo.layers          = 1;
 
-            VkResult result = pLogicalDevice->vkd.CreateFramebuffer(pLogicalDevice->device, &framebufferCreateInfo, nullptr, &(framebuffers[i]));
+            VkResult result = logicalDevice->vkd.CreateFramebuffer(logicalDevice->device, &framebufferCreateInfo, nullptr, &(framebuffers[i]));
             ASSERT_VULKAN_VAL(result, {});
             perFrameImageViews.clear();
         }

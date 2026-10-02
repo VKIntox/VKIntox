@@ -30,12 +30,12 @@ namespace VKIntox
 
     // Factory function signature for creating effects
     using EffectFactory = std::function<std::shared_ptr<Effect>(
-        LogicalDevice* pLogicalDevice,
+        LogicalDevice* logicalDevice,
         VkFormat format,
         VkExtent2D extent,
         std::vector<VkImage> inputImages,
         std::vector<VkImage> outputImages,
-        Config* pConfig)>;
+        Config* config)>;
 
     // Built-in effect definition
     struct BuiltInEffectDef

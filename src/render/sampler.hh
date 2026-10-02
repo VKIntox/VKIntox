@@ -14,9 +14,9 @@
 #include "reshade/effect_module.hh"
 namespace VKIntox
 {
-    VkSampler createSampler(LogicalDevice* pLogicalDevice);
+    VkSampler createSampler(LogicalDevice* logicalDevice);
 
-    VkSampler createReshadeSampler(LogicalDevice* pLogicalDevice, const reshadefx::sampler_info& samplerInfo);
+    VkSampler createReshadeSampler(LogicalDevice* logicalDevice, const reshadefx::sampler_info& samplerInfo);
 
     VkSamplerAddressMode convertReshadeAddressMode(const reshadefx::texture_address_mode& addressMode);
 

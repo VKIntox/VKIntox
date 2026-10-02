@@ -2,10 +2,10 @@
 
 namespace VKIntox
 {
-    uint32_t findMemoryTypeIndex(LogicalDevice* pLogicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties)
+    uint32_t findMemoryTypeIndex(LogicalDevice* logicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties)
     {
         VkPhysicalDeviceMemoryProperties physicalDeviceMemoryProperties;
-        pLogicalDevice->vki.GetPhysicalDeviceMemoryProperties(pLogicalDevice->physicalDevice, &physicalDeviceMemoryProperties);
+        logicalDevice->vki.GetPhysicalDeviceMemoryProperties(logicalDevice->physicalDevice, &physicalDeviceMemoryProperties);
 
         // Pass 1: exact match (all requested flags present)
         for (uint32_t i = 0; i < physicalDeviceMemoryProperties.memoryTypeCount; i++)
