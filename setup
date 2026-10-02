@@ -10,6 +10,10 @@ usage:
   ./setup sober              build + install layer/shaders for sober
   ./setup flatpak APP_ID     build + configure layer for a flatpak app
   ./setup system             build + install system-wide
+
+  ./setup sober uninstall    remove the layer, keep your config
+  ./setup flatpak uninstall  remove the layer, keep your config
+  ./setup system uninstall   remove the system-wide install
 EOF
 }
 
@@ -22,6 +26,13 @@ else
     B=''; BLUE=''; GREEN=''; YELLOW=''; RED=''; DIM=''; NC=''
     SPIN_FRAMES=()
 fi
+
+LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
+# where `just flatpak-build` leaves the local repo, per the Justfile
+FLATPAK_BUILD_ROOT="build/flatpak-repo"
+# caches the source hash so an unchanged tree can skip a rebuild; uninstall has
+# to drop it or the next install would think the layer is still in place
+LAYER_MARKER="$HOME/.local/share/VKIntox/sober-layer.sha256"
 
 spin_pid=""
 
@@ -81,9 +92,63 @@ need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "missing $1 — install it first"
 }
 
+# Uninstalling removes the layer and the repo it was served from, and nothing
+# else. Shader packages, profiles and the effect list are the user's own work:
+# a reinstall picks them straight back up, so there is no reason to destroy them.
+uninstall_flatpak_layer() {
+    need_cmd flatpak
+    section "removing layer"
+    if flatpak info --user "$LAYER_ID" >/dev/null 2>&1; then
+        run_progress "uninstalling $LAYER_ID" flatpak uninstall --user --noninteractive -y "$LAYER_ID"
+    else
+        ok "layer is not installed"
+    fi
+
+    section "removing local repo"
+    if flatpak remote-list --user 2>/dev/null | awk '{print $1}' | grep -qx 'vkintox-local'; then
+        run_progress "removing vkintox-local" flatpak remote-remove --user vkintox-local
+    else
+        ok "vkintox-local remote is not configured"
+    fi
+
+    if [[ -d "$FLATPAK_BUILD_ROOT" ]]; then
+        rm -rf -- "$FLATPAK_BUILD_ROOT"
+        ok "removed the local build repo"
+    fi
+    if [[ -f "$LAYER_MARKER" ]]; then
+        rm -f -- "$LAYER_MARKER"
+        ok "cleared the build cache marker"
+    fi
+}
+
+uninstall_system_layer() {
+    # The system install wrote into /usr, so removing it is the one operation
+    # that genuinely needs root, and it goes through the same authenticated
+    # sudo session the install used.
+    section "removing system install"
+    if [[ ! -d build ]]; then
+        die "no build directory; run this from the project root"
+    fi
+    say "authenticating for system uninstall"
+    sudo -v || die "could not authenticate for system uninstall"
+    run_progress "removing system-wide files" sudo -n ninja -C build uninstall
+
+    section "config kept"
+    printf "  ${DIM}%s${NC}\n" "$HOME/.config/VKIntox"
+    printf "  ${DIM}delete that by hand if you really want it gone${NC}\n"
+}
+
 MODE="${1:-}"
 [[ -z "$MODE" ]] && { usage; exit 2; }
-if [[ "$MODE" == "flatpak" ]]; then
+
+# "uninstall" is accepted in place of the app id, since removing a layer is not
+# per-application: there is one layer and one repo regardless of who enabled it.
+UNINSTALL=0
+case "${2:-}" in
+    uninstall | --uninstall | -u) UNINSTALL=1 ;;
+esac
+
+if [[ "$MODE" == "flatpak" && $UNINSTALL -eq 0 ]]; then
     [[ $# == 2 ]] || { usage; die "flatpak needs an app id"; }
     APP_ID="$2"
 elif [[ "$MODE" == "sober" ]]; then
@@ -95,6 +160,19 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# uninstall needs neither just nor a shader download, so it branches before the
+# install dependency check rather than failing on tools it will not use
+if [[ $UNINSTALL -eq 1 ]]; then
+    if [[ "$MODE" == "system" ]]; then
+        uninstall_system_layer
+    else
+        uninstall_flatpak_layer
+    fi
+    printf "\n${BLUE}${B}done${NC}\n"
+    printf "${B}uninstalled!!${NC}\n"
+    exit 0
+fi
 
 section "dependencies"
 need_cmd just
@@ -148,7 +226,6 @@ fi
 SOURCE_HASH=$(find src packaging/meson-config -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
 SOURCE_HASH=$(printf '%s\n' "$SOURCE_HASH" "$(sha256sum VERSION Justfile meson.build meson_options.txt packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json packaging/nix/flake.nix)")
 SOURCE_HASH=$(printf '%s' "$SOURCE_HASH" | sha256sum | cut -d' ' -f1)
-LAYER_MARKER="$HOME/.local/share/VKIntox/sober-layer.sha256"
 
 if [[ "$MODE" != "system" ]]; then
     section "building layer"

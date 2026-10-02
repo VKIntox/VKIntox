@@ -24,7 +24,10 @@ fi
 
 spin_pid=""
 start_spin() {
-    [[ ${#SPIN_FRAMES[@]} -gt 0 ]] || return
+    # return 0, not a bare return: a bare return propagates the failed [[ ]] as
+    # status 1, and set -e would kill the script on the first run_progress when
+    # stdout is not a terminal, which is every non-interactive invocation
+    [[ ${#SPIN_FRAMES[@]} -gt 0 ]] || return 0
     local msg="$1"
     (
         local i=0
@@ -50,6 +53,7 @@ ok() { stop_spin; printf "${GREEN}  ✓${NC} %s\n" "$*"; }
 warn() { stop_spin; printf "${YELLOW}  !${NC} %s\n" "$*"; }
 die() { stop_spin; printf "${RED}  ✗${NC} %s\n" "$*" >&2; exit 1; }
 section() { stop_spin; printf "\n${BLUE}${B}%s${NC}\n" "$*"; }
+finish() { stop_spin; printf "\n${BLUE}${B}%s${NC}\n" "$*"; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing $1 — install it first"; }
 run_progress() {
     local label="$1" log status
@@ -83,7 +87,43 @@ usage() {
     cat <<'EOF'
 usage:
   bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script) [APP_ID]
+  bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script) uninstall
 EOF
+}
+
+# Removes the layer and the local repo it came from. The config directories are
+# deliberately left alone: shader presets, profiles and the effect list are the
+# user's own work, and an uninstall that deletes them is an uninstall nobody
+# wants to have to redo.
+uninstall_layer() {
+    section "removing layer"
+    if flatpak info --user "$LAYER_ID" >/dev/null 2>&1; then
+        run_progress "uninstalling $LAYER_ID" flatpak uninstall --user --noninteractive -y "$LAYER_ID"
+    else
+        ok "layer is not installed"
+    fi
+
+    section "removing local repo"
+    if flatpak remote-list --user 2>/dev/null | awk '{print $1}' | grep -qx 'vkintox-local'; then
+        run_progress "removing vkintox-local" flatpak remote-remove --user vkintox-local
+    else
+        ok "vkintox-local remote is not configured"
+    fi
+
+    if [[ -d "$BUILD_ROOT" ]]; then
+        rm -rf -- "$BUILD_ROOT"
+        ok "removed the local build cache"
+    fi
+
+    section "config kept"
+    local kept
+    kept=$(find "$HOME/.var/app" -maxdepth 3 -type d -name VKIntox -path '*/config/*' 2>/dev/null | head -5)
+    if [[ -n "$kept" ]]; then
+        printf "%s\n" "$kept" | while IFS= read -r line; do printf "  %s\n" "$line"; done
+    else
+        printf "  ${DIM}no per-app config directories found${NC}\n"
+    fi
+    printf "  ${DIM}reinstall with the same command to pick your settings back up${NC}\n"
 }
 
 # Arrow-key picker used for the install method and the version list. The chosen
@@ -176,9 +216,7 @@ select_menu() {
 
 APP_ID="${1:-sober}"
 [[ "$APP_ID" != "-h" && "$APP_ID" != "--help" ]] || { usage; exit 0; }
-[[ "$APP_ID" != "sober" ]] || APP_ID="org.vinegarhq.Sober"
 
-for cmd in curl jq unzip flatpak python3 sha256sum readelf grep install; do need_cmd "$cmd"; done
 TMP_DIR=$(mktemp -d)
 BUILD_ROOT="$HOME/.local/share/flatpak-builder/vkintox-remote-setup"
 cleanup() {
@@ -198,6 +236,21 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 save_tty
+
+# uninstall short-circuits before the install dependencies, because removing a
+# layer should not require curl, python3 or a shader download to work
+case "$APP_ID" in
+    uninstall | --uninstall | -u)
+        need_cmd flatpak
+        uninstall_layer
+        finish "uninstalled"
+        exit 0
+        ;;
+esac
+
+[[ "$APP_ID" != "sober" ]] || APP_ID="org.vinegarhq.Sober"
+
+for cmd in curl jq unzip flatpak python3 sha256sum readelf grep install; do need_cmd "$cmd"; done
 
 section "dependencies"
 if ! flatpak remote-list --user 2>/dev/null | grep -q '^flathub'; then
