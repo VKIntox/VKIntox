@@ -31,6 +31,25 @@ namespace VKIntox
         std::string message;
     };
 
+    // The log target has two possible owners: stdout and stderr belong to the C
+    // runtime and must survive the Logger, while a file stream is ours to close.
+    // Which one applies is carried by the deleter rather than the pointer type,
+    // so a single member covers both cases. A struct instead of a std::function
+    // keeps the write path free of an indirect call, and unlike a bare function
+    // pointer it lets the owning unique_ptr default-construct. It lives at
+    // namespace scope because unique_ptr's default constructor will not accept a
+    // nested deleter type.
+    struct LogStreamDeleter
+    {
+        bool owned = false;
+
+        void operator()(std::ostream* stream) const noexcept
+        {
+            if (owned)
+                delete stream;
+        }
+    };
+
     class Logger
     {
 
@@ -80,7 +99,9 @@ namespace VKIntox
 
         std::mutex m_mutex;
 
-        std::unique_ptr<std::ostream, std::function<void(std::ostream*)>> m_outStream;
+        // see LogStreamDeleter above: owned=false for the borrowed standard
+        // streams, owned=true for the file stream this Logger opened
+        std::unique_ptr<std::ostream, LogStreamDeleter> m_outStream;
 
         std::deque<LogEntry> m_history;
         bool m_historyEnabled = false;  // Disabled by default to save memory

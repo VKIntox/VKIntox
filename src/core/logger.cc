@@ -19,11 +19,11 @@ namespace VKIntox
             std::string filename = getFileName();
             if (filename == "stderr")
             {
-                m_outStream = std::unique_ptr<std::ostream, std::function<void(std::ostream*)>>(&std::cerr, [](std::ostream*) {});
+                m_outStream = {&std::cerr, {false}};
             }
             else if (filename == "stdout")
             {
-                m_outStream = std::unique_ptr<std::ostream, std::function<void(std::ostream*)>>(&std::cout, [](std::ostream*) {});
+                m_outStream = {&std::cout, {false}};
             }
             else
             {
@@ -44,10 +44,9 @@ namespace VKIntox
 
                 auto file = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::app);
                 if (*file)
-                    m_outStream = std::unique_ptr<std::ostream, std::function<void(std::ostream*)>>(file.release(),
-                                                                                                    [](std::ostream* os) { delete os; });
+                    m_outStream = {file.release(), {true}};
                 else
-                    m_outStream = std::unique_ptr<std::ostream, std::function<void(std::ostream*)>>(&std::cerr, [](std::ostream*) {});
+                    m_outStream = {&std::cerr, {false}};
             }
         }
     }

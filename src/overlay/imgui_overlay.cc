@@ -236,10 +236,14 @@ namespace VKIntox
             {baseConfigDir + "/font/font.ttf", "Config directory"}
         };
 
+        // the search paths outlive the atlas call, and AddFontFromFileTTF copies
+        // the file into the atlas before returning, so a borrowed pointer is
+        // enough here. the strdup this used to hold only existed to be freed
+        // three lines later, and every line added between the two was a leak
         const char* regularPath = nullptr;
         for (const auto& [path, desc] : fontSearchPaths)
         {
-            if (std::ifstream(path).good()) { regularPath = strdup(path.c_str()); break; }
+            if (std::ifstream(path).good()) { regularPath = path.c_str(); break; }
         }
 
         ImFontConfig fontCfg;
@@ -253,7 +257,6 @@ namespace VKIntox
             io.Fonts->Clear();
             io.Fonts->AddFontFromFileTTF(regularPath, 14.5f, &fontCfg);
             Logger::info("ImGui: loaded Google Sans Flex from " + std::string(regularPath));
-            free((void*)regularPath);
         }
         else
         {

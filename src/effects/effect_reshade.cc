@@ -11,6 +11,7 @@
 #include <unordered_map>
 
 #include "image_view.hh"
+#include "c_resource.hh"
 #include "descriptor_set.hh"
 #include "buffer.hh"
 #include "renderpass.hh"
@@ -34,6 +35,22 @@ namespace VKIntox
 {
     namespace
     {
+        // stb returns a malloc'd buffer that only stbi_image_free may release.
+        // The decode below sits between the load and the upload with several
+        // exits, so owning the buffer is what stops a new early return from
+        // leaking a decoded image. A deleter struct rather than a bare function
+        // pointer because unique_ptr cannot default-construct with the latter,
+        // and the pixels handle has to exist before the load is attempted.
+        struct StbiDeleter
+        {
+            void operator()(void* pixels) const noexcept
+            {
+                stbi_image_free(pixels);
+            }
+        };
+
+        using StbiImage = std::unique_ptr<stbi_uc, StbiDeleter>;
+
         bool hasFatalCompilerDiagnostics(const std::string& diagnostics)
         {
             return diagnostics.find(" error ") != std::string::npos ||
@@ -501,20 +518,20 @@ namespace VKIntox
                 // Search for texture in discovered paths from shader manager
                 std::string textureName = source->value.string_data;
                 std::string filePath;
-                FILE* file = nullptr;
+                UniqueCFile file;
 
                 for (const auto& texPath : cachedShaderMgrConfig.discoveredTexturePaths)
                 {
                     filePath = texPath + "/" + textureName;
-                    file = fopen(filePath.c_str(), "rb");
-                    if (file != nullptr)
+                    file.reset(fopen(filePath.c_str(), "rb"));
+                    if (file)
                         break;
                 }
 
                 // Fallback: recursive search by basename under discovered texture paths.
                 // iMMERSE packages textures in subdirectories (e.g. Textures/iMMERSE),
                 // while shader annotations often reference only the filename.
-                if (file == nullptr)
+                if (!file)
                 {
                     std::filesystem::path texturePath(textureName);
                     const std::string textureBaseName = texturePath.filename().string();
@@ -540,45 +557,41 @@ namespace VKIntox
                             if (it->path().filename() == textureBaseName)
                             {
                                 filePath = it->path().string();
-                                file = fopen(filePath.c_str(), "rb");
-                                if (file != nullptr)
+                                file.reset(fopen(filePath.c_str(), "rb"));
+                                if (file)
                                     break;
                             }
                         }
 
-                        if (file != nullptr)
+                        if (file)
                             break;
                     }
                 }
 
-                stbi_uc*             pixels;
+                StbiImage            pixels;
                 std::vector<stbi_uc> resizedPixels;
                 uint32_t             size;
-                int                  width;
-                int                  height;
+                int                  width  = 0;
+                int                  height = 0;
 
                 size = textureExtent.width * textureExtent.height * textureExtent.depth * desiredChannels;
 
-                if (file == nullptr)
+                if (!file)
                 {
                     Logger::err("couldn't open texture: " + textureName + " (searched " +
                         std::to_string(cachedShaderMgrConfig.discoveredTexturePaths.size()) + " directories, including recursive fallback)");
                     continue;
                 }
 
-                if (stbi_dds_test_file(file))
                 {
-                    int channels;
-                    pixels = stbi_dds_load_from_file(file, &width, &height, &channels, desiredChannels);
+                    int channels = 0;
+                    if (stbi_dds_test_file(file.get()))
+                        pixels.reset(stbi_dds_load_from_file(file.get(), &width, &height, &channels, desiredChannels));
+                    else
+                        pixels.reset(stbi_load_from_file(file.get(), &width, &height, &channels, desiredChannels));
                 }
-                else
-                {
-                    int channels;
-                    pixels = stbi_load_from_file(file, &width, &height, &channels, desiredChannels);
-                }
-                fclose(file);
 
-                if (pixels == nullptr)
+                if (!pixels)
                 {
                     Logger::err("failed to decode texture: " + textureName + " from " + filePath);
                     continue;
@@ -587,12 +600,15 @@ namespace VKIntox
                 // change RGBA to RG
                 if (textureFormatsUNORM[module.textures[i].unique_name] == VK_FORMAT_R8G8_UNORM)
                 {
-                    uint32_t pos = 0;
+                    // unique_ptr has no subscript operator, and the squeeze walks
+                    // the buffer in place, so the owned pointer is borrowed here
+                    stbi_uc* pixelData = pixels.get();
+                    uint32_t  pos      = 0;
                     for (uint32_t j = 0; j < size; j += 4)
                     {
-                        pixels[pos] = pixels[j];
+                        pixelData[pos] = pixelData[j];
                         pos++;
-                        pixels[pos] = pixels[j + 1];
+                        pixelData[pos] = pixelData[j + 1];
                         pos++;
                     }
                     size /= 2;
@@ -602,12 +618,11 @@ namespace VKIntox
                 if (static_cast<uint32_t>(width) != textureExtent.width || static_cast<uint32_t>(height) != textureExtent.height)
                 {
                     resizedPixels.resize(size);
-                    stbir_resize_uint8(pixels, width, height, 0, resizedPixels.data(), textureExtent.width, textureExtent.height, 0, desiredChannels);
+                    stbir_resize_uint8(pixels.get(), width, height, 0, resizedPixels.data(), textureExtent.width, textureExtent.height, 0, desiredChannels);
                 }
 
                 uploadToImage(
-                    pLogicalDevice, images[0], textureExtent, size, resizedPixels.size() ? resizedPixels.data() : pixels, module.textures[i].levels);
-                stbi_image_free(pixels);
+                    pLogicalDevice, images[0], textureExtent, size, resizedPixels.size() ? resizedPixels.data() : pixels.get(), module.textures[i].levels);
             }
         }
 

@@ -2722,9 +2722,9 @@ namespace VKIntox
         {
             std::vector<VkImage> firstImages(pLogicalSwapchain->fakeImages.begin(),
                                              pLogicalSwapchain->fakeImages.begin() + pLogicalSwapchain->imageCount);
-            pLogicalSwapchain->effects.push_back(std::shared_ptr<Effect>(new TransferEffect(
+            pLogicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
                 pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent,
-                firstImages, pLogicalSwapchain->images, pConfig)));
+                firstImages, pLogicalSwapchain->images, pConfig));
             return;
         }
 
@@ -2758,8 +2758,7 @@ namespace VKIntox
             if (effectFailed || effectDisabled)
             {
                 Logger::debug("effect " + std::string(effectFailed ? "failed" : "disabled") + ", using pass-through: " + effectStrings[i]);
-                pLogicalSwapchain->effects.push_back(std::shared_ptr<Effect>(
-                    new TransferEffect(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent, firstImages, secondImages, pConfig)));
+                pLogicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent, firstImages, secondImages, pConfig));
                 continue;
             }
 
@@ -2795,8 +2794,7 @@ namespace VKIntox
                 {
                     Logger::err("Failed to create built-in effect " + effectStrings[i] + ": " + e.what());
                     effectRegistry.setEffectError(effectStrings[i], e.what());
-                    pLogicalSwapchain->effects.push_back(std::shared_ptr<Effect>(
-                        new TransferEffect(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent, firstImages, secondImages, pConfig)));
+                    pLogicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent, firstImages, secondImages, pConfig));
                 }
             }
             else
@@ -2823,8 +2821,7 @@ namespace VKIntox
                                         : (caughtSignal == SIGSEGV) ? "SIGSEGV" : "SIGNAL";
                     Logger::err("Caught " + sigName + " creating ReshadeEffect " + effectStrings[i]);
                     effectRegistry.setEffectError(effectStrings[i], sigName + " during shader compilation");
-                    pLogicalSwapchain->effects.push_back(std::shared_ptr<Effect>(
-                        new TransferEffect(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent, firstImages, secondImages, pConfig)));
+                    pLogicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent, firstImages, secondImages, pConfig));
                     // Soft-disable: reshadefx native crash means we can't
                     // trust the compiler. Don't risk another one.
                     panicLayer(pLogicalDevice, std::string("reshadefx native crash (") + sigName
@@ -2843,17 +2840,15 @@ namespace VKIntox
                         if (reshadeEffect->getOutputWrites() == 0)
                         {
                             Logger::debug("deterministic forwarding for zero-output-write effect: " + effectStrings[i]);
-                            pLogicalSwapchain->effects.push_back(std::shared_ptr<Effect>(
-                                new TransferEffect(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent,
-                                                   firstImages, secondImages, pConfig)));
+                            pLogicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent,
+                                                   firstImages, secondImages, pConfig));
                         }
                     }
                     catch (const std::exception& e)
                     {
                         Logger::err("Failed to create ReshadeEffect " + effectStrings[i] + ": " + e.what());
                         effectRegistry.setEffectError(effectStrings[i], e.what());
-                        pLogicalSwapchain->effects.push_back(std::shared_ptr<Effect>(
-                            new TransferEffect(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent, firstImages, secondImages, pConfig)));
+                        pLogicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent, firstImages, secondImages, pConfig));
                     }
                     signalJmpActive = 0;
                 }
@@ -2863,10 +2858,10 @@ namespace VKIntox
         // If device doesn't support mutable format, add final transfer to swapchain
         if (!useMutableFormat)
         {
-            pLogicalSwapchain->effects.push_back(std::shared_ptr<Effect>(new TransferEffect(
+            pLogicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
                 pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent,
                 std::vector<VkImage>(pLogicalSwapchain->fakeImages.end() - pLogicalSwapchain->imageCount, pLogicalSwapchain->fakeImages.end()),
-                pLogicalSwapchain->images, pConfig)));
+                pLogicalSwapchain->images, pConfig));
         }
     }
 
@@ -2903,13 +2898,13 @@ namespace VKIntox
         createEffectsForSwapchain(pLogicalSwapchain, pLogicalDevice, pConfig, effectStrings, true);
 
         // Create default transfer effect (needed for no-effect command buffers)
-        pLogicalSwapchain->defaultTransfer = std::shared_ptr<Effect>(new TransferEffect(
+        pLogicalSwapchain->defaultTransfer = std::make_shared<TransferEffect>(
             pLogicalDevice,
             pLogicalSwapchain->format,
             pLogicalSwapchain->imageExtent,
             std::vector<VkImage>(pLogicalSwapchain->fakeImages.begin(), pLogicalSwapchain->fakeImages.begin() + pLogicalSwapchain->imageCount),
             pLogicalSwapchain->images,
-            pConfig));
+            pConfig);
 
         // Free old command buffers and allocate/write new ones
         DepthState depth = getDepthState(pLogicalDevice);
@@ -3302,7 +3297,7 @@ namespace VKIntox
         if (ret != VK_SUCCESS)
             return ret;
 
-        std::shared_ptr<LogicalDevice> pLogicalDevice(new LogicalDevice());
+        auto pLogicalDevice = std::make_shared<LogicalDevice>();
         pLogicalDevice->vki                   = instanceDispatchMap[GetKey(physicalDevice)];
         pLogicalDevice->device                = *pDevice;
         pLogicalDevice->physicalDevice        = physicalDevice;
@@ -3565,7 +3560,7 @@ namespace VKIntox
         
         // Recreation (same handle) is detected AFTER vkCreateSwapchainKHR returns,
         // since *pSwapchain is uninitialized until then.
-        std::shared_ptr<LogicalSwapchain> pLogicalSwapchain(new LogicalSwapchain());
+        auto pLogicalSwapchain = std::make_shared<LogicalSwapchain>();
         pLogicalSwapchain->pLogicalDevice      = pLogicalDevice;
         pLogicalSwapchain->swapchainCreateInfo = *pCreateInfo;
         pLogicalSwapchain->imageExtent         = modifiedCreateInfo.imageExtent;
@@ -3766,9 +3761,9 @@ namespace VKIntox
             Logger::debug("using pass-through during resize, will restore effects after debounce");
             std::vector<VkImage> firstImages(pLogicalSwapchain->fakeImages.begin(),
                                              pLogicalSwapchain->fakeImages.begin() + pLogicalSwapchain->imageCount);
-            pLogicalSwapchain->effects.push_back(std::shared_ptr<Effect>(new TransferEffect(
+            pLogicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
                 pLogicalDevice, pLogicalSwapchain->format, pLogicalSwapchain->imageExtent,
-                firstImages, pLogicalSwapchain->images, pConfig.get())));
+                firstImages, pLogicalSwapchain->images, pConfig.get()));
 
             resizeDebounce.pending = true;
             resizeDebounce.lastResizeTime = std::chrono::steady_clock::now();
@@ -3823,13 +3818,13 @@ namespace VKIntox
         }
         Logger::trace("vkGetSwapchainImagesKHR");
 
-        pLogicalSwapchain->defaultTransfer = std::shared_ptr<Effect>(new TransferEffect(
+        pLogicalSwapchain->defaultTransfer = std::make_shared<TransferEffect>(
             pLogicalDevice,
             pLogicalSwapchain->format,
             pLogicalSwapchain->imageExtent,
             std::vector<VkImage>(pLogicalSwapchain->fakeImages.begin(), pLogicalSwapchain->fakeImages.begin() + pLogicalSwapchain->imageCount),
             pLogicalSwapchain->images,
-            pConfig.get()));
+            pConfig.get());
 
         pLogicalSwapchain->commandBuffersNoEffect = allocateCommandBuffer(pLogicalDevice, pLogicalSwapchain->imageCount);
 

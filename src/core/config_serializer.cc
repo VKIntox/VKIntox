@@ -1,5 +1,6 @@
 #include "config_serializer.hh"
 #include "config_paths.hh"
+#include "c_resource.hh"
 #include "logger.hh"
 
 #include <fstream>
@@ -30,14 +31,18 @@ namespace VKIntox
             std::string temporary = path + ".tmp-XXXXXX";
             std::vector<char> name(temporary.begin(), temporary.end());
             name.push_back('\0');
-            const int fd = mkstemp(name.data());
-            if (fd < 0)
+            // mkstemp rewrites name in place, so the real path only exists after
+            // the call. The owner adopts the returned descriptor and the name is
+            // read back out afterwards, which is also what guarantees the
+            // unlink-on-failure below targets the file that was actually created.
+            UniqueFd fd(mkstemp(name.data()));
+            if (!fd)
                 return false;
             size_t offset = 0;
             bool success = true;
             while (offset < contents.size())
             {
-                const ssize_t count = write(fd, contents.data() + offset, contents.size() - offset);
+                const ssize_t count = write(fd.get(), contents.data() + offset, contents.size() - offset);
                 if (count < 0 && errno == EINTR)
                     continue;
                 if (count <= 0)
@@ -47,9 +52,12 @@ namespace VKIntox
                 }
                 offset += static_cast<size_t>(count);
             }
-            if (success && fsync(fd) != 0)
+            if (success && fsync(fd.get()) != 0)
                 success = false;
-            if (close(fd) != 0)
+            // the close result is part of the answer, not cleanup noise: with
+            // deferred writeback a full or failed disk only reports itself here,
+            // so discarding it would report success for a truncated config
+            if (!fd.close())
                 success = false;
             if (success && std::rename(name.data(), path.c_str()) == 0)
                 return true;
@@ -84,18 +92,17 @@ namespace VKIntox
         std::vector<std::string> configs;
         std::string dir = getConfigsDir();
 
-        DIR* d = opendir(dir.c_str());
+        UniqueDir d(opendir(dir.c_str()));
         if (!d)
             return configs;
 
         struct dirent* entry;
-        while ((entry = readdir(d)) != nullptr)
+        while ((entry = readdir(d.get())) != nullptr)
         {
             std::string name = entry->d_name;
             if (name.size() > 5 && name.substr(name.size() - 5) == ".conf")
                 configs.push_back(name.substr(0, name.size() - 5));
         }
-        closedir(d);
 
         std::sort(configs.begin(), configs.end());
         return configs;
@@ -815,12 +822,12 @@ namespace VKIntox
         if (base.empty() || gameName.empty())
             return profiles;
         const std::string dir = base + "/configs/shaders";
-        DIR* d = opendir(dir.c_str());
+        UniqueDir d(opendir(dir.c_str()));
         if (!d)
             return profiles;
         const std::string prefix = gameName + "@";
         struct dirent* entry;
-        while ((entry = readdir(d)) != nullptr)
+        while ((entry = readdir(d.get())) != nullptr)
         {
             const std::string name = entry->d_name;
             if (name.size() <= 4 || name.substr(name.size() - 4) != ".ini")
@@ -830,7 +837,6 @@ namespace VKIntox
             else if (name.find('@') == std::string::npos)
                 profiles.push_back(name.substr(0, name.size() - 4));
         }
-        closedir(d);
         std::sort(profiles.begin(), profiles.end());
         profiles.erase(std::unique(profiles.begin(), profiles.end()), profiles.end());
         return profiles;
@@ -885,14 +891,14 @@ namespace VKIntox
                 return false;
         }
 
-        const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644);
-        if (fd < 0)
+        UniqueFd fd(open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644));
+        if (!fd)
             return false;
         size_t offset = 0;
         bool success = true;
         while (offset < contents.size())
         {
-            const ssize_t written = write(fd, contents.data() + offset, contents.size() - offset);
+            const ssize_t written = write(fd.get(), contents.data() + offset, contents.size() - offset);
             if (written < 0 && errno == EINTR)
                 continue;
             if (written <= 0)
@@ -902,8 +908,8 @@ namespace VKIntox
             }
             offset += static_cast<size_t>(written);
         }
-        const int closeResult = close(fd);
-        success = success && closeResult == 0;
+        if (!fd.close())
+            success = false;
         if (!success)
         {
             unlink(path.c_str());
