@@ -197,6 +197,41 @@ int main()
     expect(foundMacro, "shader profile preserves comma-containing preprocessor values");
     expect(foundStrength && foundVector0 && foundVector1, "shader profile preserves scalar and vector values");
 
+    // The sidecar carries VKIntox's authoritative instance list: order,
+    // kinds, and per-instance enable state, including built-ins.
+    const std::string ownedPath = VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "owned");
+    expect(VKIntox::ConfigSerializer::saveShaderProfile(ownedPath, {}, {"Simple", "cas", "Custom"}, {"Custom"},
+                                                        effectPaths, {}, {}, {}),
+           "save vkintox-owned profile");
+    const auto ownedData = VKIntox::ConfigSerializer::loadShaderProfileData(
+        VKIntox::ConfigSerializer::getShaderProfileSidecarPath(ownedPath));
+    expect(ownedData.owned && ownedData.instances.size() == 3,
+           "sidecar marks the profile owned and lists every instance");
+    expect(ownedData.instances[0].name == "Simple" && ownedData.instances[0].type == "simple.fx" &&
+               ownedData.instances[0].enabled,
+           "reshade instance round-trips with its filename");
+    expect(ownedData.instances[1].name == "cas" && ownedData.instances[1].type == "cas",
+           "built-in instance round-trips as its bare type");
+    expect(ownedData.instances[2].name == "Custom" && !ownedData.instances[2].enabled,
+           "disabled flag survives the sidecar round-trip");
+    expect(readFile(ownedPath).find("[VKINTOX]") == std::string::npos,
+           "the main ini stays vkintox-free for ReShade");
+
+    // inheritance copies the sidecar; deletion removes both files
+    expect(VKIntox::ConfigSerializer::createShaderProfile("roundtrip-game", "copy", "owned"),
+           "create copies an owned profile");
+    const std::string copyPath = VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "copy");
+    expect(readFile(VKIntox::ConfigSerializer::getShaderProfileSidecarPath(copyPath)) ==
+               readFile(VKIntox::ConfigSerializer::getShaderProfileSidecarPath(ownedPath)),
+           "inherited profile copies the sidecar verbatim");
+    expect(VKIntox::ConfigSerializer::deleteShaderProfile("roundtrip-game", "copy") &&
+               !std::filesystem::exists(copyPath) &&
+               !std::filesystem::exists(VKIntox::ConfigSerializer::getShaderProfileSidecarPath(copyPath)),
+           "deleting a profile also deletes its sidecar");
+    expect(!VKIntox::ConfigSerializer::loadShaderProfileData(shaderPath).owned &&
+               !VKIntox::ConfigSerializer::loadShaderProfileData(ownedPath).owned,
+           "a preset's main ini is never mistaken for the vkintox instance list");
+
     // Imported, unprefixed ReShade presets should be discoverable and readable.
     const std::string importedPath = VKIntox::ConfigSerializer::getBaseConfigDir() +
                                      "/configs/shaders/reshade-import.ini";
@@ -218,6 +253,7 @@ int main()
     expect(VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "reshade-import") == importedPath,
            "unprefixed ReShade preset resolves to its imported path");
     const auto importedData = VKIntox::ConfigSerializer::loadShaderProfileData(importedPath);
+    expect(!importedData.owned, "imported preset without a sidecar stays foreign");
     expect(importedData.hasTechniques && importedData.techniques.size() == 2 &&
                importedData.techniqueSorting.size() == 2,
            "ReShade preset lists parse with standard comma-separated spacing");

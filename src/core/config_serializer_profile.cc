@@ -148,6 +148,15 @@ namespace VKIntox
         return gameProfilePath;
     }
 
+    std::string ConfigSerializer::getShaderProfileSidecarPath(const std::string& path)
+    {
+        if (path.empty())
+            return "";
+        const auto presetPath = std::filesystem::path(path);
+        return (presetPath.parent_path() /
+                ("." + presetPath.filename().string() + "_disabled-effectvalues")).string();
+    }
+
     namespace
     {
         std::string getGameShaderProfilePath(const std::string& gameName, const std::string& profileName)
@@ -227,6 +236,7 @@ namespace VKIntox
             return false;
 
         std::string contents = "Techniques=\nTechniqueSorting=\n";
+        std::string sourceSidecar;
         if (!copyFromProfile.empty())
         {
             const std::string sourcePath = getShaderProfilePath(gameName, copyFromProfile);
@@ -236,6 +246,11 @@ namespace VKIntox
             contents.assign(std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>());
             if (source.bad())
                 return false;
+            // an owned profile's sidecar is part of what "inherit" means:
+            // without it the copy loses built-ins and applies as foreign
+            std::ifstream sidecar(getShaderProfileSidecarPath(sourcePath), std::ios::binary);
+            if (sidecar)
+                sourceSidecar.assign(std::istreambuf_iterator<char>(sidecar), std::istreambuf_iterator<char>());
         }
 
         UniqueFd fd(open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644));
@@ -257,9 +272,12 @@ namespace VKIntox
         }
         if (!fd.close())
             success = false;
+        if (success && !sourceSidecar.empty())
+            success = writeAtomically(getShaderProfileSidecarPath(path), sourceSidecar);
         if (!success)
         {
             unlink(path.c_str());
+            std::remove(getShaderProfileSidecarPath(path).c_str());
         }
         return success;
     }
@@ -267,7 +285,10 @@ namespace VKIntox
     bool ConfigSerializer::deleteShaderProfile(const std::string& gameName, const std::string& profileName)
     {
         const std::string path = getShaderProfilePath(gameName, profileName);
-        return !path.empty() && std::remove(path.c_str()) == 0;
+        if (path.empty())
+            return false;
+        std::remove(getShaderProfileSidecarPath(path).c_str());
+        return std::remove(path.c_str()) == 0;
     }
 
     bool ConfigSerializer::saveShaderProfile(const std::string& path, const std::vector<ConfigParam>& params,
@@ -424,30 +445,43 @@ namespace VKIntox
         if (!file.good() || !writeAtomically(path, file.str()))
             return false;
 
-        // Preserve values for unchecked effects separately from the preset
-        // ReShade consumes. Appending to the original filename keeps the
-        // sidecar adjacent and stable even for presets with non-INI extensions.
-        const auto presetPath = std::filesystem::path(path);
-        const std::string disabledValuesPath = (presetPath.parent_path() /
-            ("." + presetPath.filename().string() + "_disabled-effectvalues")).string();
-        if (mergedDisabledParams.empty())
+        // the sidecar keeps VKIntox-only state out of the ReShade preset:
+        // the ordered instance list ("*" marks unchecked) plus values for
+        // disabled effects. it is always written so the .ini is recognised
+        // as ours and applies its stack exactly on the next load.
+        auto instanceEntry = [&effectPaths](const std::string& effectName, bool isDisabled) {
+            std::string type;
+            const auto it = effectPaths.find(effectName);
+            if (it != effectPaths.end() && !it->second.empty())
+            {
+                const std::filesystem::path p(it->second);
+                type = p.extension() == ".fx" ? p.filename().string() : it->second;
+            }
+            std::string entry = (type.empty() || type == effectName) ? effectName : effectName + "@" + type;
+            if (isDisabled)
+                entry.insert(entry.begin(), '*');
+            return entry;
+        };
+        const std::string sidecarPath = getShaderProfileSidecarPath(path);
+        std::ostringstream sidecar;
+        sidecar << "[VKINTOX]\nEffects=";
+        for (size_t i = 0; i < effects.size(); ++i)
         {
-            std::remove(disabledValuesPath.c_str());
-            return true;
+            if (i) sidecar << ", ";
+            sidecar << instanceEntry(effects[i], disabled.count(effects[i]) != 0);
         }
-
-        std::ostringstream disabledFile;
+        sidecar << "\n\n";
         for (const auto& [key, value] : mergedDisabledParams)
         {
             if (!key.second.empty() && key.second.front() == '@')
             {
-                disabledFile << '[' << key.first << "]\nPreprocessorDefinitions="
-                             << key.second.substr(1) << '=' << value << "\n\n";
+                sidecar << '[' << key.first << "]\nPreprocessorDefinitions="
+                        << key.second.substr(1) << '=' << value << "\n\n";
             }
             else
-                disabledFile << '[' << key.first << "]\n" << key.second << '=' << value << "\n\n";
+                sidecar << '[' << key.first << "]\n" << key.second << '=' << value << "\n\n";
         }
-        return disabledFile.good() && writeAtomically(disabledValuesPath, disabledFile.str());
+        return sidecar.good() && writeAtomically(sidecarPath, sidecar.str());
     }
 
     ShaderProfileData ConfigSerializer::loadShaderProfileData(const std::string& path)
@@ -503,6 +537,37 @@ namespace VKIntox
                 if (!item.empty()) values.push_back(std::move(item));
                 return values;
             };
+            if (section == "VKINTOX")
+            {
+                data.owned = true;
+                if (key == "Effects")
+                {
+                    for (const auto& entry : splitValues(value, ','))
+                    {
+                        std::string item = entry;
+                        ShaderProfileInstance instance;
+                        if (!item.empty() && item.front() == '*')
+                        {
+                            instance.enabled = false;
+                            item.erase(item.begin());
+                        }
+                        const auto at = item.rfind('@');
+                        if (at == std::string::npos || at + 1 >= item.size())
+                        {
+                            instance.name = item;
+                            instance.type = item;
+                        }
+                        else
+                        {
+                            instance.name = item.substr(0, at);
+                            instance.type = item.substr(at + 1);
+                        }
+                        if (!instance.name.empty())
+                            data.instances.push_back(instance);
+                    }
+                }
+                continue;
+            }
             if (section.empty() && key == "Techniques")
             {
                 data.hasTechniques = true;

@@ -656,6 +656,29 @@ namespace VKIntox
             return;
         if (!path.empty())
         {
+            const auto profile = ConfigSerializer::loadShaderProfileData(path);
+            const auto sidecar = ConfigSerializer::loadShaderProfileData(
+                ConfigSerializer::getShaderProfileSidecarPath(path));
+
+            auto join = [](const std::vector<std::string>& values) {
+                std::string result;
+                for (const auto& value : values)
+                {
+                    if (!result.empty()) result += ':';
+                    result += value;
+                }
+                return result;
+            };
+
+            // an owned profile's sidecar is the complete stack: register any
+            // definitions it misses before they are collected, so the game
+            // config's stale effect list never merges in and a shader the
+            // config forgot resolves by filename via the include paths
+            if (sidecar.owned)
+                for (const auto& instance : sidecar.instances)
+                    if (!config->hasOption(instance.name))
+                        config->setOption(instance.name, instance.type);
+
             auto definitions = config->getEffectDefinitions();
             if (baseConfig)
             {
@@ -671,7 +694,6 @@ namespace VKIntox
                                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                 namesByFile[filename].push_back(name);
             }
-            const auto profile = ConfigSerializer::loadShaderProfileData(path);
             auto applyParams = [&](const std::vector<ConfigParam>& params) {
             for (const auto& param : params)
             {
@@ -711,44 +733,55 @@ namespace VKIntox
             }
             };
             applyParams(profile.params);
-            if (!profile.hasEffectList && profile.hasTechniques)
+            if (sidecar.owned || (!profile.hasEffectList && profile.hasTechniques))
+                applyParams(sidecar.params);
+
+            if (sidecar.owned)
             {
-                const auto presetPath = std::filesystem::path(path);
-                const auto disabledValuesPath = (presetPath.parent_path() /
-                    ("." + presetPath.filename().string() + "_disabled-effectvalues")).string();
-                applyParams(ConfigSerializer::loadShaderProfile(disabledValuesPath));
+                const size_t maxEffects = static_cast<size_t>(settingsManager.getMaxEffects());
+                std::vector<std::string> effects, disabled;
+                for (const auto& instance : sidecar.instances)
+                {
+                    if (effects.size() >= maxEffects)
+                        break;
+                    effects.push_back(instance.name);
+                    if (!instance.enabled)
+                        disabled.push_back(instance.name);
+                }
+                config->setOption("effects", join(effects));
+                config->setOption("disabledEffects", join(disabled));
             }
-            if (profile.hasEffectList)
+            else if (profile.hasEffectList)
             {
-                auto join = [](const std::vector<std::string>& values) {
-                    std::string result;
-                    for (const auto& value : values)
-                    {
-                        if (!result.empty()) result += ':';
-                        result += value;
-                    }
-                    return result;
-                };
                 config->setOption("effects", join(profile.effects));
                 config->setOption("disabledEffects", join(profile.disabledEffects));
             }
             else if (!profile.techniques.empty() || !profile.techniqueSorting.empty())
             {
-                // a preset that names no techniques must leave the inherited
-                // list alone: the auto-created "default" starts empty.
+                // foreign or pre-sidecar profile: presets have no syntax for
+                // built-ins, so one survives only if the preset carries data
+                // for it (a [cas]-style section). this also migrates profiles
+                // saved before sidecars existed, where the shared game config
+                // alone decided which profile "had" the built-in
                 const auto currentEffects = config->getOption<std::vector<std::string>>("effects", {});
                 const auto currentDisabled = config->getOption<std::vector<std::string>>("disabledEffects", {});
                 std::set<std::string> currentDisabledSet(currentDisabled.begin(), currentDisabled.end());
                 std::vector<std::string> effects, disabled;
                 std::set<std::string> retainedEffects;
 
-                // the preset owns the ReShade stack; keeping every configured
-                // effect here made switches re-import the outgoing profile.
+                std::set<std::string> sections;
+                for (const auto& param : profile.params)
+                    sections.insert(param.effectName);
+                for (const auto& param : sidecar.params)
+                    sections.insert(param.effectName);
                 for (const auto& name : currentEffects)
                 {
                     const auto configuredType = config->getOption<std::string>(name, "");
-                    if (BuiltInEffects::instance().isBuiltIn(name) ||
-                        BuiltInEffects::instance().isBuiltIn(configuredType))
+                    const bool isBuiltIn = BuiltInEffects::instance().isBuiltIn(name) ||
+                                           BuiltInEffects::instance().isBuiltIn(configuredType);
+                    const bool presetCarriesIt = sections.count(name) != 0 ||
+                                                 sections.count(configuredType) != 0;
+                    if (isBuiltIn && presetCarriesIt)
                     {
                         if (!retainedEffects.insert(name).second)
                             continue;
@@ -831,11 +864,6 @@ namespace VKIntox
                         disabled.push_back(effectName);
                 }
 
-                auto join = [](const std::vector<std::string>& values) {
-                    std::string result;
-                    for (const auto& value : values) { if (!result.empty()) result += ':'; result += value; }
-                    return result;
-                };
                 config->setOption("effects", join(effects));
                 config->setOption("disabledEffects", join(disabled));
             }

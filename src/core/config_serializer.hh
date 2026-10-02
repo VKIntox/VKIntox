@@ -17,6 +17,13 @@ namespace VKIntox
         std::string value;
     };
 
+    struct ShaderProfileInstance
+    {
+        std::string name;
+        std::string type;  // ReShade filename or built-in id
+        bool enabled = true;
+    };
+
     struct ShaderProfileData
     {
         std::vector<ConfigParam> params;
@@ -26,6 +33,10 @@ namespace VKIntox
         bool hasEffectList = false;
         std::vector<std::string> effects;
         std::vector<std::string> disabledEffects;
+        // [VKINTOX] section seen: VKIntox wrote this profile, so the
+        // instance list is the exact stack and merges nothing
+        bool owned = false;
+        std::vector<ShaderProfileInstance> instances;
     };
 
     // Global VKIntox settings (from VKIntox.conf)
@@ -145,6 +156,12 @@ namespace VKIntox
         static std::string ensureGameProfile(const std::string& gameName);
 
         static std::string getShaderProfilePath(const std::string& gameName, const std::string& profileName);
+
+        // Hidden sidecar beside a shader profile holding VKIntox-only state:
+        // the ordered instance list and values for disabled effects. ReShade
+        // never reads it, so the .ini stays cross-compatible.
+        static std::string getShaderProfileSidecarPath(const std::string& path);
+
         static std::vector<std::string> listShaderProfilesForGame(const std::string& gameName);
         static bool setLastShaderProfile(const std::string& gameName, const std::string& profileName);
         static std::string getLastShaderProfile(const std::string& gameName);
