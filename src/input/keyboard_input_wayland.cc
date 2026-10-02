@@ -1,4 +1,6 @@
 #include "keyboard_input_wayland.hh"
+
+#include "c_resource.hh"
 #include "wayland_input_common.hh"
 #include "wayland_interpose.hh"
 #include "wayland_display.hh"
@@ -107,18 +109,22 @@ namespace VKIntox
 
     // Wayland keyboard listener callbacks
     static void keyboardKeymap(void* /*data*/, wl_keyboard* /*keyboard*/,
-                               uint32_t format, int32_t fd, uint32_t size)
+                               uint32_t format, int32_t rawFd, uint32_t size)
     {
-        if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1)
-        {
-            close(fd);
-            return;
-        }
+        // The compositor hands us ownership of this descriptor, and the protocol
+        // requires us to close it on every path out of this callback. Owning it
+        // from the first statement means that holds by construction: the three
+        // manual close() calls this replaces each sat next to an early return,
+        // so any return added later would leak a descriptor straight out of the
+        // compositor's hands with nothing left to notice.
+        UniqueFd fd(rawFd);
 
-        char* mapStr = (char*)mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1)
+            return;
+
+        char* mapStr = (char*)mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd.get(), 0);
         if (mapStr == MAP_FAILED)
         {
-            close(fd);
             Logger::err("Wayland: failed to mmap keymap");
             return;
         }
@@ -139,7 +145,6 @@ namespace VKIntox
                                                  XKB_KEYMAP_FORMAT_TEXT_V1,
                                                  XKB_KEYMAP_COMPILE_NO_FLAGS);
         munmap(mapStr, size);
-        close(fd);
 
         if (!xkbKeymap)
         {

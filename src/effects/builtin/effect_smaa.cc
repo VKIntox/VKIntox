@@ -1,5 +1,7 @@
 #include "effect_smaa.hh"
 
+#include "vk_handle.hh"
+
 #include <cstring>
 
 #include "image_view.hh"
@@ -313,47 +315,103 @@ namespace VKIntox
         Logger::debug("destroying smaa effect " + convertToString(this));
 
         // Skip cleanup if construction never assigned a device.
-        if (!pLogicalDevice)
+        if (!pLogicalDevice || pLogicalDevice->device == VK_NULL_HANDLE)
             return;
 
-        pLogicalDevice->vkd.DestroyPipeline(pLogicalDevice->device, edgePipeline, nullptr);
-        pLogicalDevice->vkd.DestroyPipeline(pLogicalDevice->device, blendPipeline, nullptr);
-        pLogicalDevice->vkd.DestroyPipeline(pLogicalDevice->device, neighborPipeline, nullptr);
+        auto& queue   = DeferredDestroyQueue::instance();
+        auto  device = pLogicalDevice->device;
+        auto& vkd    = pLogicalDevice->vkd;
 
-        pLogicalDevice->vkd.DestroyPipelineLayout(pLogicalDevice->device, pipelineLayout, nullptr);
-        pLogicalDevice->vkd.DestroyRenderPass(pLogicalDevice->device, renderPass, nullptr);
-        pLogicalDevice->vkd.DestroyRenderPass(pLogicalDevice->device, unormRenderPass, nullptr);
-        pLogicalDevice->vkd.DestroyDescriptorSetLayout(pLogicalDevice->device, imageSamplerDescriptorSetLayout, nullptr);
+        const VkPipeline           edgePipe = edgePipeline;
+        const VkPipeline           blendPipe = blendPipeline;
+        const VkPipeline           neighborPipe = neighborPipeline;
+        const VkPipelineLayout     pipeLay  = pipelineLayout;
+        const VkRenderPass         pass     = renderPass;
+        const VkRenderPass         unormPass = unormRenderPass;
+        const VkDescriptorSetLayout dsLayout = imageSamplerDescriptorSetLayout;
+        const VkDescriptorPool     dsPool   = descriptorPool;
+        const VkShaderModule       ev = edgeVertexModule,       ef = edgeFragmentModule;
+        const VkShaderModule       bv = blendVertexModule,     bf = blendFragmentModule;
+        const VkShaderModule       nv = neighborVertexModule,  nf = neignborFragmentModule;
+        const VkSampler            smp = sampler;
+        const VkDeviceMemory       imgMem = imageMemory, areaMem = areaMemory, searchMem = searchMemory;
 
-        pLogicalDevice->vkd.DestroyShaderModule(pLogicalDevice->device, edgeVertexModule, nullptr);
-        pLogicalDevice->vkd.DestroyShaderModule(pLogicalDevice->device, edgeFragmentModule, nullptr);
-        pLogicalDevice->vkd.DestroyShaderModule(pLogicalDevice->device, blendVertexModule, nullptr);
-        pLogicalDevice->vkd.DestroyShaderModule(pLogicalDevice->device, blendFragmentModule, nullptr);
-        pLogicalDevice->vkd.DestroyShaderModule(pLogicalDevice->device, neighborVertexModule, nullptr);
-        pLogicalDevice->vkd.DestroyShaderModule(pLogicalDevice->device, neignborFragmentModule, nullptr);
+        // Memory first so it is released last of everything, then images before
+        // the views onto them, so reverse-registration within the phase unwinds
+        // views -> images -> memory.
+        if (imgMem != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Memory, [vkd, device, imgMem] { vkd.FreeMemory(device, imgMem, nullptr); });
+        if (areaMem != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Memory, [vkd, device, areaMem] { vkd.FreeMemory(device, areaMem, nullptr); });
+        if (searchMem != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Memory, [vkd, device, searchMem] { vkd.FreeMemory(device, searchMem, nullptr); });
 
-        pLogicalDevice->vkd.DestroyDescriptorPool(pLogicalDevice->device, descriptorPool, nullptr);
-        pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, imageMemory, nullptr);
-        pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, areaMemory, nullptr);
-        pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, searchMemory, nullptr);
-        for (unsigned int i = 0; i < edgeFramebuffers.size(); i++)
-        {
-            pLogicalDevice->vkd.DestroyFramebuffer(pLogicalDevice->device, edgeFramebuffers[i], nullptr);
-            pLogicalDevice->vkd.DestroyFramebuffer(pLogicalDevice->device, blendFramebuffers[i], nullptr);
-            pLogicalDevice->vkd.DestroyFramebuffer(pLogicalDevice->device, neignborFramebuffers[i], nullptr);
-            pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, inputImageViews[i], nullptr);
-            pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, edgeImageViews[i], nullptr);
-            pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, blendImageViews[i], nullptr);
-            pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, outputImageViews[i], nullptr);
-            pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, edgeImages[i], nullptr);
-            pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, blendImages[i], nullptr);
-        }
-        Logger::debug("after DestroyImageView");
-        pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, areaImageView, nullptr);
-        pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, areaImage, nullptr);
-        pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, searchImageView, nullptr);
-        pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, searchImage, nullptr);
+        const VkImage areaImg = areaImage, searchImg = searchImage;
+        for (auto image : edgeImages)
+            if (image != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, image] { vkd.DestroyImage(device, image, nullptr); });
+        for (auto image : blendImages)
+            if (image != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, image] { vkd.DestroyImage(device, image, nullptr); });
+        if (areaImg != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, areaImg] { vkd.DestroyImage(device, areaImg, nullptr); });
+        if (searchImg != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, searchImg] { vkd.DestroyImage(device, searchImg, nullptr); });
 
-        pLogicalDevice->vkd.DestroySampler(pLogicalDevice->device, sampler, nullptr);
+        for (auto view : inputImageViews)
+            if (view != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, view] { vkd.DestroyImageView(device, view, nullptr); });
+        for (auto view : edgeImageViews)
+            if (view != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, view] { vkd.DestroyImageView(device, view, nullptr); });
+        for (auto view : blendImageViews)
+            if (view != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, view] { vkd.DestroyImageView(device, view, nullptr); });
+        for (auto view : outputImageViews)
+            if (view != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, view] { vkd.DestroyImageView(device, view, nullptr); });
+        const VkImageView areaView = areaImageView, searchView = searchImageView;
+        if (areaView != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, areaView] { vkd.DestroyImageView(device, areaView, nullptr); });
+        if (searchView != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, searchView] { vkd.DestroyImageView(device, searchView, nullptr); });
+
+        for (auto module : {ev, ef, bv, bf, nv, nf})
+            if (module != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, module] { vkd.DestroyShaderModule(device, module, nullptr); });
+        if (smp != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, smp] { vkd.DestroySampler(device, smp, nullptr); });
+
+        // The pipeline layout names imageSamplerDescriptorSetLayout, so it is
+        // pushed last within the phase and therefore released first.
+        if (dsLayout != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Layout, [vkd, device, dsLayout] { vkd.DestroyDescriptorSetLayout(device, dsLayout, nullptr); });
+        if (pipeLay != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Layout, [vkd, device, pipeLay] { vkd.DestroyPipelineLayout(device, pipeLay, nullptr); });
+
+        if (dsPool != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Descriptor, [vkd, device, dsPool] { vkd.DestroyDescriptorPool(device, dsPool, nullptr); });
+
+        // Framebuffers before the passes they were created from. Each vector is
+        // walked on its own: the original loop drove eight of them off
+        // edgeFramebuffers.size(), so any vector that ran short was indexed out
+        // of bounds and every view past the end was leaked.
+        for (auto framebuffer : edgeFramebuffers)
+            if (framebuffer != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::RenderPass, [vkd, device, framebuffer] { vkd.DestroyFramebuffer(device, framebuffer, nullptr); });
+        for (auto framebuffer : blendFramebuffers)
+            if (framebuffer != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::RenderPass, [vkd, device, framebuffer] { vkd.DestroyFramebuffer(device, framebuffer, nullptr); });
+        for (auto framebuffer : neignborFramebuffers)
+            if (framebuffer != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::RenderPass, [vkd, device, framebuffer] { vkd.DestroyFramebuffer(device, framebuffer, nullptr); });
+        if (pass != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::RenderPass, [vkd, device, pass] { vkd.DestroyRenderPass(device, pass, nullptr); });
+        if (unormPass != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::RenderPass, [vkd, device, unormPass] { vkd.DestroyRenderPass(device, unormPass, nullptr); });
+
+        for (auto pipeline : {edgePipe, blendPipe, neighborPipe})
+            if (pipeline != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Pipeline, [vkd, device, pipeline] { vkd.DestroyPipeline(device, pipeline, nullptr); });
     }
 } // namespace VKIntox

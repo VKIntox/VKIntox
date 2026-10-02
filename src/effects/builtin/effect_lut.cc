@@ -1,5 +1,7 @@
 #include "effect_lut.hh"
 
+#include "vk_handle.hh"
+
 #include <cstring>
 #include <stdexcept>
 
@@ -125,14 +127,38 @@ namespace VKIntox
     LutEffect::~LutEffect()
     {
         // Skip cleanup if init() was never called (e.g., constructor threw exception)
-        if (!pLogicalDevice)
+        if (!pLogicalDevice || pLogicalDevice->device == VK_NULL_HANDLE)
             return;
 
-        pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, lutImageView, nullptr);
-        pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, lutImage, nullptr);
-        pLogicalDevice->vkd.DestroyDescriptorSetLayout(pLogicalDevice->device, lutDescriptorSetLayout, nullptr);
-        pLogicalDevice->vkd.DestroyDescriptorPool(pLogicalDevice->device, lutDescriptorPool, nullptr);
-        pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, lutMemory, nullptr);
+        // Handed to the deferred queue rather than released here, for the same
+        // reason as every other owner: nothing is destroyed at scope exit, so a
+        // teardown that races the GPU cannot pull a handle out from under an
+        // in-flight command buffer. The queue releases at the next swapchain
+        // teardown or device destroy, where QueueWaitIdle has already run.
+        //
+        // Registration order is the reverse of release order within a phase, so
+        // the image goes in before its view: that way the view is destroyed
+        // first, and the memory last of all.
+        auto& queue   = DeferredDestroyQueue::instance();
+        auto  device = pLogicalDevice->device;
+        auto& vkd    = pLogicalDevice->vkd;
+
+        const VkDeviceMemory        memory    = lutMemory;
+        const VkImage               image     = lutImage;
+        const VkImageView           view      = lutImageView;
+        const VkDescriptorSetLayout dsLayout  = lutDescriptorSetLayout;
+        const VkDescriptorPool      dsPool    = lutDescriptorPool;
+
+        if (memory != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Memory, [vkd, device, memory] { vkd.FreeMemory(device, memory, nullptr); });
+        if (image != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, image] { vkd.DestroyImage(device, image, nullptr); });
+        if (view != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, view] { vkd.DestroyImageView(device, view, nullptr); });
+        if (dsLayout != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Layout, [vkd, device, dsLayout] { vkd.DestroyDescriptorSetLayout(device, dsLayout, nullptr); });
+        if (dsPool != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Descriptor, [vkd, device, dsPool] { vkd.DestroyDescriptorPool(device, dsPool, nullptr); });
     }
     void LutEffect::applyEffect(uint32_t imageIndex, VkCommandBuffer commandBuffer)
     {

@@ -1,5 +1,7 @@
 #include "effect_simple.hh"
 
+#include "vk_handle.hh"
+
 #include <cstring>
 
 #include "image_view.hh"
@@ -155,24 +157,71 @@ namespace VKIntox
         Logger::debug("destroying SimpleEffect " + convertToString(this));
 
         // Skip cleanup if init() was never called (e.g., constructor threw exception)
-        if (!pLogicalDevice)
+        if (!pLogicalDevice || pLogicalDevice->device == VK_NULL_HANDLE)
             return;
 
-        pLogicalDevice->vkd.DestroyPipeline(pLogicalDevice->device, graphicsPipeline, nullptr);
-        pLogicalDevice->vkd.DestroyPipelineLayout(pLogicalDevice->device, pipelineLayout, nullptr);
-        pLogicalDevice->vkd.DestroyRenderPass(pLogicalDevice->device, renderPass, nullptr);
-        pLogicalDevice->vkd.DestroyDescriptorSetLayout(pLogicalDevice->device, imageSamplerDescriptorSetLayout, nullptr);
-        pLogicalDevice->vkd.DestroyShaderModule(pLogicalDevice->device, vertexModule, nullptr);
-        pLogicalDevice->vkd.DestroyShaderModule(pLogicalDevice->device, fragmentModule, nullptr);
+        // Deferred like every other owner, so nothing is destroyed at scope exit
+        // while the GPU may still be reading it.
+        auto& queue   = DeferredDestroyQueue::instance();
+        auto  device = pLogicalDevice->device;
+        auto& vkd    = pLogicalDevice->vkd;
 
-        pLogicalDevice->vkd.DestroyDescriptorPool(pLogicalDevice->device, descriptorPool, nullptr);
-        for (unsigned int i = 0; i < framebuffers.size(); i++)
+        const VkPipeline           pipeline    = graphicsPipeline;
+        const VkPipelineLayout     pipelineLay = pipelineLayout;
+        const VkRenderPass         pass        = renderPass;
+        const VkDescriptorSetLayout dsLayout    = imageSamplerDescriptorSetLayout;
+        const VkDescriptorPool     dsPool      = descriptorPool;
+        const VkShaderModule       vert        = vertexModule;
+        const VkShaderModule       frag        = fragmentModule;
+        const VkSampler            smp         = sampler;
+
+        // Pipeline before its layout, and the layout before the set layouts it
+        // names, which the phase ordering already guarantees; within Layout the
+        // reverse-registration rule means the pipeline layout must be pushed last.
+        if (dsLayout != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Layout, [vkd, device, dsLayout] { vkd.DestroyDescriptorSetLayout(device, dsLayout, nullptr); });
+        if (pipelineLay != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Layout, [vkd, device, pipelineLay] { vkd.DestroyPipelineLayout(device, pipelineLay, nullptr); });
+
+        if (dsPool != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Descriptor, [vkd, device, dsPool] { vkd.DestroyDescriptorPool(device, dsPool, nullptr); });
+
+        // Framebuffers reference the render pass and the image views, so they go
+        // in the RenderPass phase, which the queue releases before Layout and
+        // Resource. The old destructor relied on them merely being adjacent lines.
+        for (auto framebuffer : framebuffers)
         {
-            pLogicalDevice->vkd.DestroyFramebuffer(pLogicalDevice->device, framebuffers[i], nullptr);
-            pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, inputImageViews[i], nullptr);
-            pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, outputImageViews[i], nullptr);
+            if (framebuffer != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::RenderPass, [vkd, device, framebuffer] { vkd.DestroyFramebuffer(device, framebuffer, nullptr); });
         }
-        Logger::debug("after DestroyImageView");
-        pLogicalDevice->vkd.DestroySampler(pLogicalDevice->device, sampler, nullptr);
+        if (pass != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::RenderPass, [vkd, device, pass] { vkd.DestroyRenderPass(device, pass, nullptr); });
+
+        if (pipeline != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Pipeline, [vkd, device, pipeline] { vkd.DestroyPipeline(device, pipeline, nullptr); });
+
+        if (vert != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, vert] { vkd.DestroyShaderModule(device, vert, nullptr); });
+        if (frag != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, frag] { vkd.DestroyShaderModule(device, frag, nullptr); });
+        if (smp != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, smp] { vkd.DestroySampler(device, smp, nullptr); });
+
+        // These were walked in a single loop alongside framebuffers, indexed by
+        // the same i, so a framebuffers vector shorter than either view vector
+        // walked off the end of it. Nothing guaranteed the three stay in step --
+        // framebuffers are built per swapchain image while the view vectors come
+        // from the caller. Walking each vector on its own removes the coupling
+        // and releases views that a short framebuffers vector would have leaked.
+        for (auto view : inputImageViews)
+        {
+            if (view != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, view] { vkd.DestroyImageView(device, view, nullptr); });
+        }
+        for (auto view : outputImageViews)
+        {
+            if (view != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, view] { vkd.DestroyImageView(device, view, nullptr); });
+        }
     }
 } // namespace VKIntox
