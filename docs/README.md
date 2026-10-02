@@ -90,10 +90,9 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 -   **settings:** changing in-game graphics quality often causes crashes.
 -   **wine:** games utilizing dxvk/vkd3d might break and anti-cheat could get you moderated.
 
-> [!NOTE]
+> [!WARNING]
 > upgrading from v1.0.2? back up your `.conf` files first.
-> auto-migration to `.ini` (native reshade format) may fail and malform values. manual conversion required if broken.
-> migration logic will be removed soon; this issue is wontfix.
+> v0.1.2 removed the `.conf` → `.ini` auto-migration, so nothing will convert your shaders for you any more. convert by hand, or stay on v0.1.1, which is the last release that can do it for you.
 
 issues are welcome!
 
