@@ -14,6 +14,13 @@
 
 set -euo pipefail
 
+# resolved from the script's own location rather than the cwd, so the shader
+# fixtures are found when this is invoked from anywhere -- CI in particular runs
+# it through xvfb-run from the repository root, and a cwd-relative path would
+# quietly seed no effect at all, turning the run into a pass-through test that
+# looks like it passed.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 LIBRARY="${1:-build/src/libvkintox.so}"
 DURATION="${2:-11}"
 LAYER_NAME="VK_LAYER_VKINTOX_smoke_test"
@@ -122,67 +129,32 @@ depthSourceChannel = 0
 depthInvert = false
 CONF
 
-    # The effect itself. It declares a texture with the ": DEPTH" semantic, which
-    # is precisely what the layer's parser looks for when deciding an effect
-    # needs the resolved depth buffer, and PostProcessVS is the standard
-    # bufferless fullscreen-triangle vertex shader. Written here rather than
-    # vendored from ReShade's DisplayDepth.fx so the smoke test needs no
-    # third-party shader and CI needs no network.
-    cat >"$base/reshade/packages/Shaders/SmokeDepth.fx" <<'FX'
-namespace ReShade
-{
-    texture BackBufferTex : COLOR;
-    texture DepthBufferTex : DEPTH;
-
-    sampler BackBuffer { Texture = BackBufferTex; };
-    sampler DepthBuffer { Texture = DepthBufferTex; };
-}
-
-uniform float fDepthScale <
-    ui_type = "slider";
-    ui_min = 0.0;
-    ui_max = 8.0;
-    ui_label = "Depth Scale";
-> = 1.0;
-
-void PostProcessVS(in uint id : SV_VertexID, out float4 position : SV_Position, out float2 texcoord : TEXCOORD)
-{
-    texcoord.x = (id == 2) ? 2.0 : 0.0;
-    texcoord.y = (id == 1) ? 2.0 : 0.0;
-    position = float4(texcoord * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
-}
-
-void PS(in float4 position : SV_Position, in float2 texcoord : TEXCOORD, out float4 color : SV_Target)
-{
-    const float depth = tex2Dlod(ReShade::DepthBuffer, float4(texcoord, 0, 0)).x;
-    const float3 base = tex2D(ReShade::BackBuffer, texcoord).rgb;
-    color = float4(base * saturate(depth * fDepthScale), 1.0);
-}
-
-technique SmokeDepth
-{
-    pass
-    {
-        VertexShader = PostProcessVS;
-        PixelShader = PS;
-    }
-}
-FX
+    # The effect is a real, community-maintained ReShade shader rather than
+    # something written for this test. That matters: a hand-written effect proved
+    # the depth path ran, but exercised almost none of the compile pipeline. This
+    # one carries uniform preprocessor definitions, a localisation include and a
+    # large UI parameter set, so it goes through the same machinery a user's shader
+    # does. The files live in src/tests/fixtures -- see the README there for
+    # provenance and the open licence question on two of the three.
+    local fixtures="$SCRIPT_DIR/fixtures"
+    for fixture in DisplayDepth.fx ReShade.fxh DisplayDepth_L10N.fxh; do
+        [[ -f "$fixtures/$fixture" ]] || die "missing test fixture: $fixtures/$fixture"
+        cp "$fixtures/$fixture" "$base/reshade/packages/Shaders/$fixture"
+    done
 
     # vkcube is the game name the layer derives from the process, so the config
-    # and profile files are keyed on it.
+    # and profile files are keyed on it. Parameters are deliberately omitted so the
+    # effect runs on the defaults declared in the shader itself.
     cat >"$base/configs/vkcube.conf" <<'CONF'
-SmokeDepth = SmokeDepth.fx
-SmokeDepth.fDepthScale = 1.0
-effects = SmokeDepth
+DisplayDepth = DisplayDepth.fx
+effects = DisplayDepth
 CONF
 
     cat >"$base/configs/shaders/vkcube@smoke.ini" <<'INI'
-Techniques=SmokeDepth@SmokeDepth.fx
-TechniqueSorting=SmokeDepth@SmokeDepth.fx
+Techniques=DisplayDepth@DisplayDepth.fx
+TechniqueSorting=DisplayDepth@DisplayDepth.fx
 
-[SmokeDepth.fx]
-fDepthScale=1.0
+[DisplayDepth.fx]
 INI
 
     printf 'smoke\n' >"$base/configs/shaders/vkcube.last-profile"
@@ -227,8 +199,36 @@ LAYER_LOG="$CONFIG_DIR/VKIntox/vkintox.log"
 if [[ -s "$LAYER_LOG" ]]; then
     ok "layer engaged ($(wc -l <"$LAYER_LOG") log lines)"
 else
-    warn "layer loaded but wrote no log; it may not have reached initialisation"
+    die "layer loaded but wrote no log; it may not have reached initialisation"
 fi
+
+# Assert the effect actually engaged, not merely that the layer loaded.
+#
+# Without this the test degrades silently. Every reason the seed can fail -- a
+# fixture not copied, a shader that stops compiling, an effect name that no
+# longer resolves -- results in the layer running with nothing enabled, taking
+# the pass-through path and surviving. The run still reports PASSED, having
+# asserted almost nothing.
+#
+# "~ReshadeEffect start: DisplayDepth passRuntimes=1" is the signal worth having:
+# it only appears once the shader has been found, parsed, compiled, and turned
+# into at least one render pass. Requiring passRuntimes to be non-zero is the part
+# that matters, since zero would mean the effect object exists but never got a
+# pipeline and so never drew anything.
+if ! grep -qE '~ReshadeEffect start: DisplayDepth passRuntimes=[1-9]' "$LAYER_LOG"; then
+    printf '%s\n' "--- layer log ---" >&2
+    cat "$LAYER_LOG" >&2
+    die "DisplayDepth never produced a render pass, so this run exercised the pass-through path and proves nothing about the effect pipeline. The log above shows whether the shader was found and compiled."
+fi
+ok "DisplayDepth compiled and built a render pass"
+
+# And assert depth was genuinely captured. An effect that declares it wants depth
+# still renders without it, just with a wrong-looking image, so a surviving run
+# cannot tell the two apart on its own.
+if ! grep -q 'depth resolve source view changed' "$LAYER_LOG"; then
+    die "no depth resolve activity in the log. DisplayDepth uses depth, so either capture is off or the depth attachment never arrived; the run survived but never exercised the path it exists to test."
+fi
+ok "depth resolve engaged"
 
 # 124 is what timeout reports when it had to stop the process, which is the only
 # outcome that means "still alive when we stopped watching".
