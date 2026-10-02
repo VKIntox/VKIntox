@@ -52,20 +52,39 @@ namespace VKIntox
 
             destroyDepthResolveResources(this);
 
-            for (VkDeviceMemory mem : fakeImageMemories)
-                pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, mem, nullptr);
-            fakeImageMemories.clear();
-
+            // Images before the memory backing them. These two loops used to run
+            // the other way round, which freed every allocation while the image
+            // living in it was still alive -- destroying an image whose memory has
+            // already been returned is a use-after-free, and it is the exact
+            // ordering the deferred queue exists to enforce everywhere else.
+            // QueueWaitIdle above is what makes it safe to do either way round
+            // from the GPU's perspective, but not from the allocator's.
             for (uint32_t i = 0; i < fakeImages.size(); i++)
             {
                 pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, fakeImages[i], nullptr);
             }
 
-            for (unsigned int i = 0; i < imageCount; i++)
+            for (VkDeviceMemory mem : fakeImageMemories)
+                pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, mem, nullptr);
+            fakeImageMemories.clear();
+
+            // Walked per vector rather than indexed by imageCount: the two
+            // semaphore vectors are filled in at different points during
+            // setup, and a short one would be read past its end. Same coupling
+            // that bit SmaaEffect and SimpleEffect.
+            for (auto sem : semaphores)
             {
-                pLogicalDevice->vkd.DestroySemaphore(pLogicalDevice->device, semaphores[i], nullptr);
-                pLogicalDevice->vkd.DestroySemaphore(pLogicalDevice->device, overlaySemaphores[i], nullptr);
+                if (sem != VK_NULL_HANDLE)
+                    pLogicalDevice->vkd.DestroySemaphore(pLogicalDevice->device, sem, nullptr);
             }
+            semaphores.clear();
+
+            for (auto sem : overlaySemaphores)
+            {
+                if (sem != VK_NULL_HANDLE)
+                    pLogicalDevice->vkd.DestroySemaphore(pLogicalDevice->device, sem, nullptr);
+            }
+            overlaySemaphores.clear();
 
             // Destroy per-image effect submit fences
             for (VkFence f : effectSubmitFences)

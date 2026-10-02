@@ -145,10 +145,17 @@ namespace VKIntox
                 Logger::err("createFakeSwapchainImages: per-image AllocateMemory[" + std::to_string(i)
                              + "] failed: " + std::to_string(result));
                 // Free everything allocated so far
-                for (VkDeviceMemory m : deviceMemories)
-                    pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, m, nullptr);
+                // Images before their memory, in this rollback and the two
+                // below it. Freeing the allocation first returns it to the
+                // driver while the image bound to it is still alive, and
+                // destroying an image whose memory has been freed is a
+                // use-after-free. On a failure path that is the worst place to
+                // have one: it turns a clean "could not allocate" into a crash
+                // or a corrupted heap.
                 for (VkImage img : fakeImages)
                     pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, img, nullptr);
+                for (VkDeviceMemory m : deviceMemories)
+                    pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, m, nullptr);
                 return {};
             }
 
@@ -158,10 +165,17 @@ namespace VKIntox
                 Logger::err("createFakeSwapchainImages: per-image BindImageMemory[" + std::to_string(i)
                              + "] failed: " + std::to_string(result));
                 pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, imgMem, nullptr);
-                for (VkDeviceMemory m : deviceMemories)
-                    pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, m, nullptr);
+                // Images before their memory, in this rollback and the two
+                // below it. Freeing the allocation first returns it to the
+                // driver while the image bound to it is still alive, and
+                // destroying an image whose memory has been freed is a
+                // use-after-free. On a failure path that is the worst place to
+                // have one: it turns a clean "could not allocate" into a crash
+                // or a corrupted heap.
                 for (VkImage img : fakeImages)
                     pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, img, nullptr);
+                for (VkDeviceMemory m : deviceMemories)
+                    pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, m, nullptr);
                 return {};
             }
 
