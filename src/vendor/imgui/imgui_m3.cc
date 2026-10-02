@@ -1,12 +1,10 @@
 //-----------------------------------------------------------------------------
 // Material 3 Expressive theming — implementation.
 //
-// The scheme is generated the way material-color-utilities does it: a seed
-// colour becomes HCT, the variant picks the chroma/hue of each of the six
-// palettes, and each role is then read off a palette at a tone. The role→tone
-// table is transcribed from material-web's `_md-sys-color*.scss` (v34.0.21),
-// including the medium/high contrast variants, so the hexes line up with the
-// official Material Theme Builder output.
+// scheme generation follows material-color-utilities: seed → HCT, variant picks
+// each palette's chroma/hue, roles read off a palette at a tone. the role→tone
+// table is transcribed from material-web `_md-sys-color*.scss` (v34.0.21), so
+// the hexes match the Theme Builder.
 //-----------------------------------------------------------------------------
 
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
@@ -291,9 +289,9 @@ static ImVec4 Vec4FromArgb(uint32_t argb)
                   (float)alphaFromArgb(argb) / 255.0f);
 }
 
-// Packs without applying ImGui's global style alpha: theme colours must survive
-// g.Style.Alpha untouched, since that alpha is a runtime knob (toasts, dimming)
-// and is already applied by GetColorU32().
+// packs without imgui's global style alpha. theme colours must survive
+// g.Style.Alpha, which is a runtime knob (toasts, dimming) that GetColorU32()
+// already applies.
 static ImU32 PackU32(const ImVec4& c)
 {
     const ImU32 r = (ImU32)clampInt(0, 255, (int)(ImSaturate(c.x) * 255.0f + 0.5f));
@@ -387,8 +385,8 @@ static void BuildPalettes(uint32_t source_argb, ImGuiM3Variant variant, bool dar
         n2_chroma = 8.0;
         break;
     case ImGuiM3Variant_Expressive:
-        // 2025 Expressive keeps the source hue for primary. The old 2021 rule
-        // rotated primary by +240°, turning a violet seed into the cyan UI.
+        // 2025 keeps the source hue for primary. the 2021 rule rotated it +240°
+        // and turned a violet seed into a cyan UI.
         p1_hue = hue;                               p1_chroma = dark ? 36.0 : 48.0;
         p2_hue = RotatedHue(hue, kExpSecBreak, kExpSecRot, nSec);  p2_chroma = dark ? 16.0 : 24.0;
         p3_hue = RotatedHue(hue, kExpTerBreak, kExpTerRot, nTer);  p3_chroma = 48.0;
@@ -427,8 +425,8 @@ struct ThemeState
     ImGuiM3Contrast            contrast = ImGuiM3Contrast_Standard;
     bool                       dark = true;
     ImVec4                     colors[ImGuiM3Role_COUNT];
-    // Explicit per-role overrides from the .colors file. role_flags has a bit per
-    // role: set means "this came from the file, do not derive it".
+    // per-role overrides from the .colors file. role_flags has a bit per role:
+    // set means "came from the file, don't derive it".
     uint64_t                   role_flags[2] = {0, 0};
     ImVec4                     overrides[ImGuiM3Role_COUNT];
     ImGuiM3Metrics             metrics;
@@ -443,8 +441,7 @@ struct ThemeState
     uint64_t                   file_size = 0;
     bool                       file_existed = false;
     double                     last_poll_time = 0.0;
-    // Live editor state. RGBA so ColorEdit4 does not read past the array; kept
-    // synced from `source` by ResolveTheme().
+    // live editor state. RGBA so ColorEdit4 doesn't read past the array.
     bool                       picker_open = false;
     float                      source_rgba[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 };
@@ -455,9 +452,8 @@ static ThemeState g_theme;
 // so the shutdown hook can clear it alongside the rest of the theme state.
 static ImFont* g_icon_font = nullptr;
 
-// The 2025 reference palette for `#6750A4`, used as the shipped preset so the
-// first run is exactly the Material baseline rather than a re-derived
-// approximation of it.
+// 2025 reference palette for #6750A4, shipped as the preset so the first run is
+// the real baseline and not a re-derived approximation.
 struct PresetHexes { const char* role; uint32_t light; uint32_t dark; };
 
 static const PresetHexes g_baseline_preset[ImGuiM3Role_COUNT] = {
@@ -532,8 +528,8 @@ static void ResolveTheme()
     if (!g_theme.initialised)
         return;
 
-    // Shipped preset: the exact 2025 baseline hexes. Any source other than the
-    // baseline gets derived, and any role present in the file wins over both.
+    // shipped preset: exact 2025 baseline hexes. other sources get derived, and
+    // roles in the file win over both.
     if (g_theme.source == 0xFF6750A4 && g_theme.variant == ImGuiM3Variant_TonalSpot && g_theme.contrast == ImGuiM3Contrast_Standard)
     {
         for (int i = 0; i < ImGuiM3Role_COUNT; i++)
@@ -561,8 +557,7 @@ static void ResolveTheme()
         if (RoleOverridden((ImGuiM3Role)i))
             g_theme.colors[i] = g_theme.overrides[i];
 
-    // Publish the source as editable RGB so the theme editor cannot drift from
-    // the resolved palette.
+    // publish source as editable RGB so the editor can't drift from the palette.
     g_theme.source_rgba[0] = (float)redFromArgb(g_theme.source) / 255.0f;
     g_theme.source_rgba[1] = (float)greenFromArgb(g_theme.source) / 255.0f;
     g_theme.source_rgba[2] = (float)blueFromArgb(g_theme.source) / 255.0f;
@@ -651,7 +646,7 @@ static std::string Lowercase(std::string s)
     return s;
 }
 
-// Accepts #rgb, #rgba, #rrggbb, #rrggbbaa, 0x-prefixed forms and 0..255 triplets.
+// #rgb, #rgba, #rrggbb, #rrggbbaa, 0x-prefixed, 0..255 triplets.
 static bool ParseColor(const std::string& text, ImVec4* out)
 {
     std::string s = Trim(text);
@@ -699,16 +694,15 @@ static bool ParseColor(const std::string& text, ImVec4* out)
     return true;
 }
 
-// Parses the whole file into the theme state. Never fails hard: a bad line is
-// collected into `error` and skipped, so one typo cannot black out the overlay.
+// never fails hard: a bad line goes into `error` and is skipped, so one typo
+// can't black out the overlay.
 static void LoadThemeFile(const std::string& path)
 {
     std::ifstream file(path);
     if (!file.is_open())
         return;
 
-    // Reset to defaults before applying the file, so removing a line from the
-    // file actually removes the override.
+    // reset to defaults first, so deleting a line really removes the override.
     g_theme.role_flags[0] = 0;
     g_theme.role_flags[1] = 0;
     g_theme.metrics = ImGuiM3Metrics();
@@ -724,23 +718,20 @@ static void LoadThemeFile(const std::string& path)
     std::string line;
     std::string err;
 
-    // Role lines are collected and applied after the whole file is read, so we
-    // can tell a generated snapshot (matches the derivation) from a deliberate
-    // pin (differs). See the reconciliation block below.
+    // role lines are applied after the whole file is read, so a generated
+    // snapshot can be told from a hand-edited pin.
     ImVec4 file_roles[ImGuiM3Role_COUNT];
     bool   file_role_seen[ImGuiM3Role_COUNT] = {false};
 
     while (std::getline(file, line))
     {
         line_no++;
-        // Strip comments. '#' is both a comment marker and a colour prefix, so
-        // only treat it as a comment when it is not the first non-space char.
+        // strip comments. '#' is also a colour prefix, so only treat it as a
+        // comment when it isn't the first non-space char; a hash after '=' is a
+        // value. the old test ate every colour value.
         const size_t hash = line.find('#');
         const size_t first_nonspace = line.find_first_not_of(" \t");
         const size_t equals_before_hash = line.find('=');
-        // A hash after '=' is a colour value (`primary = #ff00aa`), not a
-        // comment. The previous test stripped every colour value because it
-        // appeared after the key's first character.
         if (hash != std::string::npos && hash != first_nonspace &&
             (equals_before_hash == std::string::npos || hash < equals_before_hash))
             line = line.substr(0, hash);
@@ -787,8 +778,8 @@ static void LoadThemeFile(const std::string& path)
         }
         else if (key == "generated")
         {
-            // Kept for file compatibility; whether a sheet was generated is now
-            // inferred per role, so this flag no longer suppresses overrides.
+            // kept for file compatibility; generation is now inferred per role,
+            // so this no longer suppresses overrides.
             applied++;
         }
         else if (key == "contrast")
@@ -859,12 +850,10 @@ static void LoadThemeFile(const std::string& path)
         }
     }
 
-    // Derive the palette from source/variant/contrast with no overrides applied
-    // (they were cleared above), then reconcile the file's role lines against
-    // it. A line equal to the derivation is a regenerated snapshot and stays
-    // derived; a line that differs was edited by hand and is pinned. This makes
-    // write→reload idempotent while still honouring a user's hex edit, which the
-    // old `generated = true` check silently discarded.
+    // derive from source/variant/contrast, then reconcile the file's role lines:
+    // a line equal to the derivation stays derived, a differing one is pinned.
+    // makes write→reload idempotent without dropping hand edits, which the old
+    // `generated = true` check silently discarded.
     ResolveTheme();
     for (int i = 0; i < ImGuiM3Role_COUNT; i++)
     {
@@ -934,9 +923,8 @@ ImVec4 ImGuiM3Elevate(ImGuiM3Role role, int level)
     const ImVec4 base = ImGuiM3Color(role);
     if (level == 0)
         return base;
-    // The 2025 spec dropped per-level tint opacities in favour of the surface
-    // container roles, but the legacy blend is still the honest way to nudge a
-    // caller-supplied role upward, so keep it available.
+    // 2025 dropped per-level tint opacities, but the legacy blend is still a
+    // fine way to nudge a role upward. kept for callers.
     return Over(base, WithAlpha(ImGuiM3Color(ImGuiM3Role_SurfaceTint), g_theme.metrics.elevation_tint[level]));
 }
 
@@ -1020,9 +1008,8 @@ bool ImGuiM3WriteThemeFile(const char* path)
     out += "generated = true\n";
     out += "source   = ";
     {
-        // `source` is packed 0xAARRGGBB (argbFromRgb), unlike a role's
-        // IM_COL32-packed value, so it must be written byte-by-byte. Going
-        // through WriteU32Color() swapped red and blue on every save.
+        // `source` is 0xAARRGGBB (argbFromRgb), not IM_COL32 order, so it has
+        // to be written byte-by-byte. WriteU32Color() swapped red and blue.
         char sbuf[16];
         snprintf(sbuf, sizeof(sbuf), "#%02x%02x%02x",
                  (unsigned)redFromArgb(g_theme.source), (unsigned)greenFromArgb(g_theme.source),
@@ -1097,7 +1084,7 @@ bool ImGuiM3WriteThemeFile(const char* path)
     out += "spring_effects_slow_damping      = " + std::to_string(m.spring_effects_slow_damping) + "\n";
     out += "spring_effects_slow_stiffness    = " + std::to_string(m.spring_effects_slow_stiffness) + "\n";
 
-    // Write via a temp file + rename so a reader never sees a half-written theme.
+    // temp file + rename, so a reader never sees a half-written theme.
     const std::string tmp = std::string(path) + ".tmp";
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
@@ -1118,9 +1105,9 @@ bool ImGuiM3WriteThemeFile(const char* path)
         return false;
     }
 
-    // Adopt the freshly written file's identity so the 4Hz poll does not see our
-    // own write as an external edit and reload it a frame later. That reload was
-    // the source of the "theme flips back on its own" behaviour.
+    // adopt the new file's identity so the 4Hz poll doesn't read our own write
+    // as an external edit and reload a frame later. that was the "theme flips
+    // back on its own" behaviour.
     uint64_t mtime = 0, size = 0;
     bool exists = false;
     StatFile(path, &mtime, &size, &exists);
@@ -1208,8 +1195,8 @@ bool ImGuiM3SetThemeFile(const char* path)
     }
     else
     {
-        // Ship the preset so the user has something to edit. This is also the
-        // path a fresh install takes, so the file always exists afterwards.
+        // ship the preset so there's something to edit. fresh installs land
+        // here too, so the file always exists.
         ImGuiM3WriteThemeFile(g_theme.file_path.c_str());
         StatFile(g_theme.file_path, &mtime, &size, &exists);
         g_theme.file_existed = exists;
@@ -1237,8 +1224,8 @@ void ImGuiM3Shutdown()
 }
 
 //-----------------------------------------------------------------------------
-// Style application. Every one of ImGui's 63 ImGuiCol_ slots is filled from a
-// role, so nothing is left on ImGui's purple defaults.
+// Style application. all 63 ImGuiCol_ slots filled from roles, so nothing is
+// left on imgui's purple defaults.
 //-----------------------------------------------------------------------------
 
 void ImGuiM3ApplyToStyle(float ui_scale)
@@ -1249,8 +1236,8 @@ void ImGuiM3ApplyToStyle(float ui_scale)
         ResolveTheme();
     }
 
-    // The style is only reachable once a context exists. Token resolution still
-    // works without one, which is what lets the theme be tested headless.
+    // style needs a context; token resolution doesn't, which is what makes the
+    // theme testable headless.
     if (ImGui::GetCurrentContext() == nullptr)
         return;
 
@@ -1296,8 +1283,8 @@ void ImGuiM3ApplyToStyle(float ui_scale)
     c[ImGuiCol_TextLink]              = primary;
     c[ImGuiCol_TextSelectedBg]        = WithAlpha(primary, 0.32f);
 
-    // Surfaces. Menus and dialogs sit on surface-container-high; the desktop
-    // shell sits on plain surface so child cards can lift off it.
+    // menus/dialogs sit on surface-container-high, the shell on plain surface
+    // so child cards lift off it.
     c[ImGuiCol_WindowBg]             = surface;
     c[ImGuiCol_ChildBg]              = WithAlpha(sc, 0.0f);
     c[ImGuiCol_PopupBg]              = sc_high;
@@ -1313,8 +1300,7 @@ void ImGuiM3ApplyToStyle(float ui_scale)
     c[ImGuiCol_TableBorderStrong]    = outline;
     c[ImGuiCol_TableBorderLight]     = outline_variant;
 
-    // Frames: M3 text fields are surface-container-high with no border, and the
-    // hover/press states are state layers rather than different fills.
+    // text fields: surface-container-high, no border, hover/press as layers.
     c[ImGuiCol_FrameBg]              = sc_high;
     c[ImGuiCol_FrameBgHovered]       = Over(sc_high, hover_on_surface);
     c[ImGuiCol_FrameBgActive]        = Over(sc_high, pressed_on_surface);
@@ -1348,8 +1334,7 @@ void ImGuiM3ApplyToStyle(float ui_scale)
     c[ImGuiCol_ResizeGripHovered]    = WithAlpha(primary, 0.6f);
     c[ImGuiCol_ResizeGripActive]     = primary;
 
-    // Tabs: primary tabs carry a pill indicator, so the background stays clear
-    // and the indicator is drawn separately.
+    // tabs: pill indicator drawn separately, background stays clear.
     c[ImGuiCol_TabHovered]           = hover_on_surface;
     c[ImGuiCol_Tab]                  = WithAlpha(on_surface, 0.0f);
     c[ImGuiCol_TabSelected]          = WithAlpha(primary, 0.0f);

@@ -436,12 +436,8 @@ with open(path, "w", encoding="utf-8") as f:
 PYEOF
 say "depth inversion default: $DEPTH_INVERT"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version"
-# Google Sans Flex is instantiated into the M3 type weights at build time; the
-# Material Symbols subset carries the UI icons VKIntox references by codepoint.
-# When run from a checkout (the local flatpak path), take the fonts straight
-# from the tree — they are only on raw.githubusercontent once pushed to main, so
-# curl would silently seed nothing for a fresh or experimental build. Fall back
-# to downloading when the script came in over the pipe with no repo around.
+# fonts aren't on raw.githubusercontent until pushed to main, so a local flatpak
+# build would silently seed nothing. prefer the checkout, else download.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FONT_SRC=""
 if [[ -f "$SCRIPT_DIR/../assets/font/MaterialSymbolsRounded-subset.ttf" ]]; then

@@ -3234,12 +3234,9 @@ bool ImGui::SliderBehaviorT(const ImRect& bb, ImGuiID id, ImGuiDataType data_typ
         grab_sz = ImMax(slider_sz / (v_range_f + 1), style.GrabMinSize); // For integer sliders: if possible have the grab size represent 1 unit
     grab_sz = ImMin(grab_sz, slider_sz);
 
-    // VKIntox M3: the renderer parks a 4dp pill flush against the track ends at
-    // the extremes, so the clickable span must be inset by the *drawn*
-    // half-handle rather than ImGui's default `2px + grab_sz/2`. Using the same
-    // geometry for input and output keeps the hitbox under the visible thumb;
-    // otherwise clicking just inside the pill already reported the end value
-    // and the two drifted apart by (half_handle - grab_padding - grab_sz/2).
+    // VKIntox M3: inset the clickable span by the drawn half-handle so it matches
+    // where the renderer actually puts the thumb. default is 2px + grab_sz/2,
+    // which left the hitbox short of the visible pill.
     float slider_usable_pos_min = bb.Min[axis] + grab_padding + grab_sz * 0.5f;
     float slider_usable_pos_max = bb.Max[axis] - grab_padding - grab_sz * 0.5f;
     if (axis == ImGuiAxis_X)
@@ -3502,9 +3499,8 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
         return TempInputScalar(frame_bb, id, label, data_type, p_data, format, clamp_enabled ? p_min : NULL, clamp_enabled ? p_max : NULL);
     }
 
-    // VKIntox M3 Expressive slider: a 16dp inactive track, a `primary` active
-    // track from the origin, and a 4x44dp pill handle. ImGui's own frame is kept
-    // transparent because the tracks *are* the container here.
+    // VKIntox M3 Expressive slider: 16dp inactive track, `primary` active
+    // track, 4x44dp pill handle. the frame itself stays transparent.
     const ImGuiM3Metrics& m3 = ImGuiM3GetMetrics();
     RenderNavCursor(frame_bb, id);
     if (color_marker != 0 && style.ColorMarkerSize > 0.0f)
@@ -3516,9 +3512,8 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     if (value_changed)
         MarkItemEdited(id);
 
-    // Render tracks (M3 Expressive, XS): 16dp track with `corner-full` outer
-    // ends and rounded thumb-facing corners; a 6dp gap separates each track
-    // segment from the 4x44dp handle, which halves to 2dp while dragging.
+    // 16dp track, `corner-full` on the outer ends, rounded corners facing the
+    // thumb, and a 6dp gap on each side of the pill.
     const float track_h = m3.slider_track_height * m3.density;
     const float handle_h = m3.slider_handle_height * m3.density;
     const float external_r = track_h * 0.5f;
@@ -3537,14 +3532,9 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     const ImU32 active_col = ImGuiM3ColorU32(ImGuiM3Role_Primary);
     if (track_rect.GetWidth() > 0.0f)
     {
-        // The pill sits inside the track with a 6dp gap on each side, even at
-        // the extremes: the active segment always stops `gap` short of the
-        // handle, so max still reads as "filled up to here" rather than the
-        // colour merging into the thumb. The inactive segment only exists when
-        // it fits on the far side; when it doesn't, the track simply ends at the
-        // gap instead of leaving a floating rounded stub. Corner radii clamp to
-        // half each segment's own width so short slivers (high density) can't
-        // bleed their thumb-facing roundness past the pill.
+        // active always stops `gap` short of the pill, even at max, so the thumb
+        // stays distinct. the inactive side only draws when it fits, and radii
+        // clamp to half a segment's width so short slivers can't bleed past.
         const float pill_left = handle_center.x - half_handle;
         const float pill_right = handle_center.x + half_handle;
         const bool has_inactive = pill_right + gap < track_rect.Max.x;
@@ -3586,23 +3576,15 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     const char* value_buf_end = value_buf + DataTypeFormatString(value_buf, IM_COUNTOF(value_buf), data_type, p_data, format);
     if (g.LogEnabled)
         LogSetNextTextDecoration("{", "}");
-    // The number sits centred over both track segments, so whichever side it lands
-    // on sets its ink. Splitting at the handle's *leading* edge rather than its
-    // centre keeps every glyph on one flat background instead of cutting a digit
-    // in two colours; the primary pill handle itself is only 4dp wide and acts as
-    // a thin divider. A hairline halo behind the glyphs (`shadow`, per the M3
-    // Expressive slider spec) keeps them legible even where a glyph does clip the
-    // handle or the active/inactive boundary.
+    // ink is chosen so the number stays readable: split at the handle gap (never
+    // mid-glyph), and halo the glyphs with `shadow` in case one still lands on
+    // a boundary.
     {
         const bool has_handle = grab_bb.Max.x > grab_bb.Min.x;
-        // Split the value at the gap's left edge: everything to the left of it
-        // sits on the primary track, everything right sits on the dark gap /
-        // inactive side, regardless of value. That boundary is the same one the
-        // segments use, so the ink never spans two backgrounds.
+        // split at the gap's left edge, same boundary the segments use.
         const float active_edge = has_handle ? (handle_center.x - half_handle - gap) : frame_bb.Min.x;
 
-        // The value is the slider's readout, so it takes the emphasized weight:
-        // measure and draw with the bold face (falling back to the body font).
+        // readout is bold.
         ImFont* value_font = ImGuiM3FontBold();
         if (!value_font)
             value_font = GetFont();
@@ -3621,8 +3603,7 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
         auto luma = [](const ImVec4& c) { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; };
         const float lum_primary = luma(c_primary);
         const float lum_inactive = luma(c_inactive);
-        // Weight each candidate ink by how much of the number lies over the bright
-        // (primary) track vs the dark (inactive) track, and take the better scorer.
+        // score both inks by how much of the number sits over each track.
         const float over_active = ImClamp((active_edge - text_left) / ImMax(text_size.x, 1.0f), 0.0f, 1.0f);
         const float score_primary = over_active * ImAbs(luma(c_on_primary) - lum_primary)
                                   + (1.0f - over_active) * ImAbs(luma(c_on_primary) - lum_inactive);
@@ -3632,10 +3613,7 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
         const ImU32 text_col = ImGui::GetColorU32(ink);
         const ImU32 halo_col = ImGui::GetColorU32(ImGui::ColorConvertFloat4ToU32(ImGuiM3Color(ImGuiM3Role_Shadow)), 0.55f);
 
-        // Left portion renders over the primary track, right portion over the
-        // inactive track, but always in the same ink, so no glyph is ever cut in
-        // two colours. When there is no handle (or the number clears it entirely)
-        // a single unclipped draw covers the whole string.
+        // both halves draw in the same ink, so no glyph gets cut in two colours.
         const bool split = has_handle && text_left < active_edge && text_right > active_edge;
         PushFont(value_font, GetFontSize());
         if (split)

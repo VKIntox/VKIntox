@@ -1,28 +1,15 @@
-//-----------------------------------------------------------------------------
 // Material 3 Expressive theming for Dear ImGui.
 //
-// This header is the public surface of VKIntox's M3 Expressive skin. It lives in
-// the vendored ImGui tree on purpose: the theme owns widget drawing, so it has to
-// sit next to imgui_widgets.cc / imgui_draw.cc rather than in a wrapper library
-// that can only restyle ImGuiCol_* after the fact.
+// lives in the vendored tree on purpose: the theme draws widgets, so it has to
+// sit next to imgui_widgets.cc rather than restyle ImGuiCol_* from outside.
 //
-// Three things live here:
-//   1. The complete Material 3 color role set, plus shape / state / motion tokens.
-//   2. A TonalPalette + HCT solver, so a single seed colour produces the whole
-//      scheme exactly the way Matugen and material-color-utilities do.
-//   3. A `.colors` file listing every color token, with live reload.
+// covers the full M3 role set plus shape/state/motion tokens, a TonalPalette +
+// HCT solver like Matugen's, and a `.colors` file with live reload:
 //
-// The file is plain `key = value`, Matugen flavoured:
-//
-//     # VKIntox theme tokens.
 //     variant  = dark
 //     source   = #6750A4
-//     primary  = #CFBCFF
-//     ...
 //
-// Anything set explicitly wins; roles you leave out are derived from `source`, so
-// a one-line file still produces the full scheme.
-//-----------------------------------------------------------------------------
+// anything set explicitly wins; the rest derives from `source`.
 
 #ifndef IMGUI_M3_H_INCLUDED
 #define IMGUI_M3_H_INCLUDED
@@ -509,17 +496,14 @@ IMGUI_API ImGuiM3ShapeRounding ImGuiM3ConnectedSegmentRounding(ImVec2 size, int 
 
 // Draws an M3 state layer over a rect: `role` at `state`'s opacity.
 IMGUI_API void ImGuiM3DrawStateLayer(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, ImGuiM3Role role, ImGuiM3State state);
-// Draws a Material Symbols glyph so its design box (not the taller text line
-// box) is centred in `bb`. Use for standalone icons; icon+label runs should
-// share a baseline instead.
+// centres a Material Symbols glyph on its ink box, not the taller text line
+// box. standalone icons only; icon+label runs share a baseline instead.
 IMGUI_API void ImGuiM3DrawIcon(ImDrawList* draw_list, const char* glyph, const ImRect& bb, float px, ImU32 col);
-// Ink-rect centre of a Material Symbols glyph on both axes, as offsets from the
-// text layout position. Returns false when the glyph can't be resolved so the
-// caller can fall back to advance/line-box centring.
+// ink-box centre on both axes, as offsets from the text layout position. false
+// when the glyph won't resolve, so the caller can fall back.
 IMGUI_API bool ImGuiM3IconInkCenterXY(ImFont* font, float px, const char* glyph, ImVec2& out_center);
-// Vertical distance (px) from the text draw position to the glyph's ink centre.
-// Material Symbols glyphs are centred at 0.5*size, while the font's line box
-// centres at 0.6*size, so line-box centring leaves icons 0.1*size too high.
+// y only. glyphs centre at 0.5*size, the line box at 0.6*size, so line-box
+// centring leaves icons too high.
 IMGUI_API float ImGuiM3IconInkCenter(ImFont* font, float px, const char* glyph);
 // Fill + optional outline, matching M3's container variants.
 IMGUI_API void ImGuiM3DrawContainer(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, ImU32 fill, ImU32 outline, float outline_width);
@@ -530,13 +514,13 @@ IMGUI_API void ImGuiM3PathRoundedRect(ImDrawList* draw_list, const ImRect& bb, I
 // Translucent backdrop, the M3 scrim at 32%.
 IMGUI_API void ImGuiM3DrawScrim(ImDrawList* draw_list, const ImRect& bb);
 
-// Called from ImGui::NewFrame(): reloads the theme file if it changed and clears
-// the spring table. Not public API.
+// from ImGui::NewFrame(): reload the theme file if it changed, clear the
+// spring table. not public API.
 IMGUI_API void ImGuiM3NewFrame();
 IMGUI_API void ImGuiM3Shutdown();
 
-// Picks the surface-container role that best expresses `elevation` on top of
-// `role`. M3 dropped tint-per-level in 2025 in favour of these roles.
+// surface-container role that best expresses `elevation` on `role`. 2025 M3
+// dropped tint-per-level in favour of these roles.
 IMGUI_API ImGuiM3Role ImGuiM3SurfaceContainerForElevation(ImGuiM3Role role, int elevation);
 
 //-----------------------------------------------------------------------------
@@ -553,21 +537,17 @@ namespace ImGui
     IMGUI_API void M3Icon(const char* glyph, ImVec2 size_arg = ImVec2(0, 0));
     IMGUI_API void M3SectionHeader(const char* label, const char* icon = NULL);
     IMGUI_API void M3Divider(ImGuiM3Role role = ImGuiM3Role_OutlineVariant);
-    // A titled content card: rounded surface-container-low container that grows
-    // with its contents, with an optional section header. Use for grouping
-    // related controls so tabs read as a stack of coherent blocks.
+    // titled content card: surface-container-low, grows with its contents, optional
+    // section header. groups related controls so tabs read as blocks.
     IMGUI_API void M3CardBegin(const char* id, const char* title = NULL, const char* icon = NULL);
     IMGUI_API void M3CardEnd();
     IMGUI_API void M3ListItem(const char* label, bool selected, bool* p_selected = NULL);
     IMGUI_API void M3LinearProgress(float fraction, const ImVec2& size_arg = ImVec2(-1, 0));
     IMGUI_API bool M3Chip(const char* label, bool* p_selected);
     IMGUI_API void M3StatusChip(const char* label, ImGuiM3Role role);
-    // Connected button group: a row of related segments that share a shape.
-    // Outer corners are fully rounded, inner corners are modest, and segments
-    // are separated by the M3 2dp connected padding. Writes the chosen index
-    // through `selected` and returns true when the selection changed. When
-    // `icons` is non-null each segment leads with its Material Symbols
-    // codepoint, falling back to labels only if the row cannot fit them.
+    // row of segments sharing one shape: full outer corners, modest inner ones,
+    // 2dp connected padding. `icons` is one Material Symbols codepoint per
+    // segment; icons scale with the row rather than dropping out.
     IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL);
     // A full theme editor: variant / contrast / source picker, every color token,
     // the shape + motion token sheet, and the `.colors` file path with live-reload

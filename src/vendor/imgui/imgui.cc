@@ -4043,8 +4043,7 @@ void ImGui::RenderNavCursor(const ImRect& bb, ImGuiID id, ImGuiNavRenderCursorFl
     if (window->DC.NavHideHighlightOneFrame)
         return;
 
-    // VKIntox M3 focus indicator: a 3dp `primary` ring sitting 2dp outside the
-    // item, per md.sys.state.focus-indicator (thickness 3, outer-offset 2).
+    // VKIntox M3 focus ring: 3dp `primary`, 2dp outside the item.
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
     ImRect display_rect = bb;
     display_rect.ClipWith(window->ClipRect);
@@ -5636,8 +5635,8 @@ void ImGui::NewFrame()
 
     CallContextHooks(&g, ImGuiContextHookType_NewFramePre);
 
-    // VKIntox M3: reload the theme `.colors` file if it changed on disk and
-    // advance the motion springs. Must run before anything reads the style.
+    // VKIntox M3: reload the `.colors` file if it changed, step the springs.
+    // must run before anything reads the style.
     ImGuiM3NewFrame();
 
     // Check and assert for various common IO and Configuration mistakes
@@ -7503,9 +7502,8 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
         // in order for their pos/size to be matching their undocking state.)
         if (!(flags & ImGuiWindowFlags_NoTitleBar) && !window->DockIsActive)
         {
-            // VKIntox M3: the title bar is surface-container-low, so the shell
-            // reads as one surface with a lifted header rather than two unrelated
-            // fills. Rounding is on the top corners only, matching the body.
+            // VKIntox M3: surface-container-low header, top corners only, so
+            // the shell reads as one surface instead of two unrelated fills.
             ImU32 title_bar_col = ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow);
             if (window->ViewportOwned)
                 title_bar_col |= IM_COL32_A_MASK; // No alpha
@@ -7638,8 +7636,7 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     // Title bar text (with: horizontal alignment, avoiding collapse/close button, optional "unsaved document" marker)
     // FIXME: Refactor text alignment facilities along with RenderText helpers, this is WAY too much messy code..
     const float marker_size_x = (flags & ImGuiWindowFlags_UnsavedDocument) ? button_sz * 0.80f : 0.0f;
-    // VKIntox M3: the title is the app bar's emphasized run, so measure and draw
-    // it with the bold face rather than the body weight.
+    // VKIntox M3: the app bar title takes the bold face.
     ImFont* title_font = ImGuiM3FontBold();
     if (title_font)
         PushFont(title_font, g.FontSize);

@@ -415,13 +415,8 @@ namespace VKIntox
                 Logger::info("Diagnostics: No supported GPU found");
         }
 
-        // Frame rate and timing. The numeric readouts refresh once per second so
-        // they stay stable and readable; the graph histories keep sampling every
-        // frame, so the plots remain smooth.
-        //
-        // This view only runs while its tab is open. Detect the open edge so a
-        // stale `lastFrameTime`/window start from a previous visit doesn't spike
-        // the first frame time or stretch the first FPS window to seconds long.
+        // this view only runs while its tab is open. catch the open edge so a
+        // stale timestamp from a previous visit doesn't spike the first frame.
         static bool wasOpen = false;
         const bool justOpened = !wasOpen;
         wasOpen = true;
@@ -460,16 +455,9 @@ namespace VKIntox
 
         ImGui::BeginChild("DiagnosticsContent", ImVec2(0, 0), false);
 
-        // Frame rate and timing. The numeric readouts refresh once per second so
-        // they stay stable and readable; the graph histories keep sampling every
-        // frame, so the plots remain smooth.
-        //
-        // The headline FPS is a true frames-in-the-last-second count, not the
-        // reciprocal of a rolling average: `frameTimeHistory` spans up to 300
-        // frames (many seconds), so 1000/avg() lags badly and reports history
-        // rather than the current rate. We count rendered frames over each
-        // wall-clock second and carry the remainder forward so the windows don't
-        // drift apart from real time.
+        // FPS counts frames per wall-clock second. 1000/avg() over the 300-frame
+        // history lagged badly and reported the past, not the present. carry the
+        // leftover into the next window so the seconds don't drift.
         static float dispFps = 0.0f;
         static float dispFps1Low = 0.0f;
         static float dispGpuUsage = -1.0f;
@@ -480,7 +468,7 @@ namespace VKIntox
         static std::chrono::steady_clock::time_point fpsWindowStart = now;
         if (justOpened)
         {
-            // Fresh window each time the tab opens so the first second is real.
+            // fresh window on open, so the first second is real.
             fpsWindowStart = now;
             fpsFrameCount = 0;
         }
@@ -493,8 +481,7 @@ namespace VKIntox
             dispGpuUsage = gpuInfo.hasGpuUsage ? getGpuUsage() : -1.0f;
             dispHasVram = getVramUsage(dispVramUsed, dispVramTotal);
             dispHasGtt = getGttUsage(dispGttUsed, dispGttTotal);
-            // Carry the leftover past a full second into the next window instead
-            // of snapping to exactly 1.0s, which would slowly under-count.
+            // keep the leftover rather than snapping to exactly 1.0s, which under-counts.
             fpsWindowStart += std::chrono::milliseconds(static_cast<int64_t>(windowSeconds * 1000.0));
             fpsFrameCount = 0;
         }

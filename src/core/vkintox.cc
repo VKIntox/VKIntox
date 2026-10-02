@@ -815,19 +815,10 @@ namespace VKIntox
                     }
                     if (effectName.empty())
                     {
-                        // Do NOT fall back to the bare technique name. The keys in
-                        // the effects list are instance names, and a technique name
-                        // is not one: nothing in the config maps "MXAO" to a shader
-                        // file, because the instances are called qUINT_mxao and
-                        // qUINT_mxao.2. Writing the technique name anyway produced an
-                        // entry the registry could never resolve, which the UI then
-                        // rendered as a permanent row that could not be enabled or
-                        // removed -- the ghost entry.
-                        //
-                        // Skipping is the honest outcome: a technique with no
-                        // matching configured instance cannot be applied either way,
-                        // so dropping it keeps the saved list truthful instead of
-                        // persisting a name that resolves to nothing.
+                        // never fall back to the bare technique name. effect keys are
+                        // instance names (qUINT_mxao, qUINT_mxao.2), so "MXAO"
+                        // resolves to nothing and showed up as a ghost row the UI
+                        // couldn't enable or remove. skipping keeps the list honest.
                         Logger::debug("preset technique '" + techniqueName + "' from " + filename
                                       + " matches no configured effect instance; skipping");
                         continue;
@@ -1927,14 +1918,8 @@ namespace VKIntox
             logicalDevice->vkd.DestroyCommandPool(device, logicalDevice->commandPool, pAllocator);
         }
 
-        // Final drain, and this one is not redundant with the flush at the top of
-        // this function. Everything registered between the two -- the swapchain
-        // teardown above, and above all imguiOverlay.reset(), which releases the
-        // overlay's handles into the queue rather than destroying them -- has only
-        // just been queued, and the device is about to become invalid. Without
-        // this those handles are never released at all: not deferred to a later
-        // flush, because there is no later one, and not safe to release later
-        // either, since calling Vulkan against a destroyed VkDevice is undefined.
+        // second drain: imguiOverlay.reset() queues the overlay's handles just before
+        // the device dies, and there's no later flush to pick them up.
         DeferredDestroyQueue::instance().flush();
 
         logicalDevice->vkd.DestroyDevice(device, pAllocator);
@@ -2049,13 +2034,9 @@ namespace VKIntox
             {
                 Logger::warn("CreateSwapchainKHR: Recreating swapchain, destroying stale resources");
 
-                // CRITICAL: the old entry's command buffers/fences/semaphores/
-                // effects/image views must be properly waited-on and destroyed
-                // before we drop our last reference to it. Previously this just
-                // overwrote the map entry, silently leaking (and racing) every
-                // in-flight GPU resource from the retired swapchain on every
-                // resize — the exact pattern that leads to VK_ERROR_DEVICE_LOST
-                // under the rapid resize/rebuild churn seen on the homescreen.
+                // destroy the retired entry before dropping our last reference. overwriting
+                // it leaked and raced every in-flight resource on each resize,
+                // which is how rapid rebuild churn turned into device-lost.
                 if (oldIt->second.get() != logicalSwapchain.get())
                     oldIt->second->destroy();
 
@@ -2067,7 +2048,7 @@ namespace VKIntox
                 swapchainMap[(VkSwapchainKHR)handle] = logicalSwapchain;
             }
             
-            // Initialize new swapchain state - CRITICAL: clear all depth state to prevent stale references
+            // clear depth state so nothing stale survives into the new swapchain
             logicalSwapchain->depthResolveSourceView = VK_NULL_HANDLE;
             logicalSwapchain->depthReallocPending = true;
             
@@ -2171,22 +2152,10 @@ namespace VKIntox
         logicalSwapchain->imageCount = fetchedImageCount;
         logicalSwapchain->images = std::move(realImages);
 
-        // Non-Wayland surfaces get their real swapchain images, and none of the
-        // fake ones.
-        //
-        // Everything below here builds fake images and, at the end of this
-        // function, hands those to the application instead of the real ones.
-        // That substitution only works if something later copies the fakes into
-        // the real swapchain before presenting, and that copy lives in the
-        // Wayland present path. On X11 the present path returns early and passes
-        // straight through, so the application renders into fakes that nothing
-        // ever reads while the real swapchain images are presented untouched and
-        // blank. The symptom is a black window, not a missing effect.
-        //
-        // Giving the application its own images is what makes "pass through
-        // only" true rather than aspirational: the app renders where it expects
-        // to render, and its present arrives unchanged. Anything that needs the
-        // fakes is on the Wayland path and never gets here.
+        // non-wayland gets the real images. handing out the fakes below only works
+        // because the wayland present path copies them into the real swapchain
+        // first; x11 passes straight through, so the app would render into
+        // fakes nobody reads and present a blank window.
         if (isNonWaylandSurface())
         {
             *pCount = std::min<uint32_t>(*pCount, logicalSwapchain->imageCount);
@@ -2463,11 +2432,9 @@ namespace VKIntox
         VkCommandBuffer copyCB = logicalDevice->depthCopyRingBufs[slotIndex];
         logicalDevice->depthCopyRingIndex++;
 
-        // CRITICAL: do not block waiting for a ring slot.  A fence that is still
-        // unsignaled means the old command buffer is still in flight, so we simply
-        // skip this optional depth copy and let the application's submit proceed.
-        // This keeps the depth path completely non-blocking and avoids turning a
-        // stalled GPU into a 2-second present-thread freeze.
+        // never block on a ring slot. an unsignaled fence means the old buffer is still
+        // in flight: skip the optional copy and let the app's submit proceed, or a
+        // stalled GPU becomes a multi-second present-thread freeze.
         if (slotIndex < logicalDevice->depthCopyRingFences.size() && logicalDevice->depthCopyRingFences[slotIndex] != VK_NULL_HANDLE)
         {
             VkResult fenceStatus = reinterpret_cast<PFN_vkGetFenceStatus>(logicalDevice->vkd.GetDeviceProcAddr(logicalDevice->device, "vkGetFenceStatus"))(
@@ -3282,7 +3249,7 @@ namespace VKIntox
         if (presentResult == VK_ERROR_DEVICE_LOST)
             panicLayer(logicalDevice, "Vulkan device lost during final present");
         
-        // CRITICAL FIX: Handle OUT_OF_DATE and SUBOPTIMAL by resetting affected swapchains
+        // OUT_OF_DATE / SUBOPTIMAL: flag the affected swapchains for reset.
         if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
         {
             Logger::warn("QueuePresentKHR returned " + std::string(presentResult == VK_ERROR_OUT_OF_DATE_KHR ? "OUT_OF_DATE" : "SUBOPTIMAL") + ", flagging swapchains for reset");
@@ -3581,20 +3548,13 @@ namespace VKIntox
                 std::to_string((pCreateInfo->usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT));
 
             VkImageCreateInfo modifiedCreateInfo = *pCreateInfo;
-            // Add usage flags required for the resolve/copy and shader-resolve
-            // paths. MSAA depth images are resolved down to 1 sample before
-            // effects sample them, but the source still needs TRANSFER_SRC for
-            // vkCmdResolveImage and SAMPLED for the shader fallback.
+            // resolve needs TRANSFER_SRC, the shader fallback needs SAMPLED.
             //
-            // CRITICAL: TRANSIENT_ATTACHMENT_BIT cannot coexist with SAMPLED_BIT
-            // or TRANSFER_SRC_BIT per the Vulkan spec (VUID-VkImageCreateInfo-usage-00963).
-            // Mobile apps (e.g. Roblox via Sober) frequently allocate depth buffers
-            // with TRANSIENT_ATTACHMENT_BIT for lazy memory allocation on tiled
-            // renderers. If we leave TRANSIENT set while adding SAMPLED+TRANSFER_SRC,
-            // CreateImage succeeds on some drivers but the image's memory is not
-            // backed outside the app's render pass — sampling it yields garbage
-            // (which is why depth appears blank in Roblox while color postproc works).
-            // Strip TRANSIENT so the image is fully backed and sampleable.
+            // TRANSIENT can't coexist with either (VUID-VkImageCreateInfo-usage-00963).
+            // mobile apps set it for lazy allocation, and on tiled renderers the
+            // image then has no backing outside the app's pass — sampling it gives
+            // garbage. that's why depth was blank in roblox while colour postproc
+            // worked. strip it so the image is sampleable.
             if (modifiedCreateInfo.usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT)
             {
                 modifiedCreateInfo.usage &= ~VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;

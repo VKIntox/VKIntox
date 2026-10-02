@@ -259,10 +259,8 @@ struct ImGui_ImplVulkan_Texture
     VkImageView                 ImageView;
     VkDescriptorSet             DescriptorSet;
 
-    // VKIntox: texture uploads are submitted asynchronously and their staging
-    // resources are released when the fence signals. Waiting inline with
-    // vkQueueWaitIdle() could hang the render thread when the game's queue was
-    // parked in a present while the window was unfocused.
+    // VKIntox: uploads submit async, staging freed when the fence signals.
+    // inline vkQueueWaitIdle() could hang the thread on a parked queue.
     VkBuffer                    UploadBuffer;
     VkDeviceMemory              UploadBufferMemory;
     VkFence                     UploadFence;
@@ -562,9 +560,8 @@ void ImGui_ImplVulkan_RenderDrawData(ImDrawData* draw_data, VkCommandBuffer comm
     ImGui_ImplVulkan_InitInfo* v = &bd->VulkanInitInfo;
     if (draw_data->Textures != nullptr)
     {
-        // Reclaim staging buffers from uploads that have completed. Texture
-        // visibility is already covered by the upload command buffer's own
-        // transfer->shader barrier plus same-queue submission order.
+        // reclaim staging from finished uploads; the upload's own
+        // transfer->shader barrier plus queue order covers visibility.
         for (ImTextureData* tex : *draw_data->Textures)
         {
             ImGui_ImplVulkan_Texture* bt = (ImGui_ImplVulkan_Texture*)tex->BackendUserData;
@@ -731,7 +728,7 @@ static void ImGui_ImplVulkan_DestroyTexture(ImTextureData* tex)
         ImGui_ImplVulkan_RemoveTexture(backend_tex->DescriptorSet);
         if (backend_tex->UploadFence != VK_NULL_HANDLE)
         {
-            // Teardown path: the caller has already drained the queue.
+            // teardown: caller already drained the queue.
             vkWaitForFences(v->Device, 1, &backend_tex->UploadFence, VK_TRUE, UINT64_MAX);
             vkDestroyFence(v->Device, backend_tex->UploadFence, v->Allocator);
         }
@@ -759,9 +756,7 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
     ImGui_ImplVulkan_InitInfo* v = &bd->VulkanInitInfo;
     VkResult err;
 
-    // Release staging buffers whose upload has completed. Done here (rather than
-    // inline with a blocking wait) so the render thread never stalls on the
-    // queue — see the submit path below.
+    // reclaim finished staging here rather than blocking the render thread.
     if (ImGui_ImplVulkan_Texture* prior = (ImGui_ImplVulkan_Texture*)tex->BackendUserData)
     {
         if (prior->UploadFence != VK_NULL_HANDLE && vkGetFenceStatus(v->Device, prior->UploadFence) == VK_SUCCESS)
@@ -839,9 +834,8 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
     {
         ImGui_ImplVulkan_Texture* backend_tex = (ImGui_ImplVulkan_Texture*)tex->BackendUserData;
 
-        // Reuse the shared command pool, so a previous upload for this texture
-        // must have finished before we reset it. Rare (atlas growth) and scoped
-        // to our own submission rather than a full queue drain.
+        // shared command pool: previous upload must finish before we reset it.
+        // rare (atlas growth), and scoped to our own submit.
         if (backend_tex->UploadFence != VK_NULL_HANDLE)
         {
             vkWaitForFences(v->Device, 1, &backend_tex->UploadFence, VK_TRUE, UINT64_MAX);
@@ -965,10 +959,8 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
             vkCmdPipelineBarrier(bd->TexCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, use_barrier);
         }
 
-        // End + submit asynchronously. Status is still set to OK so ImGui's
-        // texture contract holds; the overlay command buffer inserts a barrier
-        // (see RenderDrawData) so the transfer is visible to the draws. Staging
-        // resources are freed when the fence signals.
+        // submit async. status stays OK so imgui's texture contract holds; the
+        // overlay command buffer's barrier makes the transfer visible.
         {
             VkSubmitInfo end_info = {};
             end_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;

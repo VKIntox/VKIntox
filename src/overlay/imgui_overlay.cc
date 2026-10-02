@@ -166,13 +166,8 @@ namespace VKIntox
         if (const char* themePath = ImGuiM3GetThemeFile())
             Logger::info("ImGui: Material 3 Expressive theme from " + std::string(themePath));
 
-        // Font loading. VKIntox's config directory is per-app for flatpak (the
-        // layer runs inside the game's sandbox, so $HOME/.var/app/<APP>/config)
-        // and plain ~/.config elsewhere; scripts/setup seeds only the caller's
-        // own environment, which is why a Roblox-hosted overlay never saw those
-        // fonts. Search our own dir first, then sibling app sandboxes' VKIntox
-        // configs, so one setup run serves every game regardless of which one
-        // launched it.
+        // flatpak sandboxes each have their own config dir, and setup only seeds the
+        // app it ran for. so look in ours, then in every sandbox's.
         std::string baseConfigDir = ConfigSerializer::getBaseConfigDir();
         std::vector<std::string> fontDirs = {baseConfigDir + "/font"};
         if (const char* home = std::getenv("HOME"))
@@ -208,19 +203,14 @@ namespace VKIntox
             {findFont("font.ttf"), "legacy regular fallback"}
         };
 
-        // the search paths outlive the atlas call, and AddFontFromFileTTF copies
-        // the file into the atlas before returning, so a borrowed pointer is
-        // enough here. the strdup this used to hold only existed to be freed
-        // three lines later, and every line added between the two was a leak
+        // AddFontFromFileTTF copies the file in, so a borrowed pointer is fine.
         const char* regularPath = nullptr;
         for (const auto& [path, desc] : fontSearchPaths)
         {
             if (std::ifstream(path).good()) { regularPath = path.c_str(); break; }
         }
 
-        // M3 body-medium is the base type style: 14sp / 20sp line height /
-        // 0.25 tracking, regular weight. Everything else in the UI is expressed
-        // as a step from here.
+        // M3 body-medium: 14sp, regular weight. everything else steps from here.
         constexpr float kBodyMediumSize = 14.0f;
 
         ImFontConfig fontCfg;
@@ -229,9 +219,8 @@ namespace VKIntox
         fontCfg.OversampleV = 1;
         fontCfg.PixelSnapH = true;
 
-        // Material Symbols subset, shared by every text face (merged so icon
-        // codepoints render inline in labels) and by the standalone 24px icon
-        // face used by M3Icon and the navigation.
+        // Material Symbols subset: merged into every text face for inline
+        // codepoints, plus a standalone 24px face for M3Icon and the nav.
         const std::string iconFontPath = findFont("MaterialSymbolsRounded-subset.ttf");
         const bool haveIconFont = !iconFontPath.empty();
 
@@ -239,8 +228,7 @@ namespace VKIntox
         {
             io.Fonts->Clear();
 
-            // Add a text face and immediately merge the icon subset into it, so
-            // the next AddFontFromFileTTF starts a fresh face.
+            // merge icons in before the next face so it starts fresh.
             auto addFace = [&](const char* path) -> ImFont*
             {
                 ImFont* face = io.Fonts->AddFontFromFileTTF(path, kBodyMediumSize, &fontCfg);
@@ -253,8 +241,7 @@ namespace VKIntox
             ImFont* medium = nullptr;
             ImFont* bold = nullptr;
             ImFont* extraBold = nullptr;
-            // Expressive typography uses emphasized weights selectively: medium
-            // for display/headline/body emphasis, bold for titles and labels.
+            // medium for display/headline emphasis, bold for titles and labels.
             const std::pair<const char*, ImFont**> weights[] = {
                 {"GoogleSans-Medium.ttf", &medium},
                 {"GoogleSans-Bold.ttf", &bold},
@@ -266,8 +253,7 @@ namespace VKIntox
                 if (!path.empty())
                     *slot = addFace(path.c_str());
             }
-            // MergeMode appends atlas entries, so indices are not stable; hand
-            // the faces over by identity.
+            // merging appends atlas entries, so pass the faces by identity.
             ImGuiM3SetTextFonts(regular, medium, bold, extraBold);
             Logger::info("ImGui: loaded Google Sans Flex regular/medium/bold weights from " + std::string(regularPath));
         }
@@ -288,9 +274,7 @@ namespace VKIntox
             Logger::warn("ImGui: Material Symbols subset not found - icons disabled");
         }
 
-        // Re-apply now that the font metrics are known: the M3 frame padding is
-        // derived from the 40dp container height minus the text height, so it
-        // cannot be computed before the font exists.
+        // frame padding needs the real font metrics, so re-apply now.
         ImGuiM3ApplyToStyle(1.0f);
 
         initVulkanBackend(swapchainFormat, imageCount);
@@ -444,8 +428,7 @@ namespace VKIntox
         ImGui::Dummy(ImVec2(size, size));
         ImGui::Dummy(ImVec2(0.0f, std::max(6.0f, size * 0.035f)));
         const char* brandText = "VKIntox";
-        // The wordmark is the one display-scale run of text in the overlay, so it
-        // takes the bold face; body text stays regular.
+        // wordmark is the only display-scale run, so it takes bold.
         ImFont* font = ImGuiM3FontBold();
         if (!font)
             font = ImGui::GetIO().Fonts->Fonts[0];
@@ -515,9 +498,8 @@ namespace VKIntox
                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                 ImGuiWindowFlags_NoTitleBar;
 
-            // Color by level, from the shared token so toasts and the log view
-            // can never disagree. A toast is an M3 snackbar: surface-container-high
-            // with the level colour as a left accent bar.
+            // colour by level from the shared token, so toasts and the log view
+            // can't disagree. a toast is a snackbar with a left accent bar.
             const ImVec4 headerColor = UI::LogLevelColor(t.level);
             const char* tag = "INFO";
             const char* levelIcon = Icon::InfoUtf8;
@@ -531,7 +513,7 @@ namespace VKIntox
             char label[32];
             snprintf(label, sizeof(label), "##VKIntoxToast%zu", i);
 
-            // M3 snackbar geometry: rounded container, surface-container-high.
+            // snackbar: rounded, surface-container-high.
             ImGui::PushStyleColor(ImGuiCol_WindowBg, UI::Container());
             ImGui::PushStyleColor(ImGuiCol_Border, ImGuiM3ColorU32(ImGuiM3Role_OutlineVariant));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -545,7 +527,7 @@ namespace VKIntox
 
             if (open)
             {
-                // Accent bar down the leading edge, in the level colour.
+                // accent bar down the leading edge.
                 const ImVec2 content_min = ImGui::GetCursorScreenPos();
                 ImGui::InvisibleButton("##toastbg", ImVec2(0.0f, 0.0f));
 
@@ -1303,29 +1285,39 @@ namespace VKIntox
             return cmd;
         }
 
-        // Clamp overlay window to screen bounds so it can never go offscreen
-        ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImVec2 screenMin = viewport->WorkPos;
-        ImVec2 screenMax = ImVec2(screenMin.x + viewport->WorkSize.x, screenMin.y + viewport->WorkSize.y);
+        // the overlay draws into the game's swapchain, so all window math lives in
+        // framebuffer space -- monitor work area is the wrong coordinate system
+        // for a windowed game.
+        const ImVec2 screenMin(0.0f, 0.0f);
+        const ImVec2 screenMax(static_cast<float>(width), static_cast<float>(height));
+        const ImVec2 avail(screenMax.x - screenMin.x, screenMax.y - screenMin.y);
 
-        // Set default size/position on first appearance
-        ImGui::SetNextWindowSizeConstraints(ImVec2(300, 200), ImVec2(screenMax.x - screenMin.x, screenMax.y - screenMin.y));
+        // default: tall panel on the right, sized off the game window so it isn't
+        // starving on a large display and doesn't overflow a small one.
+        const float margin_x = avail.x * 0.04f;
+        const float margin_y = avail.y * 0.03f;
+        const float panel_w = ImClamp(avail.x * 0.36f, 320.0f, ImMax(320.0f, avail.x - margin_x * 2.0f));
+        const float panel_h = ImClamp(avail.y * 0.91f, 360.0f, ImMax(360.0f, avail.y - margin_y * 2.0f));
+        const ImVec2 defaultPos(screenMax.x - panel_w - margin_x, screenMin.y + margin_y);
+        const ImVec2 defaultSize(panel_w, panel_h);
+
+        const ImVec2 minSize(ImMin(300.0f, avail.x), ImMin(200.0f, avail.y));
+        const ImVec2 maxSize = avail;
         if (resetLayoutRequested)
         {
-            ImGui::SetNextWindowPos(ImVec2(50, 50), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(680, 600), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(defaultPos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(defaultSize, ImGuiCond_Always);
             resetLayoutRequested = false;
         }
         else
         {
-            ImGui::SetNextWindowPos(ImVec2(50, 50), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(680, 600), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(defaultPos, ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(defaultSize, ImGuiCond_FirstUseEver);
         }
 
         const float previousFramePaddingY = ImGui::GetStyle().FramePadding.y;
         ImGui::GetStyle().FramePadding.y = std::max(0.0f, (OverlayTitleBarHeight() - ImGui::GetFontSize()) * 0.5f);
-        ImGui::SetNextWindowSizeConstraints(ImVec2(300, 200), ImVec2(screenMax.x - screenMin.x, screenMax.y - screenMin.y),
-                                            overlayTitleHeightConstraint);
+        ImGui::SetNextWindowSizeConstraints(minSize, maxSize, overlayTitleHeightConstraint);
         ImGui::Begin("VKIntox Overlay", nullptr, ImGuiWindowFlags_NoCollapse);
         ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
 
@@ -1333,8 +1325,7 @@ namespace VKIntox
         const ImVec2 windowSize = ImGui::GetWindowSize();
         const float titleBarHeight = ImGui::GetCurrentWindowRead()->TitleBarHeight;
         const ImGuiM3Metrics& m3metrics = ImGuiM3GetMetrics();
-        // M3 expressive icon target: a compact circular button whose glyph is
-        // smaller and heavier than a text run.
+        // compact circular close button; glyph is smaller and heavier than text.
         const float closeButtonSize = 32.0f * m3metrics.density;
         const float closeButtonRightInset = 12.0f * m3metrics.density;
         const ImVec2 buttonMin(windowPos.x + windowSize.x - closeButtonSize - closeButtonRightInset,
@@ -1364,7 +1355,7 @@ namespace VKIntox
         ImDrawList* drawList = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
         ImVec4 surfaceColor = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
         surfaceColor.w = 1.0f;
-        // Mask the moving title behind the button, then layer hover/press on top.
+        // mask the moving title behind the button, then hover/press on top.
         drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
                                   ImGui::ColorConvertFloat4ToU32(surfaceColor));
         if (buttonHovered)
@@ -1376,8 +1367,7 @@ namespace VKIntox
         }
         const ImU32 crossColor = buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
                                                : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant);
-        // The Material Symbols `close` glyph is already rounded and evenly
-        // weighted, so it reads better than two hard line segments.
+        // the `close` glyph is already rounded and evenly weighted.
         static const char kCloseGlyph[] = "\xEE\x85\x8C";
         ImFont* closeIcon = ImGuiM3IconFont();
         if (closeIcon)
@@ -1395,14 +1385,16 @@ namespace VKIntox
                               ImVec2(buttonCenter.x - crossInset, buttonCenter.y + crossInset), crossColor, crossThickness);
         }
 
-        // Clamp position after the window is created (prevents dragging offscreen)
+        // Clamp position after the window is created (prevents dragging offscreen).
+        // the keep-on-screen margin scales with the game window too.
         ImVec2 winPos = ImGui::GetWindowPos();
         ImVec2 winSize = ImGui::GetWindowSize();
+        const float keep = ImMin(avail.x, avail.y) * 0.05f;
         bool clamped = false;
-        if (winPos.x + winSize.x < screenMin.x + 50) { winPos.x = screenMin.x; clamped = true; }
-        if (winPos.y < screenMin.y)                   { winPos.y = screenMin.y; clamped = true; }
-        if (winPos.x > screenMax.x - 50)              { winPos.x = screenMax.x - 50; clamped = true; }
-        if (winPos.y > screenMax.y - 30)              { winPos.y = screenMax.y - 30; clamped = true; }
+        if (winPos.x + winSize.x < screenMin.x + keep) { winPos.x = screenMin.x; clamped = true; }
+        if (winPos.y < screenMin.y)                    { winPos.y = screenMin.y; clamped = true; }
+        if (winPos.x > screenMax.x - keep)              { winPos.x = screenMax.x - keep; clamped = true; }
+        if (winPos.y > screenMax.y - keep)              { winPos.y = screenMax.y - keep; clamped = true; }
         if (clamped)
             ImGui::SetWindowPos(winPos);
 
@@ -1415,11 +1407,9 @@ namespace VKIntox
         gatherDepthInfo();
         applyDepthPinRequests();
 
-        // Top navigation: an M3 connected button group. The two ends are pills
-        // and the shared edges are modestly rounded, with the spec's 2dp inner
-        // padding, so the nav reads as one connected control rather than five
-        // floating tabs. Each segment leads with a Material Symbols icon and the
-        // selected one swaps to secondary-container and gains weight.
+        // top nav is a connected button group: pill ends, modest shared edges,
+        // 2dp inner padding. one control, not five floating tabs. the selected
+        // segment swaps to secondary-container and gains weight.
         static int activeView = 0;
         static const char* const kViewLabels[] = {"Effects", "Shaders", "Settings", "Advanced", "Diagnostics"};
         static const ImWchar kViewIcons[] = {Icon::AutoAwesome, Icon::Palette, Icon::Settings, Icon::Tune, Icon::MonitorHeart};
