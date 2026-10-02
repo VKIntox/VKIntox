@@ -1,5 +1,7 @@
 #include "logical_swapchain.hh"
 
+#include "vk_handle.hh"
+
 namespace VKIntox
 {
     void destroyDepthResolveResources(LogicalSwapchain* pLogicalSwapchain);
@@ -39,6 +41,14 @@ namespace VKIntox
             effects.clear();
             defaultTransfer.reset();
             Logger::info("[DESTROY-TRACE] effects destroyed");
+
+            // The flush has to come AFTER the effects are cleared, not before.
+            // Clearing is what hands their handles to the queue, so a flush placed
+            // earlier drains an empty queue and the releases sit there until some
+            // later teardown -- which, if the process exits first, is a straight
+            // leak of every object the effect owned. The queue wait above is what
+            // makes this the legal moment to run them.
+            DeferredDestroyQueue::instance().flush();
 
             destroyDepthResolveResources(this);
 

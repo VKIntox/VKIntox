@@ -12,6 +12,7 @@
 
 #include "image_view.hh"
 #include "c_resource.hh"
+#include "vk_handle.hh"
 #include "descriptor_set.hh"
 #include "buffer.hh"
 #include "renderpass.hh"
@@ -1741,89 +1742,124 @@ namespace VKIntox
         return params;
     }
 
-    ReshadeEffect::~ReshadeEffect()
+    // Registration order within a phase is the reverse of release order, because
+    // the queue releases equal phases newest-first. So a dependent object has to be
+    // registered AFTER the thing it depends on: images before their views, memory
+    // before both. Getting this backwards is silent until a driver dereferences
+    // freed memory, which is why it is stated here rather than left to the reader.
+    void ReshadeEffect::releaseResources()
     {
-        // Guard against a null or already-destroyed device pointer.  This can
-        // happen when the VkDevice is destroyed before all shared_ptr<Effect>
-        // references are released (e.g. during layer teardown on Wayland where
-        // the swapchain is destroyed and recreated before any frame renders).
         if (!pLogicalDevice || pLogicalDevice->device == VK_NULL_HANDLE)
             return;
 
         Logger::info("[DESTROY-TRACE] ~ReshadeEffect start: " + effectName + " passRuntimes=" + std::to_string(passRuntimes.size()));
 
-        // ----------------------------------------------------------------
-        // 1.  Destroy pass-level GPU objects (pipelines, render passes,
-        //     framebuffers).  These reference the descriptor set layouts and
-        //     shader module, so destroy them first.
-        // ----------------------------------------------------------------
+        auto& queue = DeferredDestroyQueue::instance();
+        auto  device = pLogicalDevice->device;
+        auto& vkd    = pLogicalDevice->vkd;
+
+        // ---- Resource phase, registered bottom-up so views precede images ----
+
+        // memory first: it backs everything below it, so it must be released last.
+        // Lambdas capture by value from locals only, so every handle is copied out
+        // of the member first -- capturing the member itself would be a dangling
+        // read of a half-destroyed object, and capturing `this` would defeat the
+        // point of deferring.
+        for (auto memory : textureMemory)
+        {
+            if (memory != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Memory, [vkd, device, memory] { vkd.FreeMemory(device, memory, nullptr); });
+        }
+        const VkDeviceMemory stagingMemory = stagingBufferMemory;
+        if (stagingMemory != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Memory, [vkd, device, stagingMemory] { vkd.FreeMemory(device, stagingMemory, nullptr); });
+
+        // the unmap has to happen before the memory goes, and it is a live call on
+        // the device, so it stays inline rather than being deferred
+        if (stagingBufferMapped)
+            vkd.UnmapMemory(device, stagingBufferMemory);
+
+        for (auto image : collectOwnedImages())
+            queue.push(DestroyPhase::Resource, [vkd, device, image] { vkd.DestroyImage(device, image, nullptr); });
+
+        // views after the images, so the reverse-order release destroys them first
+        for (auto view : collectOwnedImageViews())
+            queue.push(DestroyPhase::Resource, [vkd, device, view] { vkd.DestroyImageView(device, view, nullptr); });
+
+        for (auto sampler : samplers)
+        {
+            if (sampler != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, device, sampler] { vkd.DestroySampler(device, sampler, nullptr); });
+        }
+
+        const VkBuffer     buffer     = stagingBuffer;
+        const VkShaderModule module     = shaderModule;
+        if (buffer != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, buffer] { vkd.DestroyBuffer(device, buffer, nullptr); });
+        if (module != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, module] { vkd.DestroyShaderModule(device, module, nullptr); });
+
+        // ---- Layout phase: pipeline layout and descriptor set layouts ----
+        // The pipeline layout names the descriptor set layouts, so it is registered
+        // last of the three and therefore released first.
+        const VkDescriptorSetLayout uniformLayout  = uniformDescriptorSetLayout;
+        const VkDescriptorSetLayout samplerLayout  = imageSamplerDescriptorSetLayout;
+        const VkPipelineLayout      pipelineLay    = pipelineLayout;
+        if (uniformLayout != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Layout, [vkd, device, uniformLayout] { vkd.DestroyDescriptorSetLayout(device, uniformLayout, nullptr); });
+        if (samplerLayout != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Layout, [vkd, device, samplerLayout] { vkd.DestroyDescriptorSetLayout(device, samplerLayout, nullptr); });
+        if (pipelineLay != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Layout, [vkd, device, pipelineLay] { vkd.DestroyPipelineLayout(device, pipelineLay, nullptr); });
+
+        // ---- Descriptor phase: the pool implicitly frees its sets ----
+        const VkDescriptorPool pool = descriptorPool;
+        if (pool != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Descriptor, [vkd, device, pool] { vkd.DestroyDescriptorPool(device, pool, nullptr); });
+
+        // ---- RenderPass phase: framebuffers before the passes they were built from ----
         for (auto& passRuntime : passRuntimes)
         {
-            for (auto& framebuffer : passRuntime.framebuffers)
+            for (auto framebuffer : passRuntime.framebuffers)
             {
                 if (framebuffer != VK_NULL_HANDLE)
-                    pLogicalDevice->vkd.DestroyFramebuffer(pLogicalDevice->device, framebuffer, nullptr);
+                    queue.push(DestroyPhase::RenderPass, [vkd, device, framebuffer] { vkd.DestroyFramebuffer(device, framebuffer, nullptr); });
             }
-            if (passRuntime.pipeline != VK_NULL_HANDLE)
-                pLogicalDevice->vkd.DestroyPipeline(pLogicalDevice->device, passRuntime.pipeline, nullptr);
             if (passRuntime.renderPass != VK_NULL_HANDLE)
-                pLogicalDevice->vkd.DestroyRenderPass(pLogicalDevice->device, passRuntime.renderPass, nullptr);
+                queue.push(DestroyPhase::RenderPass, [vkd, device, renderPass = passRuntime.renderPass] { vkd.DestroyRenderPass(device, renderPass, nullptr); });
         }
 
-        // ----------------------------------------------------------------
-        // 2.  Destroy the uniform staging buffer (unmap → free memory →
-        //     destroy buffer).
-        // ----------------------------------------------------------------
-        if (bufferSize)
+        // ---- Pipeline phase: the pipeline references its layout and its stages ----
+        for (auto& passRuntime : passRuntimes)
         {
-            if (stagingBufferMapped)
-                pLogicalDevice->vkd.UnmapMemory(pLogicalDevice->device, stagingBufferMemory);
-            if (stagingBufferMemory != VK_NULL_HANDLE)
-                pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, stagingBufferMemory, nullptr);
-            if (stagingBuffer != VK_NULL_HANDLE)
-                pLogicalDevice->vkd.DestroyBuffer(pLogicalDevice->device, stagingBuffer, nullptr);
+            if (passRuntime.pipeline != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Pipeline, [vkd, device, pipeline = passRuntime.pipeline] { vkd.DestroyPipeline(device, pipeline, nullptr); });
         }
 
-        // ----------------------------------------------------------------
-        // 3.  Destroy descriptor pool (implicitly frees all descriptor sets
-        //     allocated from it) followed by descriptor set layouts and the
-        //     shader module.
-        // ----------------------------------------------------------------
-        if (descriptorPool != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyDescriptorPool(pLogicalDevice->device, descriptorPool, nullptr);
-        if (pipelineLayout != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyPipelineLayout(pLogicalDevice->device, pipelineLayout, nullptr);
-        if (imageSamplerDescriptorSetLayout != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyDescriptorSetLayout(pLogicalDevice->device, imageSamplerDescriptorSetLayout, nullptr);
-        if (uniformDescriptorSetLayout != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyDescriptorSetLayout(pLogicalDevice->device, uniformDescriptorSetLayout, nullptr);
-        if (shaderModule != VK_NULL_HANDLE)
-            pLogicalDevice->vkd.DestroyShaderModule(pLogicalDevice->device, shaderModule, nullptr);
+        Logger::info("[DESTROY-TRACE] ~ReshadeEffect complete: handed " + std::to_string(queue.pending()) + " releases to the queue");
+    }
 
-        // ----------------------------------------------------------------
-        // 4.  Collect ALL image views into a single deduplication set, then
-        //     destroy each unique handle exactly once.
-        //
-        //     CRITICAL FIX: the constructor stores the same VkImageView
-        //     handles in multiple member vectors/maps (e.g. COLOR/DEPTH
-        //     semantic textures share handles with inputImageViewsSRGB).
-        //     Destroying them in separate loops caused a double-free that
-        //     crashed the NVIDIA driver.  The unified set prevents this.
-        // ----------------------------------------------------------------
-        std::set<VkImageView> allImageViews;
+    // The same handle is stored in several members -- a COLOR and a DEPTH texture
+    // can share an image view, and back buffer views are also reachable through the
+    // texture maps. Releasing them in per-member loops double-frees, which the
+    // NVIDIA driver does not survive, so every release goes through these dedup
+    // sets instead.
+    std::set<VkImageView> ReshadeEffect::collectOwnedImageViews() const
+    {
+        std::set<VkImageView> all;
 
-        auto collectViews = [&allImageViews](const std::vector<VkImageView>& views)
+        auto collectViews = [&all](const std::vector<VkImageView>& views)
         {
             for (auto v : views)
                 if (v != VK_NULL_HANDLE)
-                    allImageViews.insert(v);
+                    all.insert(v);
         };
-        auto collectViewMap = [&allImageViews](const std::unordered_map<std::string, std::vector<VkImageView>>& map)
+        auto collectViewMap = [&all](const std::unordered_map<std::string, std::vector<VkImageView>>& map)
         {
             for (auto& kv : map)
                 for (auto v : kv.second)
                     if (v != VK_NULL_HANDLE)
-                        allImageViews.insert(v);
+                        all.insert(v);
         };
 
         collectViews(inputImageViewsSRGB);
@@ -1837,48 +1873,35 @@ namespace VKIntox
         collectViewMap(renderImageViewsSRGB);
         collectViewMap(renderImageViewsUNORM);
         if (stencilImageView != VK_NULL_HANDLE)
-            allImageViews.insert(stencilImageView);
+            all.insert(stencilImageView);
 
-        for (auto imageView : allImageViews)
-            pLogicalDevice->vkd.DestroyImageView(pLogicalDevice->device, imageView, nullptr);
+        return all;
+    }
 
-        // ----------------------------------------------------------------
-        // 5.  Collect and destroy all images.  Use a set for the same
-        //     reason — texture images may share handles with other members.
-        // ----------------------------------------------------------------
-        std::set<VkImage> allImages;
+    std::set<VkImage> ReshadeEffect::collectOwnedImages() const
+    {
+        std::set<VkImage> all;
         for (auto& kv : textureImages)
             for (auto img : kv.second)
                 if (img != VK_NULL_HANDLE)
-                    allImages.insert(img);
+                    all.insert(img);
         for (auto img : backBufferImages)
             if (img != VK_NULL_HANDLE)
-                allImages.insert(img);
+                all.insert(img);
         if (stencilImage != VK_NULL_HANDLE)
-            allImages.insert(stencilImage);
+            all.insert(stencilImage);
+        return all;
+    }
 
-        for (auto image : allImages)
-            pLogicalDevice->vkd.DestroyImage(pLogicalDevice->device, image, nullptr);
-
-        // ----------------------------------------------------------------
-        // 6.  Destroy samplers.
-        // ----------------------------------------------------------------
-        for (auto& sampler : samplers)
-        {
-            if (sampler != VK_NULL_HANDLE)
-                pLogicalDevice->vkd.DestroySampler(pLogicalDevice->device, sampler, nullptr);
-        }
-
-        // ----------------------------------------------------------------
-        // 7.  Free all device memory (one entry per unique allocation).
-        // ----------------------------------------------------------------
-        for (auto& memory : textureMemory)
-        {
-            if (memory != VK_NULL_HANDLE)
-                pLogicalDevice->vkd.FreeMemory(pLogicalDevice->device, memory, nullptr);
-        }
-
-        Logger::info("[DESTROY-TRACE] ~ReshadeEffect complete");
+    ReshadeEffect::~ReshadeEffect()
+    {
+        // Everything is handed to the deferred queue rather than released here.
+        // The device guard moved into releaseResources() with the rest of the
+        // logic; keeping it in one place is the point, since a null device is a
+        // real case here: the VkDevice can be destroyed before every
+        // shared_ptr<Effect> reference drops, on teardown paths where the
+        // swapchain is destroyed and recreated before a frame ever renders.
+        releaseResources();
     }
 
     void ReshadeEffect::createReshadeModule()

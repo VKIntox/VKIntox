@@ -33,6 +33,7 @@
 #include "wayland_display.hh"
 
 #include "logical_device.hh"
+#include "vk_handle.hh"
 #include "logical_swapchain.hh"
 
 #include "image_view.hh"
@@ -626,6 +627,12 @@ namespace VKIntox
         Logger::err("VKIntox panic: " + reason);
         if (pLogicalDevice)
         {
+            // A panic means we are about to stop touching Vulkan, so anything still
+            // queued has to go now. The queue may never be flushed again on this
+            // path, and leaving driver objects alive after a device-lost is both a
+            // leak and, on some drivers, a fault of its own.
+            DeferredDestroyQueue::instance().flush();
+
             if (reason.find("Device lost") != std::string::npos
                 || reason.find("device lost") != std::string::npos
                 || reason.find("VK_ERROR_DEVICE_LOST") != std::string::npos)
@@ -3415,6 +3422,13 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         Logger::trace("vkDestroyDevice");
+
+        // Last chance to release anything still queued: once the device below is
+        // destroyed, calling Vulkan against it is undefined behaviour, so the
+        // queue is drained while the handle is still valid. Swapchain destruction
+        // will normally have flushed already; this covers the paths that destroy
+        // the device without a swapchain teardown, such as a lost device.
+        DeferredDestroyQueue::instance().flush();
 
         auto devIt = deviceMap.find(GetKey(device));
         if (devIt == deviceMap.end() || !devIt->second)

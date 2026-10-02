@@ -66,6 +66,7 @@ VKIntox_src = [
     'core/vkintox.cc',
     'render/buffer.cc',
     'render/command_buffer.cc',
+    'render/vk_handle.cc',
     'core/config.cc',
     'core/config_serializer.cc',
     'core/settings_manager.cc',
@@ -204,6 +205,7 @@ executable('vkintox-shader-check',
     'vendor/reshade/effect_parser.cc',
     'vendor/reshade/effect_preprocessor.cc',
     'vendor/reshade/effect_symbol_table.cc',
+    'render/vk_handle.cc',
     'core/config.cc',
     'core/config_serializer.cc',
     'core/logger.cc',
@@ -218,6 +220,16 @@ config_serializer_tests = executable('vkintox-config-serializer-tests',
     'core/logger.cc',
     include_directories : [core_inc, render_inc, effects_inc, effects_params_inc, vendor_inc, source_inc])
 test('config serializer', config_serializer_tests)
+
+# The deferred destroy queue's release order is load-bearing for driver
+# stability and impossible to observe without a real GPU, so it is tested
+# directly rather than only through the smoke test.
+vk_handle_tests = executable('vkintox-vk-handle-tests',
+    'render/vk_handle_test.cc',
+    'render/vk_handle.cc',
+    'core/logger.cc',
+    include_directories : [core_inc, render_inc, source_inc])
+test('vk handle ordering', vk_handle_tests)
 
 # LD_AUDIT library for Wine Wayland input interposition.
 # Redirects wl_proxy_add_listener bindings from dlopen(RTLD_LOCAL) scopes

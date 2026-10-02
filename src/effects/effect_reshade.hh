@@ -7,6 +7,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <set>
 #include <array>
 
 #include "vulkan_include.hh"
@@ -43,6 +44,19 @@ namespace VKIntox
         std::vector<std::unique_ptr<EffectParam>> getParameters() const override;
         int getOutputWrites() const { return outputWrites; }
         virtual ~ReshadeEffect();
+
+        // Hands every GPU object this effect owns to the deferred destroy queue
+        // instead of releasing them inline. The handles stay raw members so the
+        // several hundred use sites are untouched; what changes is that nothing is
+        // destroyed at scope exit any more, and the queue enforces the release
+        // order at a point where the GPU is known to be finished with it.
+        void releaseResources();
+
+        // Deduplicated views and images, so a handle reachable through several
+        // members is only ever released once. See the definitions for why the
+        // per-member loops this replaced were crashing the NVIDIA driver.
+        std::set<VkImageView> collectOwnedImageViews() const;
+        std::set<VkImage>     collectOwnedImages() const;
 
     private:
         LogicalDevice*           pLogicalDevice;
