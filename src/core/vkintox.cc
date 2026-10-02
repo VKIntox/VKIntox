@@ -2388,7 +2388,24 @@ namespace VKIntox
                             effectName = configuredNames->second.front();
                     }
                     if (effectName.empty())
-                        effectName = techniqueName;
+                    {
+                        // Do NOT fall back to the bare technique name. The keys in
+                        // the effects list are instance names, and a technique name
+                        // is not one: nothing in the config maps "MXAO" to a shader
+                        // file, because the instances are called qUINT_mxao and
+                        // qUINT_mxao.2. Writing the technique name anyway produced an
+                        // entry the registry could never resolve, which the UI then
+                        // rendered as a permanent row that could not be enabled or
+                        // removed -- the ghost entry.
+                        //
+                        // Skipping is the honest outcome: a technique with no
+                        // matching configured instance cannot be applied either way,
+                        // so dropping it keeps the saved list truthful instead of
+                        // persisting a name that resolves to nothing.
+                        Logger::debug("preset technique '" + techniqueName + "' from " + filename
+                                      + " matches no configured effect instance; skipping");
+                        continue;
+                    }
 
                     if (!addedEffects.insert(effectName).second)
                         continue;
