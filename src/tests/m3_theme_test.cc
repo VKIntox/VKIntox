@@ -245,6 +245,21 @@ static void testMetricsSection(const std::string& dir)
     expect(ImGuiM3Radius(ImGuiM3Shape_ExtraLarge) == 60.0f, "radii scale by density * shape_scale");
 }
 
+static void testExportedFileReloadsClean(const std::string& dir)
+{
+    const std::string path = dir + "/exported.colors";
+    writeFile(path, "mode = dark\nsource = #6750A4\n");
+    ImGuiM3SetThemeFile(path.c_str());
+    expect(ImGuiM3WriteThemeFile(path.c_str()), "theme exports to disk");
+    ImGuiM3SetThemeFile(path.c_str());
+    const char* err = ImGuiM3GetError();
+    expect(err == nullptr || err[0] == '\0',
+           "the exported file parses without complaints");
+    if (err && err[0])
+        std::printf("  export round-trip errors:\n%s\n", err);
+    expect(ImGuiM3GetMetrics().corner_none == 0.0f, "a generated zero value applies");
+}
+
 // --- 3. Live reload ---------------------------------------------------------
 
 static void testLiveReload(const std::string& dir)
@@ -473,6 +488,7 @@ int main()
     testSourceRoundTripAndPinning(dir);
     testBadLinesAreSurvivable(dir);
     testMetricsSection(dir);
+    testExportedFileReloadsClean(dir);
     testLiveReload(dir);
     testVariants();
     testMotionAndSegments();

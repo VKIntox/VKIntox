@@ -570,12 +570,19 @@ static void ResolveTheme()
 
 static void ApplyMetricToken(const char* key, const char* value, ImGuiM3Metrics& m, std::string& err)
 {
-    const float v = (float)atof(value);
-    if (v == 0.0f && strcmp(value, "0") != 0 && strcmp(value, "0.0") != 0 && strcmp(value, "0.00") != 0)
+    // strtod tells a real zero from an unparseable one by where it stops; the
+    // old atof==0 heuristic rejected "0.000000", which is exactly how the
+    // exporter writes corner_none, so fresh files failed on their own output
+    char* end = nullptr;
+    const double parsed = strtod(value, &end);
+    while (*end == ' ' || *end == '\t')
+        end++;
+    if (end == value || *end != '\0')
     {
         err = std::string("expected a number for '") + key + "', got '" + value + "'";
         return;
     }
+    const float v = (float)parsed;
 
 #define MET(field) if (strcmp(key, #field) == 0) { m.field = v; return; }
     MET(density)
@@ -726,13 +733,15 @@ static void LoadThemeFile(const std::string& path)
     while (std::getline(file, line))
     {
         line_no++;
-        // strip comments. '#' is also a colour prefix, so only treat it as a
-        // comment when it isn't the first non-space char; a hash after '=' is a
-        // value. the old test ate every colour value.
+        // '#' doubles as the colour prefix, so context decides: a leading '#'
+        // is a whole-line comment, one before '=' is a trailing comment, and
+        // one after '=' is a value. the old test ate every colour value.
         const size_t hash = line.find('#');
         const size_t first_nonspace = line.find_first_not_of(" \t");
         const size_t equals_before_hash = line.find('=');
-        if (hash != std::string::npos && hash != first_nonspace &&
+        if (hash != std::string::npos && hash == first_nonspace)
+            continue;
+        if (hash != std::string::npos &&
             (equals_before_hash == std::string::npos || hash < equals_before_hash))
             line = line.substr(0, hash);
         line = Trim(line);
