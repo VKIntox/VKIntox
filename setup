@@ -121,6 +121,18 @@ uninstall_flatpak_layer() {
     fi
 }
 
+# Root writes into the build tree during a privileged install/uninstall: meson's
+# install log, and ninja's artifacts whenever it decides something is stale.
+# Any root-owned file left behind blocks the next unprivileged `just build`
+# ("Error writing to build log: Permission denied"), so hand them back to the
+# invoking user. `sudo -v` has already run by the time this is called; running
+# it when nothing is root-owned is a no-op.
+reclaim_build_ownership() {
+    [[ -d build ]] || return 0
+    find build -user root -print0 2>/dev/null \
+        | sudo -n xargs -0 -r chown "$(id -u):$(id -g)" 2>/dev/null || true
+}
+
 uninstall_system_layer() {
     # The system install wrote into /usr, so removing it is the one operation
     # that genuinely needs root, and it goes through the same authenticated
@@ -132,6 +144,7 @@ uninstall_system_layer() {
     say "authenticating for system uninstall"
     sudo -v || die "could not authenticate for system uninstall"
     run_progress "removing system-wide files" sudo -n ninja -C build uninstall
+    reclaim_build_ownership
 
     section "config kept"
     printf "  ${DIM}%s${NC}\n" "$HOME/.config/VKIntox"
@@ -211,9 +224,12 @@ if [[ "$MODE" == "system" ]]; then
 
     say "authenticating for system install"
     sudo -v || die "could not authenticate for system install"
-    # `--no-rebuild`: plain `ninja install` rebuilds as root and leaves
-    # root-owned objects and .ninja_log behind, which breaks `just build`
-    # afterwards. already compiled above, so just copy into /usr.
+    # `--no-rebuild` is the point: a plain `ninja install` would re-check and
+    # potentially rebuild as root, leaving root-owned objects, .ninja_log and
+    # install logs in the build tree — after which an unprivileged `just build`
+    # can no longer write its own log ("Error writing to build log: Permission
+    # denied"). The tree is already compiled above; only the copy into /usr
+    # needs root.
     run_progress "installed to system" sudo -n meson install -C build --no-rebuild
     reclaim_build_ownership
 fi
