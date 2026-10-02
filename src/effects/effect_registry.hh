@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <filesystem>
 
 #include "effect_config.hh"
@@ -54,8 +55,8 @@ namespace VKIntox
         void setParameterValue(const std::string& effectName, const std::string& paramName, bool value);
 
         // Get parameter by name
-        EffectParam* getParameter(const std::string& effectName, const std::string& paramName);
-        const EffectParam* getParameter(const std::string& effectName, const std::string& paramName) const;
+        std::optional<EffectParam*>       getParameter(const std::string& effectName, const std::string& paramName);
+        std::optional<const EffectParam*> getParameter(const std::string& effectName, const std::string& paramName) const;
 
         // Get all parameters for a specific effect (returns pointers, not clones)
         std::vector<EffectParam*> getParametersForEffect(const std::string& effectName);
@@ -126,10 +127,15 @@ namespace VKIntox
         void initReshadeEffect(const std::string& name, const std::string& path);
 
         // Internal helpers (assume mutex is held)
-        EffectConfig* findEffect(const std::string& effectName);
-        const EffectConfig* findEffect(const std::string& effectName) const;
-        EffectParam* findParam(EffectConfig& effect, const std::string& paramName);
-        const EffectParam* findParam(const EffectConfig& effect, const std::string& paramName) const;
+        // optional, not a raw pointer: a null here genuinely means "no such
+        // effect", and a bare pointer makes every caller write a null check
+        // without the type saying so. the const overload hands back a pointer
+        // into a std::list, which stays valid across the mutations this class
+        // performs, so the borrow is as safe as the lock the caller holds.
+        std::optional<EffectConfig*>       findEffect(const std::string& effectName);
+        std::optional<const EffectConfig*> findEffect(const std::string& effectName) const;
+        std::optional<EffectParam*>       findParam(EffectConfig& effect, const std::string& paramName);
+        std::optional<const EffectParam*> findParam(const EffectConfig& effect, const std::string& paramName) const;
     };
 
 } // namespace VKIntox

@@ -785,12 +785,15 @@ namespace VKIntox
                     }
 
                     // Get parameter from EffectRegistry (the single source of truth)
-                    EffectParam* param = pEffectRegistry->getParameter(effectName, opt.name);
-                    if (!param)
+                    auto paramOpt = pEffectRegistry->getParameter(effectName, opt.name);
+                    if (!paramOpt)
                     {
                         specId++;
                         continue;
                     }
+                    // unwrapped once: the switch below dynamic_casts it in every
+                    // branch, and the registry call keeps the optional at the edge
+                    EffectParam* param = *paramOpt;
 
                     switch (opt.type.base)
                     {
@@ -1255,10 +1258,10 @@ namespace VKIntox
                 if (uniform.name.empty())
                     continue;
 
-                if (EffectParam* registryParam = pEffectRegistry->getParameter(effectName, uniform.name))
+                if (auto registryParam = pEffectRegistry->getParameter(effectName, uniform.name))
                 {
-                    maybeLogReshadeUiUniformWrite(effectName, uniform.name, *registryParam);
-                    writeConfiguredUniformValue(stagingBufferMapped, uniform, registryParam);
+                    maybeLogReshadeUiUniformWrite(effectName, uniform.name, *(*registryParam));
+                    writeConfiguredUniformValue(stagingBufferMapped, uniform, *registryParam);
                 }
                 else
                     writeDefaultUniformValue(stagingBufferMapped, uniform);
@@ -1649,7 +1652,11 @@ namespace VKIntox
             std::string uiType = (typeIt != spec.annotations.end()) ? typeIt->value.string_data : "";
 
             // Get current value from EffectRegistry (the single source of truth)
-            EffectParam* registryParam = pEffectRegistry->getParameter(effectName, spec.name);
+            // unwrapped once here because the branches below dynamic_cast it
+            // repeatedly; the registry call itself still returns an optional, so
+            // "no such parameter" stays in the type at the boundary
+            auto registryParamOpt = pEffectRegistry->getParameter(effectName, spec.name);
+            EffectParam* registryParam = registryParamOpt ? *registryParamOpt : nullptr;
 
             // Create appropriate subclass based on spec type
             if (spec.type.is_floating_point())

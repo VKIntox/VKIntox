@@ -392,62 +392,61 @@ namespace VKIntox
     }
 
     // Internal helper to find effect by name (assumes mutex is held)
-    EffectConfig* EffectRegistry::findEffect(const std::string& effectName)
+    std::optional<EffectConfig*> EffectRegistry::findEffect(const std::string& effectName)
     {
         for (auto& effect : effects)
         {
             if (effect.name == effectName)
                 return &effect;
         }
-        return nullptr;
+        return std::nullopt;
     }
 
-    const EffectConfig* EffectRegistry::findEffect(const std::string& effectName) const
+    std::optional<const EffectConfig*> EffectRegistry::findEffect(const std::string& effectName) const
     {
         for (const auto& effect : effects)
         {
             if (effect.name == effectName)
                 return &effect;
         }
-        return nullptr;
+        return std::nullopt;
     }
 
     // Internal helper to find parameter within an effect (assumes mutex is held)
-    EffectParam* EffectRegistry::findParam(EffectConfig& effect, const std::string& paramName)
+    std::optional<EffectParam*> EffectRegistry::findParam(EffectConfig& effect, const std::string& paramName)
     {
         for (auto& param : effect.parameters)
         {
             if (param->name == paramName)
                 return param.get();
         }
-        return nullptr;
+        return std::nullopt;
     }
 
-    const EffectParam* EffectRegistry::findParam(const EffectConfig& effect, const std::string& paramName) const
+    std::optional<const EffectParam*> EffectRegistry::findParam(const EffectConfig& effect, const std::string& paramName) const
     {
         for (const auto& param : effect.parameters)
         {
             if (param->name == paramName)
                 return param.get();
         }
-        return nullptr;
+        return std::nullopt;
     }
 
     void EffectRegistry::setEffectEnabled(const std::string& effectName, bool enabled)
     {
         std::lock_guard<std::mutex> lock(mutex);
 
-        EffectConfig* effect = findEffect(effectName);
-        if (effect)
-            effect->enabled = enabled;
+        if (auto effect = findEffect(effectName))
+            (*effect)->enabled = enabled;
     }
 
     bool EffectRegistry::isEffectEnabled(const std::string& effectName) const
     {
         std::lock_guard<std::mutex> lock(mutex);
 
-        const EffectConfig* effect = findEffect(effectName);
-        return effect ? effect->enabled : false;
+        auto effect = findEffect(effectName);
+        return effect ? (*effect)->enabled : false;
     }
 
     std::map<std::string, bool> EffectRegistry::getEffectEnabledStates() const
@@ -464,61 +463,61 @@ namespace VKIntox
     {
         std::lock_guard<std::mutex> lock(mutex);
 
-        EffectConfig* effect = findEffect(effectName);
+        auto effect = findEffect(effectName);
         if (!effect)
             return;
 
-        EffectParam* param = findParam(*effect, paramName);
-        if (param && param->getType() == ParamType::Float)
-            static_cast<FloatParam*>(param)->value = value;
+        auto param = findParam(**effect, paramName);
+        if (param && (*param)->getType() == ParamType::Float)
+            static_cast<FloatParam*>(*param)->value = value;
     }
 
     void EffectRegistry::setParameterValue(const std::string& effectName, const std::string& paramName, int value)
     {
         std::lock_guard<std::mutex> lock(mutex);
 
-        EffectConfig* effect = findEffect(effectName);
+        auto effect = findEffect(effectName);
         if (!effect)
             return;
 
-        EffectParam* param = findParam(*effect, paramName);
-        if (param && param->getType() == ParamType::Int)
-            static_cast<IntParam*>(param)->value = value;
+        auto param = findParam(**effect, paramName);
+        if (param && (*param)->getType() == ParamType::Int)
+            static_cast<IntParam*>(*param)->value = value;
     }
 
     void EffectRegistry::setParameterValue(const std::string& effectName, const std::string& paramName, bool value)
     {
         std::lock_guard<std::mutex> lock(mutex);
 
-        EffectConfig* effect = findEffect(effectName);
+        auto effect = findEffect(effectName);
         if (!effect)
             return;
 
-        EffectParam* param = findParam(*effect, paramName);
-        if (param && param->getType() == ParamType::Bool)
-            static_cast<BoolParam*>(param)->value = value;
+        auto param = findParam(**effect, paramName);
+        if (param && (*param)->getType() == ParamType::Bool)
+            static_cast<BoolParam*>(*param)->value = value;
     }
 
-    EffectParam* EffectRegistry::getParameter(const std::string& effectName, const std::string& paramName)
+    std::optional<EffectParam*> EffectRegistry::getParameter(const std::string& effectName, const std::string& paramName)
     {
         std::lock_guard<std::mutex> lock(mutex);
 
-        EffectConfig* effect = findEffect(effectName);
+        auto effect = findEffect(effectName);
         if (!effect)
-            return nullptr;
+            return std::nullopt;
 
-        return findParam(*effect, paramName);
+        return findParam(**effect, paramName);
     }
 
-    const EffectParam* EffectRegistry::getParameter(const std::string& effectName, const std::string& paramName) const
+    std::optional<const EffectParam*> EffectRegistry::getParameter(const std::string& effectName, const std::string& paramName) const
     {
         std::lock_guard<std::mutex> lock(mutex);
 
-        const EffectConfig* effect = findEffect(effectName);
+        auto effect = findEffect(effectName);
         if (!effect)
-            return nullptr;
+            return std::nullopt;
 
-        return findParam(*effect, paramName);
+        return findParam(**effect, paramName);
     }
 
     std::vector<EffectParam*> EffectRegistry::getParametersForEffect(const std::string& effectName)
@@ -526,11 +525,11 @@ namespace VKIntox
         std::lock_guard<std::mutex> lock(mutex);
         std::vector<EffectParam*> result;
 
-        EffectConfig* effect = findEffect(effectName);
+        auto effect = findEffect(effectName);
         if (!effect)
             return result;
 
-        for (auto& param : effect->parameters)
+        for (auto& param : (*effect)->parameters)
             result.push_back(param.get());
 
         return result;
@@ -539,52 +538,51 @@ namespace VKIntox
     bool EffectRegistry::hasEffect(const std::string& name) const
     {
         std::lock_guard<std::mutex> lock(mutex);
-        return findEffect(name) != nullptr;
+        return findEffect(name).has_value();
     }
 
     std::string EffectRegistry::getEffectFilePath(const std::string& name) const
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const EffectConfig* effect = findEffect(name);
-        return effect ? effect->filePath : "";
+        auto effect = findEffect(name);
+        return effect ? (*effect)->filePath : "";
     }
 
     std::string EffectRegistry::getEffectType(const std::string& name) const
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const EffectConfig* effect = findEffect(name);
-        return effect ? effect->effectType : "";
+        auto effect = findEffect(name);
+        return effect ? (*effect)->effectType : "";
     }
 
     bool EffectRegistry::isEffectBuiltIn(const std::string& name) const
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const EffectConfig* effect = findEffect(name);
-        return effect ? (effect->type == EffectType::BuiltIn) : false;
+        auto effect = findEffect(name);
+        return effect ? ((*effect)->type == EffectType::BuiltIn) : false;
     }
 
     bool EffectRegistry::hasEffectFailed(const std::string& name) const
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const EffectConfig* effect = findEffect(name);
-        return effect ? effect->hasFailed() : false;
+        auto effect = findEffect(name);
+        return effect ? (*effect)->hasFailed() : false;
     }
 
     std::string EffectRegistry::getEffectError(const std::string& name) const
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const EffectConfig* effect = findEffect(name);
-        return effect ? effect->compileError : "";
+        auto effect = findEffect(name);
+        return effect ? (*effect)->compileError : "";
     }
 
     void EffectRegistry::setEffectError(const std::string& name, const std::string& error)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        EffectConfig* effect = findEffect(name);
-        if (effect)
+        if (auto effect = findEffect(name))
         {
-            effect->compileError = error;
-            effect->enabled = false;  // Disable failed effects
+            (*effect)->compileError = error;
+            (*effect)->enabled = false;  // Disable failed effects
         }
     }
 
@@ -609,7 +607,7 @@ namespace VKIntox
         // Lock for the check-and-mutate as a single critical section
         std::lock_guard<std::mutex> lock(mutex);
 
-        EffectConfig* existing = findEffect(instanceName);
+        auto existing = findEffect(instanceName);
         if (existing)
         {
             // For ReShade effects, check if the file changed on disk since we last parsed it
@@ -617,7 +615,7 @@ namespace VKIntox
             {
                 std::error_code ec;
                 auto currentModTime = std::filesystem::last_write_time(path, ec);
-                if (!ec && currentModTime != existing->fileModTime)
+                if (!ec && currentModTime != (*existing)->fileModTime)
                 {
                     Logger::info("EffectRegistry: shader file changed on disk, re-parsing: " + instanceName);
                     // Remove the stale entry so we re-parse below
@@ -689,9 +687,9 @@ namespace VKIntox
     std::vector<PreprocessorDefinition>& EffectRegistry::getPreprocessorDefs(const std::string& effectName)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        EffectConfig* effect = findEffect(effectName);
+        auto effect = findEffect(effectName);
         if (effect)
-            return effect->preprocessorDefs;
+            return (*effect)->preprocessorDefs;
         static thread_local std::vector<PreprocessorDefinition> emptyDefs;
         emptyDefs.clear();
         return emptyDefs;
@@ -700,9 +698,9 @@ namespace VKIntox
     const std::vector<PreprocessorDefinition>& EffectRegistry::getPreprocessorDefs(const std::string& effectName) const
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const EffectConfig* effect = findEffect(effectName);
+        auto effect = findEffect(effectName);
         if (effect)
-            return effect->preprocessorDefs;
+            return (*effect)->preprocessorDefs;
         static thread_local const std::vector<PreprocessorDefinition> emptyDefs;
         return emptyDefs;
     }
@@ -710,11 +708,11 @@ namespace VKIntox
     void EffectRegistry::setPreprocessorDefValue(const std::string& effectName, const std::string& macroName, const std::string& value)
     {
         std::lock_guard<std::mutex> lock(mutex);
-        EffectConfig* effect = findEffect(effectName);
+        auto effect = findEffect(effectName);
         if (!effect)
             return;
 
-        for (auto& def : effect->preprocessorDefs)
+        for (auto& def : (*effect)->preprocessorDefs)
         {
             if (def.name == macroName)
             {
