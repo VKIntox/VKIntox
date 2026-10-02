@@ -3233,9 +3233,23 @@ bool ImGui::SliderBehaviorT(const ImRect& bb, ImGuiID id, ImGuiDataType data_typ
     if (!is_floating_point && v_range_f >= 0.0f)                         // v_range_f < 0 may happen on integer overflows
         grab_sz = ImMax(slider_sz / (v_range_f + 1), style.GrabMinSize); // For integer sliders: if possible have the grab size represent 1 unit
     grab_sz = ImMin(grab_sz, slider_sz);
-    const float slider_usable_sz = slider_sz - grab_sz;
-    const float slider_usable_pos_min = bb.Min[axis] + grab_padding + grab_sz * 0.5f;
-    const float slider_usable_pos_max = bb.Max[axis] - grab_padding - grab_sz * 0.5f;
+
+    // VKIntox M3: the renderer parks a 4dp pill flush against the track ends at
+    // the extremes, so the clickable span must be inset by the *drawn*
+    // half-handle rather than ImGui's default `2px + grab_sz/2`. Using the same
+    // geometry for input and output keeps the hitbox under the visible thumb;
+    // otherwise clicking just inside the pill already reported the end value
+    // and the two drifted apart by (half_handle - grab_padding - grab_sz/2).
+    float slider_usable_pos_min = bb.Min[axis] + grab_padding + grab_sz * 0.5f;
+    float slider_usable_pos_max = bb.Max[axis] - grab_padding - grab_sz * 0.5f;
+    if (axis == ImGuiAxis_X)
+    {
+        const ImGuiM3Metrics& m3 = ImGuiM3GetMetrics();
+        const float half_handle = m3.slider_handle_width * m3.density * 0.5f;
+        slider_usable_pos_min = bb.Min[axis] + half_handle;
+        slider_usable_pos_max = bb.Max[axis] - half_handle;
+    }
+    const float slider_usable_sz = ImMax(0.0f, slider_usable_pos_max - slider_usable_pos_min);
 
     float logarithmic_zero_epsilon = 0.0f; // Only valid when is_logarithmic is true
     float zero_deadzone_halfsize = 0.0f; // Only valid when is_logarithmic is true
@@ -3523,25 +3537,34 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     const ImU32 active_col = ImGuiM3ColorU32(ImGuiM3Role_Primary);
     if (track_rect.GetWidth() > 0.0f)
     {
-        // Active segment: full-round start, rounded thumb-facing end. At the
-        // minimum value there is no active side at all — drop it *and* its gap,
-        // or a primary sliver pokes out on the left of the handle.
-        const bool has_active = handle_center.x - half_handle - gap > track_rect.Min.x;
-        if (has_active)
+        // The pill sits inside the track with a 6dp gap on each side, even at
+        // the extremes: the active segment always stops `gap` short of the
+        // handle, so max still reads as "filled up to here" rather than the
+        // colour merging into the thumb. The inactive segment only exists when
+        // it fits on the far side; when it doesn't, the track simply ends at the
+        // gap instead of leaving a floating rounded stub. Corner radii clamp to
+        // half each segment's own width so short slivers (high density) can't
+        // bleed their thumb-facing roundness past the pill.
+        const float pill_left = handle_center.x - half_handle;
+        const float pill_right = handle_center.x + half_handle;
+        const bool has_inactive = pill_right + gap < track_rect.Max.x;
+        const float active_end = pill_left - gap;
+
+        if (active_end > track_rect.Min.x)
         {
-            const ImRect active(track_rect.Min.x, track_rect.Min.y, handle_center.x - half_handle - gap, track_rect.Max.y);
+            const ImRect active(track_rect.Min.x, track_rect.Min.y, active_end, track_rect.Max.y);
+            const float ar = ImMax(0.0f, active.GetWidth() * 0.5f);
             ImGuiM3PathRoundedRect(window->DrawList, active,
-                                   ImGuiM3ShapeRounding{ external_r, inside_r, inside_r, external_r }, active_col);
+                                   ImGuiM3ShapeRounding{ ImMin(external_r, ar), ImMin(inside_r, ar), ImMin(inside_r, ar), ImMin(external_r, ar) },
+                                   active_col);
         }
-        // Inactive segment: rounded thumb-facing start, full-round end. Same at
-        // the maximum value: an empty inactive side must not leave the gap as a
-        // stray primary line beside the handle against the frame edge.
-        const bool has_inactive = handle_center.x + half_handle + gap < track_rect.Max.x;
         if (has_inactive)
         {
-            const ImRect inactive(handle_center.x + half_handle + gap, track_rect.Min.y, track_rect.Max.x, track_rect.Max.y);
+            const ImRect inactive(pill_right + gap, track_rect.Min.y, track_rect.Max.x, track_rect.Max.y);
+            const float ir = ImMax(0.0f, inactive.GetWidth() * 0.5f);
             ImGuiM3PathRoundedRect(window->DrawList, inactive,
-                                   ImGuiM3ShapeRounding{ inside_r, external_r, external_r, inside_r }, inactive_col);
+                                   ImGuiM3ShapeRounding{ ImMin(inside_r, ir), ImMin(external_r, ir), ImMin(external_r, ir), ImMin(inside_r, ir) },
+                                   inactive_col);
         }
     }
 
@@ -3572,13 +3595,11 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     // handle or the active/inactive boundary.
     {
         const bool has_handle = grab_bb.Max.x > grab_bb.Min.x;
-        // Split the value at the handle's gap: left of the gap sits on the
-        // primary track, right of it on the inactive one. At max there is no
-        // inactive side, so the whole string lies over primary and the split
-        // moves to the pill edge — otherwise dark ink would land on green.
-        const float active_edge = (has_handle && handle_center.x + half_handle + gap < track_rect.Max.x)
-                                      ? handle_center.x - half_handle - gap
-                                      : handle_center.x + half_handle;
+        // Split the value at the gap's left edge: everything to the left of it
+        // sits on the primary track, everything right sits on the dark gap /
+        // inactive side, regardless of value. That boundary is the same one the
+        // segments use, so the ink never spans two backgrounds.
+        const float active_edge = has_handle ? (handle_center.x - half_handle - gap) : frame_bb.Min.x;
 
         // The value is the slider's readout, so it takes the emphasized weight:
         // measure and draw with the bold face (falling back to the body font).
