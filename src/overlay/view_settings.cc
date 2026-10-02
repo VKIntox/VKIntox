@@ -138,7 +138,7 @@ namespace VKIntox
 
         ImGui::Spacing();
         ImGui::AlignTextToFramePadding();
-        ImGui::Text("%s  Max effects (requires restart)", Icon::MemoryUtf8);
+        ImGui::Text("%s  Max effects", Icon::MemoryUtf8);
         if (ImGui::IsItemHovered())
         {
             ImGui::BeginTooltip();
@@ -162,6 +162,7 @@ namespace VKIntox
             ImGui::TextColored(UI::Attention(), "~%d MB @ %ux%u", estimatedVramMB, currentWidth, currentHeight);
         else
             ImGui::TextDisabled("~%d MB @ %ux%u", estimatedVramMB, currentWidth, currentHeight);
+        ImGui::TextDisabled("Requires restart");
         ImGui::M3CardEnd();
 
         // --- Developer ---
