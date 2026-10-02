@@ -210,15 +210,22 @@ fi
 # the pass-through path and surviving. The run still reports PASSED, having
 # asserted almost nothing.
 #
-# "~ReshadeEffect start: DisplayDepth passRuntimes=1" is the signal worth having:
-# it only appears once the shader has been found, parsed, compiled, and turned
-# into at least one render pass. Requiring passRuntimes to be non-zero is the part
-# that matters, since zero would mean the effect object exists but never got a
-# pipeline and so never drew anything.
-if ! grep -qE '~ReshadeEffect start: DisplayDepth passRuntimes=[1-9]' "$LAYER_LOG"; then
+# The signal is [effect-built], logged at the end of the effect's constructor.
+# That makes it a creation-time fact: reaching the line means the shader was
+# found, parsed, compiled and turned into render passes. An earlier version of
+# this assertion matched the destructor's trace instead, which was wrong -- a
+# trace from a destructor only appears if something tears the effect down, and
+# on a CI runner the normal ending is vkcube being killed by the timeout, so it
+# never got the chance. That assertion passed locally only because the resize
+# reload happened to destroy effects mid-run, and failed on CI for the same
+# reason inverted.
+#
+# passes= must be non-zero: zero would mean the effect object exists but never
+# got a pipeline, so it never drew.
+if ! grep -qE '\[effect-built\] DisplayDepth passes=[1-9]' "$LAYER_LOG"; then
     printf '%s\n' "--- layer log ---" >&2
     cat "$LAYER_LOG" >&2
-    die "DisplayDepth never produced a render pass, so this run exercised the pass-through path and proves nothing about the effect pipeline. The log above shows whether the shader was found and compiled."
+    die "DisplayDepth was never built, so this run exercised the pass-through path and proves nothing about the effect pipeline. The log above shows how far it got."
 fi
 ok "DisplayDepth compiled and built a render pass"
 

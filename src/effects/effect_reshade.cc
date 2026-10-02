@@ -1245,7 +1245,16 @@ namespace VKIntox
             Logger::debug("fragment entry: " + pass.ps_entry_point);
             passRuntimes.push_back(std::move(runtime));
         }
-        Logger::debug("finished creating Reshade effect");
+        // Info, not debug, and deliberately here rather than in the destructor:
+        // this line is how the smoke test proves an effect was really built
+        // instead of the layer quietly falling back to the pass-through path.
+        // The version of that assertion this replaces keyed off the destructor's
+        // trace, which only appears if something tears the effect down -- and a
+        // crash-only test cannot rely on a teardown happening, since the usual
+        // outcome is vkcube being killed by the timeout. Reaching this point at
+        // all means the shader was found, parsed, compiled, and turned into
+        // render passes, which is the thing actually worth asserting.
+        Logger::info("[effect-built] " + effectName + " passes=" + std::to_string(passRuntimes.size()));
     }
 
     void ReshadeEffect::updateEffect()
