@@ -3523,16 +3523,26 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     const ImU32 active_col = ImGuiM3ColorU32(ImGuiM3Role_Primary);
     if (track_rect.GetWidth() > 0.0f)
     {
-        // Active segment: full-round start, rounded thumb-facing end.
-        const ImRect active(track_rect.Min.x, track_rect.Min.y, handle_center.x - half_handle - gap, track_rect.Max.y);
-        if (active.GetWidth() > 0.0f)
+        // Active segment: full-round start, rounded thumb-facing end. At the
+        // minimum value there is no active side at all — drop it *and* its gap,
+        // or a primary sliver pokes out on the left of the handle.
+        const bool has_active = handle_center.x - half_handle - gap > track_rect.Min.x;
+        if (has_active)
+        {
+            const ImRect active(track_rect.Min.x, track_rect.Min.y, handle_center.x - half_handle - gap, track_rect.Max.y);
             ImGuiM3PathRoundedRect(window->DrawList, active,
                                    ImGuiM3ShapeRounding{ external_r, inside_r, inside_r, external_r }, active_col);
-        // Inactive segment: rounded thumb-facing start, full-round end.
-        const ImRect inactive(handle_center.x + half_handle + gap, track_rect.Min.y, track_rect.Max.x, track_rect.Max.y);
-        if (inactive.GetWidth() > 0.0f)
+        }
+        // Inactive segment: rounded thumb-facing start, full-round end. Same at
+        // the maximum value: an empty inactive side must not leave the gap as a
+        // stray primary line beside the handle against the frame edge.
+        const bool has_inactive = handle_center.x + half_handle + gap < track_rect.Max.x;
+        if (has_inactive)
+        {
+            const ImRect inactive(handle_center.x + half_handle + gap, track_rect.Min.y, track_rect.Max.x, track_rect.Max.y);
             ImGuiM3PathRoundedRect(window->DrawList, inactive,
                                    ImGuiM3ShapeRounding{ inside_r, external_r, external_r, inside_r }, inactive_col);
+        }
     }
 
     // Handle: 4x44dp pill, and the 40dp state layer behind it.
@@ -3562,9 +3572,22 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     // handle or the active/inactive boundary.
     {
         const bool has_handle = grab_bb.Max.x > grab_bb.Min.x;
-        const float active_edge = has_handle ? handle_center.x - half_handle : frame_bb.Min.x;
+        // Split the value at the handle's gap: left of the gap sits on the
+        // primary track, right of it on the inactive one. At max there is no
+        // inactive side, so the whole string lies over primary and the split
+        // moves to the pill edge — otherwise dark ink would land on green.
+        const float active_edge = (has_handle && handle_center.x + half_handle + gap < track_rect.Max.x)
+                                      ? handle_center.x - half_handle - gap
+                                      : handle_center.x + half_handle;
 
+        // The value is the slider's readout, so it takes the emphasized weight:
+        // measure and draw with the bold face (falling back to the body font).
+        ImFont* value_font = ImGuiM3FontBold();
+        if (!value_font)
+            value_font = GetFont();
+        PushFont(value_font, GetFontSize());
         const ImVec2 text_size = CalcTextSize(value_buf, value_buf_end);
+        PopFont();
         const float text_left = frame_bb.GetCenter().x - text_size.x * 0.5f;
         const float text_right = text_left + text_size.x;
         const ImVec2 text_pos(text_left, frame_bb.GetCenter().y - text_size.y * 0.5f);
@@ -3593,18 +3616,20 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
         // two colours. When there is no handle (or the number clears it entirely)
         // a single unclipped draw covers the whole string.
         const bool split = has_handle && text_left < active_edge && text_right > active_edge;
+        PushFont(value_font, GetFontSize());
         if (split)
             value_dl->PushClipRect(ImVec2(frame_bb.Min.x, frame_bb.Min.y), ImVec2(active_edge, frame_bb.Max.y), true);
-        value_dl->AddText(ImVec2(text_pos.x + 0.75f, text_pos.y), halo_col, value_buf, value_buf_end);
-        value_dl->AddText(text_pos, text_col, value_buf, value_buf_end);
+        value_dl->AddText(value_font, GetFontSize(), ImVec2(text_pos.x + 0.75f, text_pos.y), halo_col, value_buf, value_buf_end);
+        value_dl->AddText(value_font, GetFontSize(), text_pos, text_col, value_buf, value_buf_end);
         if (split)
         {
             value_dl->PopClipRect();
             value_dl->PushClipRect(ImVec2(active_edge, frame_bb.Min.y), ImVec2(frame_bb.Max.x, frame_bb.Max.y), true);
-            value_dl->AddText(ImVec2(text_pos.x + 0.75f, text_pos.y), halo_col, value_buf, value_buf_end);
-            value_dl->AddText(text_pos, text_col, value_buf, value_buf_end);
+            value_dl->AddText(value_font, GetFontSize(), ImVec2(text_pos.x + 0.75f, text_pos.y), halo_col, value_buf, value_buf_end);
+            value_dl->AddText(value_font, GetFontSize(), text_pos, text_col, value_buf, value_buf_end);
             value_dl->PopClipRect();
         }
+        PopFont();
     }
 
     if (label_size.x > 0.0f)
