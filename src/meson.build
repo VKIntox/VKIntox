@@ -38,6 +38,7 @@ imgui_src = [
     'vendor/imgui/imgui_draw.cc',
     'vendor/imgui/imgui_tables.cc',
     'vendor/imgui/imgui_widgets.cc',
+    'vendor/imgui/imgui_m3.cc',
     'vendor/imgui/backends/imgui_impl_vulkan.cc',
 ]
 
@@ -186,14 +187,25 @@ source_inc = include_directories('.', 'core', 'input', 'render', 'effects', 'ove
 stb_inc = include_directories('vendor/stb')
 shader_asset_inc = include_directories('effects/shaders')
 
+# The XDG desktop portal is reached over the session bus through GIO, which is
+# present on the desktop and inside Flatpak runtimes. Optional: without it the
+# shader manager falls back to the in-overlay file browser.
+gio_dep = dependency('gio-2.0', required: false)
+vkintox_deps = [x11_dep, xi_dep, wayland_client_dep, xkbcommon_dep, reshade_dep]
+vkintox_cpp_args = ['-DIMGUI_IMPL_VULKAN_NO_PROTOTYPES']
+if gio_dep.found()
+    vkintox_deps += gio_dep
+    vkintox_cpp_args += '-DVKINTOX_HAVE_GIO=1'
+endif
+
 shared_library('vkintox',
     VKIntox_src, overlay_src, imgui_src, shader_include,
     link_with: [keyboard_input_x11_lib, mouse_input_lib, input_blocker_lib,
                 wayland_input_common_lib, keyboard_input_wayland_lib, mouse_input_wayland_lib,
                 wayland_pointer_constraints_lib, wayland_interpose_lib],
     include_directories : [VKIntox_include_path, imgui_inc, overlay_inc, effects_inc, effects_builtin_inc, effects_params_inc, core_inc, input_inc, render_inc, vendor_inc, include_directories('vendor/reshade'), stb_inc, shader_asset_inc, source_inc],
-    cpp_args : ['-DIMGUI_IMPL_VULKAN_NO_PROTOTYPES'],
-    dependencies : [x11_dep, xi_dep, wayland_client_dep, xkbcommon_dep, reshade_dep],
+    cpp_args : vkintox_cpp_args,
+    dependencies : vkintox_deps,
     gnu_symbol_visibility: 'hidden',
     install : true,
     install_dir : lib_dir)
@@ -224,6 +236,19 @@ config_serializer_tests = executable('vkintox-config-serializer-tests',
     'core/logger.cc',
     include_directories : [core_inc, render_inc, effects_inc, effects_params_inc, vendor_inc, source_inc])
 test('config serializer', config_serializer_tests)
+
+# The M3 theme is the one part of the UI that cannot be eyeballed in CI: it needs
+# no GPU, but a colour-maths or file-format regression is otherwise invisible.
+# This links the theme plus the ImGui core (no renderer) and exercises it headless.
+m3_theme_tests = executable('vkintox-m3-theme-tests',
+    'tests/m3_theme_test.cc',
+    'vendor/imgui/imgui.cc',
+    'vendor/imgui/imgui_draw.cc',
+    'vendor/imgui/imgui_tables.cc',
+    'vendor/imgui/imgui_widgets.cc',
+    'vendor/imgui/imgui_m3.cc',
+    include_directories : [imgui_inc])
+test('m3 theme', m3_theme_tests)
 
 # The deferred destroy queue's release order is load-bearing for driver
 # stability and impossible to observe without a real GPU, so it is tested

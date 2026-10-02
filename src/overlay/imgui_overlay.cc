@@ -25,17 +25,24 @@
 
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/imgui_internal.h"
+#include "vendor/imgui/imgui_m3.h"
+#include "overlay/ui_theme.hh"
+#include "overlay/ui_icons.hh"
 #include "vendor/imgui/backends/imgui_impl_vulkan.h"
 
 namespace VKIntox
 {
     namespace
     {
-        constexpr float kOverlayTitleBarHeight = 36.0f;
+        // M3 small top app bar is 64dp; the overlay's title bar is one.
+        float OverlayTitleBarHeight()
+        {
+            return 64.0f * ImGuiM3GetMetrics().density;
+        }
 
         void overlayTitleHeightConstraint(ImGuiSizeCallbackData* data)
         {
-            data->DesiredSize.y = std::max(data->DesiredSize.y, kOverlayTitleBarHeight + 1.0f);
+            data->DesiredSize.y = std::max(data->DesiredSize.y, OverlayTitleBarHeight() + 1.0f);
         }
     }
 
@@ -116,7 +123,9 @@ namespace VKIntox
         CHECK_FUNC(UnmapMemory);
         CHECK_FUNC(UpdateDescriptorSets);
         CHECK_FUNC(WaitForFences);
-
+        // Not in the layer's dispatch table; resolve it directly.
+        if (strcmp(function_name, "vkGetFenceStatus") == 0)
+            return (PFN_vkVoidFunction)device->vkd.GetDeviceProcAddr(device->device, "vkGetFenceStatus");
         #undef CHECK_FUNC
 
         // Instance functions from VKIntox's dispatch
@@ -149,93 +158,19 @@ namespace VKIntox
         if (!iniContent.empty())
             ImGui::LoadIniSettingsFromDisk(iniPath.c_str());
 
-        // ── Material Design 3 Expressive Styling (Monochrome) ──────────
-        ImGui::StyleColorsDark();
-        ImGuiStyle& style = ImGui::GetStyle();
-
-        // MD3 Expressive colour tokens (monochrome dark theme)
-        ImVec4 md3Surface        = ImVec4(0.12f, 0.12f, 0.16f, 0.92f);   // Elevated surface
-        ImVec4 md3SurfaceDim     = ImVec4(0.08f, 0.08f, 0.10f, 0.95f);   // Dim surface
-        ImVec4 md3Primary        = ImVec4(0.98f, 0.98f, 0.98f, 1.00f);   // WHITE accent (not purple!)
-        ImVec4 md3PrimaryDim     = ImVec4(0.82f, 0.82f, 0.84f, 1.00f);   // Dimmed white
-        ImVec4 md3OnSurface      = ImVec4(0.94f, 0.93f, 0.96f, 1.00f);   // Text on surface
-        ImVec4 md3OnSurfaceVar   = ImVec4(0.68f, 0.67f, 0.70f, 1.00f);   // Variant text
-        ImVec4 md3Outline        = ImVec4(0.42f, 0.41f, 0.46f, 0.55f);   // Outline
-        ImVec4 md3OutlineVariant = ImVec4(0.28f, 0.27f, 0.32f, 0.45f);   // Subtle outline
-
-        // MD3 Expressive: larger rounding for friendly, modern feel
-        style.Alpha               = 0.95f;
-        style.WindowPadding       = ImVec2(20, 16);
-        style.FramePadding        = ImVec2(14, 8);
-        style.ItemSpacing         = ImVec2(10, 8);
-        style.ItemInnerSpacing    = ImVec2(8, 5);
-        style.IndentSpacing       = 24.0f;
-        style.ScrollbarSize       = 12.0f;
-        style.GrabMinSize         = 12.0f;
-
-        // MD3 Expressive roundness (more rounded than standard MD3)
-        style.WindowRounding      = 20.0f;   // Very rounded windows
-        style.ChildRounding       = 16.0f;   // Rounded child areas
-        style.FrameRounding       = 14.0f;   // Rounded frames
-        style.PopupRounding       = 16.0f;   // Rounded popups
-        style.ScrollbarRounding   = 8.0f;    // Rounded scrollbar
-        style.GrabRounding        = 10.0f;   // Rounded grab handles
-        style.TabRounding         = 14.0f;   // Rounded tabs
-
-        // No borders - MD3 uses elevation instead
-        style.WindowBorderSize   = 0.0f;
-        style.ChildBorderSize    = 0.0f;
-        style.PopupBorderSize    = 0.5f;
-        style.FrameBorderSize    = 0.0f;
-        style.TabBorderSize      = 0.0f;
-
-        // Colour scheme - WHITE accent on dark surfaces
-        style.Colors[ImGuiCol_WindowBg]           = md3Surface;
-        style.Colors[ImGuiCol_ChildBg]            = md3SurfaceDim;
-        style.Colors[ImGuiCol_PopupBg]            = ImVec4(0.14f, 0.14f, 0.18f, 0.96f);
-        style.Colors[ImGuiCol_Border]             = md3OutlineVariant;
-        style.Colors[ImGuiCol_FrameBg]            = ImVec4(0.18f, 0.18f, 0.22f, 0.65f);
-        style.Colors[ImGuiCol_FrameBgHovered]     = ImVec4(0.24f, 0.24f, 0.28f, 0.75f);
-        style.Colors[ImGuiCol_FrameBgActive]      = ImVec4(0.30f, 0.30f, 0.34f, 0.85f);
-        style.Colors[ImGuiCol_TitleBg]            = md3Surface;
-        style.Colors[ImGuiCol_TitleBgActive]      = ImVec4(0.15f, 0.15f, 0.19f, 0.95f);
-        style.Colors[ImGuiCol_TitleBgCollapsed]   = ImVec4(0.10f, 0.10f, 0.13f, 0.65f);
-        style.Colors[ImGuiCol_MenuBarBg]          = ImVec4(0.14f, 0.14f, 0.18f, 0.92f);
-        style.Colors[ImGuiCol_ScrollbarBg]        = ImVec4(0.06f, 0.06f, 0.08f, 0.45f);
-        style.Colors[ImGuiCol_ScrollbarGrab]      = md3Outline;
-        style.Colors[ImGuiCol_ScrollbarGrabHovered] = md3OnSurfaceVar;
-        style.Colors[ImGuiCol_ScrollbarGrabActive]  = md3Primary;
-        style.Colors[ImGuiCol_CheckMark]          = md3Primary;
-        style.Colors[ImGuiCol_SliderGrab]         = md3Primary;
-        style.Colors[ImGuiCol_SliderGrabActive]   = md3OnSurface;
-        style.Colors[ImGuiCol_Button]             = ImVec4(0.22f, 0.22f, 0.26f, 0.80f);
-        style.Colors[ImGuiCol_ButtonHovered]      = ImVec4(0.30f, 0.30f, 0.36f, 0.88f);
-        style.Colors[ImGuiCol_ButtonActive]       = ImVec4(0.38f, 0.38f, 0.44f, 0.95f);
-        style.Colors[ImGuiCol_Header]             = ImVec4(0.22f, 0.22f, 0.26f, 0.72f);
-        style.Colors[ImGuiCol_HeaderHovered]      = ImVec4(0.28f, 0.28f, 0.34f, 0.82f);
-        style.Colors[ImGuiCol_HeaderActive]       = ImVec4(0.34f, 0.34f, 0.40f, 0.90f);
-        style.Colors[ImGuiCol_Separator]          = md3OutlineVariant;
-        style.Colors[ImGuiCol_SeparatorHovered]   = md3OnSurfaceVar;
-        style.Colors[ImGuiCol_SeparatorActive]    = md3PrimaryDim;
-        style.Colors[ImGuiCol_ResizeGrip]         = ImVec4(0.28f, 0.28f, 0.34f, 0.35f);
-        style.Colors[ImGuiCol_ResizeGripHovered]  = ImVec4(0.38f, 0.38f, 0.46f, 0.65f);
-        style.Colors[ImGuiCol_ResizeGripActive]   = md3PrimaryDim;
-        style.Colors[ImGuiCol_Tab]                = ImVec4(0.18f, 0.18f, 0.22f, 0.82f);
-        style.Colors[ImGuiCol_TabHovered]         = ImVec4(0.26f, 0.26f, 0.30f, 0.92f);
-        style.Colors[ImGuiCol_TabSelected]        = ImVec4(0.24f, 0.24f, 0.28f, 1.00f);
-        style.Colors[ImGuiCol_TabDimmed]          = ImVec4(0.13f, 0.13f, 0.16f, 0.62f);
-        style.Colors[ImGuiCol_TabDimmedSelected]   = ImVec4(0.19f, 0.19f, 0.23f, 0.92f);
-        style.Colors[ImGuiCol_DockingPreview]     = md3PrimaryDim;
-        style.Colors[ImGuiCol_DockingEmptyBg]     = ImVec4(0.08f, 0.08f, 0.10f, 0.60f);
-        style.Colors[ImGuiCol_TextSelectedBg]     = ImVec4(0.90f, 0.90f, 0.92f, 0.40f);
-        style.Colors[ImGuiCol_NavWindowingHighlight] = md3PrimaryDim;
-        style.Colors[ImGuiCol_Text]               = md3OnSurface;
-        style.Colors[ImGuiCol_TextDisabled]       = ImVec4(0.42f, 0.41f, 0.46f, 1.00f);
+        // ── Material 3 Expressive theme ────────────────────────────────────
+        // The whole skin lives in vendor/imgui/imgui_m3.{h,cc}: the token set,
+        // the `.colors` file, live reload, and the M3 widget painting. Here we
+        // only point it at a file and let it populate the style.
+        ImGuiM3SetThemeFile(ImGuiM3DefaultThemeFilePath());
+        if (const char* themePath = ImGuiM3GetThemeFile())
+            Logger::info("ImGui: Material 3 Expressive theme from " + std::string(themePath));
 
         // Font loading
         std::string baseConfigDir = ConfigSerializer::getBaseConfigDir();
         std::vector<std::pair<std::string, std::string>> fontSearchPaths = {
-            {baseConfigDir + "/font/font.ttf", "Config directory"}
+            {baseConfigDir + "/font/GoogleSans-Regular.ttf", "Google Sans Regular"},
+            {baseConfigDir + "/font/font.ttf", "legacy regular fallback"}
         };
 
         // the search paths outlive the atlas call, and AddFontFromFileTTF copies
@@ -248,22 +183,81 @@ namespace VKIntox
             if (std::ifstream(path).good()) { regularPath = path.c_str(); break; }
         }
 
+        // M3 body-medium is the base type style: 14sp / 20sp line height /
+        // 0.25 tracking, regular weight. Everything else in the UI is expressed
+        // as a step from here.
+        constexpr float kBodyMediumSize = 14.0f;
+
         ImFontConfig fontCfg;
-        fontCfg.SizePixels = 14.5;
+        fontCfg.SizePixels = kBodyMediumSize;
         fontCfg.OversampleH = 2;
         fontCfg.OversampleV = 1;
         fontCfg.PixelSnapH = true;
 
+        // Material Symbols subset, shared by every text face (merged so icon
+        // codepoints render inline in labels) and by the standalone 24px icon
+        // face used by M3Icon and the navigation.
+        const std::string fontDir = baseConfigDir + "/font/";
+        const std::string iconFontPath = fontDir + "MaterialSymbolsRounded-subset.ttf";
+        const bool haveIconFont = std::ifstream(iconFontPath).good();
+
         if (regularPath)
         {
             io.Fonts->Clear();
-            io.Fonts->AddFontFromFileTTF(regularPath, 14.5f, &fontCfg);
-            Logger::info("ImGui: loaded Google Sans Flex from " + std::string(regularPath));
+
+            // Add a text face and immediately merge the icon subset into it, so
+            // the next AddFontFromFileTTF starts a fresh face.
+            auto addFace = [&](const char* path) -> ImFont*
+            {
+                ImFont* face = io.Fonts->AddFontFromFileTTF(path, kBodyMediumSize, &fontCfg);
+                if (face && haveIconFont)
+                    ImGuiM3MergeIconFont(iconFontPath.c_str(), kBodyMediumSize);
+                return face;
+            };
+
+            ImFont* regular = addFace(regularPath);
+            ImFont* medium = nullptr;
+            ImFont* bold = nullptr;
+            ImFont* extraBold = nullptr;
+            // Expressive typography uses emphasized weights selectively: medium
+            // for display/headline/body emphasis, bold for titles and labels.
+            const std::pair<const char*, ImFont**> weights[] = {
+                {"GoogleSans-Medium.ttf", &medium},
+                {"GoogleSans-Bold.ttf", &bold},
+                {"GoogleSans-ExtraBold.ttf", &extraBold},
+            };
+            for (const auto& [filename, slot] : weights)
+            {
+                const std::string path = fontDir + filename;
+                if (std::ifstream(path).good())
+                    *slot = addFace(path.c_str());
+            }
+            // MergeMode appends atlas entries, so indices are not stable; hand
+            // the faces over by identity.
+            ImGuiM3SetTextFonts(regular, medium, bold, extraBold);
+            Logger::info("ImGui: loaded Google Sans Flex regular/medium/bold weights from " + std::string(regularPath));
         }
         else
         {
             Logger::warn("ImGui: Google Sans Flex not found - using default font");
         }
+
+        if (haveIconFont)
+        {
+            if (ImGuiM3LoadIconFont(iconFontPath.c_str(), 24.0f))
+                Logger::info("ImGui: loaded Material Symbols icon subset");
+            else
+                Logger::warn("ImGui: Material Symbols subset could not be parsed");
+        }
+        else
+        {
+            Logger::warn("ImGui: Material Symbols subset not found - icons disabled");
+        }
+
+        // Re-apply now that the font metrics are known: the M3 frame padding is
+        // derived from the 40dp container height minus the text height, so it
+        // cannot be computed before the font exists.
+        ImGuiM3ApplyToStyle(1.0f);
 
         initVulkanBackend(swapchainFormat, imageCount);
 
@@ -416,7 +410,11 @@ namespace VKIntox
         ImGui::Dummy(ImVec2(size, size));
         ImGui::Dummy(ImVec2(0.0f, std::max(6.0f, size * 0.035f)));
         const char* brandText = "VKIntox";
-        ImFont* font = ImGui::GetIO().Fonts->Fonts[0];
+        // The wordmark is the one display-scale run of text in the overlay, so it
+        // takes the bold face; body text stays regular.
+        ImFont* font = ImGuiM3FontBold();
+        if (!font)
+            font = ImGui::GetIO().Fonts->Fonts[0];
         ImGui::PushFont(font, std::max(font->LegacySize, size * 0.14f));
         const float textWidth = ImGui::CalcTextSize(brandText).x;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (contentWidth - textWidth) * 0.5f));
@@ -483,24 +481,28 @@ namespace VKIntox
                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                 ImGuiWindowFlags_NoTitleBar;
 
-            // Color by level: red for errors, amber for warnings, blue for info.
-            ImVec4 headerColor;
+            // Color by level, from the shared token so toasts and the log view
+            // can never disagree. A toast is an M3 snackbar: surface-container-high
+            // with the level colour as a left accent bar.
+            const ImVec4 headerColor = UI::LogLevelColor(t.level);
             const char* tag = "INFO";
+            const char* levelIcon = Icon::InfoUtf8;
             switch (t.level)
             {
-                case LogLevel::Error: headerColor = ImVec4(0.78f, 0.20f, 0.20f, 1.0f); tag = "ERROR"; break;
-                case LogLevel::Warn:  headerColor = ImVec4(0.82f, 0.55f, 0.18f, 1.0f); tag = "WARN";  break;
-                default:              headerColor = ImVec4(0.22f, 0.45f, 0.78f, 1.0f); tag = "INFO";  break;
+                case LogLevel::Error: tag = "ERROR"; levelIcon = Icon::ErrorUtf8; break;
+                case LogLevel::Warn:  tag = "WARN";  levelIcon = Icon::WarningUtf8; break;
+                default:              tag = "INFO";  levelIcon = Icon::InfoUtf8;  break;
             }
 
             char label[32];
             snprintf(label, sizeof(label), "##VKIntoxToast%zu", i);
 
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.10f, 0.12f, 0.94f));
-            ImGui::PushStyleColor(ImGuiCol_Border, headerColor);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+            // M3 snackbar geometry: rounded container, surface-container-high.
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, UI::Container());
+            ImGui::PushStyleColor(ImGuiCol_Border, ImGuiM3ColorU32(ImGuiM3Role_OutlineVariant));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
 
             bool open = ImGui::Begin(label, nullptr, flags);
 
@@ -509,25 +511,44 @@ namespace VKIntox
 
             if (open)
             {
-                // Header row: colored tag on the left, dismiss button on the right.
+                // Accent bar down the leading edge, in the level colour.
+                const ImVec2 content_min = ImGui::GetCursorScreenPos();
+                ImGui::InvisibleButton("##toastbg", ImVec2(0.0f, 0.0f));
+
                 ImGui::PushStyleColor(ImGuiCol_Text, headerColor);
+                ImGui::TextUnformatted(levelIcon);
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_Primary));
                 ImGui::TextUnformatted("VKIntox");
                 ImGui::PopStyleColor();
                 ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_TextDisabled, headerColor);
                 ImGui::TextDisabled("(%s)", tag);
+                ImGui::PopStyleColor();
                 ImGui::SameLine();
 
-                const float btnWidth = 22.0f;
-                ImGui::SetCursorPosX(ImGui::GetWindowWidth() - btnWidth - 12.0f);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.30f, 0.32f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.20f, 0.20f, 1.0f));
-                if (ImGui::Button("x", ImVec2(btnWidth, 0)))
+                const float btnWidth = 24.0f;
+                ImGui::SetCursorPosX(ImGui::GetWindowWidth() - btnWidth - 16.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHighest));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGuiM3ColorU32(ImGuiM3Role_ErrorContainer));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurface));
+                const std::string toastCloseLabel = std::string(Icon::CloseUtf8) + "##toastclose";
+                if (ImGui::Button(toastCloseLabel.c_str(), ImVec2(btnWidth, 0)))
                     dismissed.push_back(i);
-                ImGui::PopStyleColor(2);
+                ImGui::PopStyleColor(3);
 
-                ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 12.0f);
+                ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 16.0f);
                 ImGui::TextUnformatted(t.message.c_str());
                 ImGui::PopTextWrapPos();
+
+                const ImVec2 content_max = ImGui::GetCursorScreenPos();
+                ImDrawList* toast_dl = ImGui::GetWindowDrawList();
+                const float accent = 4.0f;
+                toast_dl->AddRectFilled(ImVec2(content_min.x - 12.0f, content_min.y - 4.0f),
+                                        ImVec2(content_min.x - 12.0f + accent, content_max.y + 4.0f),
+                                        ImGuiM3ColorU32(t.level == LogLevel::Error ? ImGuiM3Role_Error :
+                                                         t.level == LogLevel::Warn ? ImGuiM3Role_Primary : ImGuiM3Role_Tertiary));
             }
             ImGui::End();
         }
@@ -1258,17 +1279,17 @@ namespace VKIntox
         if (resetLayoutRequested)
         {
             ImGui::SetNextWindowPos(ImVec2(50, 50), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(680, 600), ImGuiCond_Always);
             resetLayoutRequested = false;
         }
         else
         {
             ImGui::SetNextWindowPos(ImVec2(50, 50), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(680, 600), ImGuiCond_FirstUseEver);
         }
 
         const float previousFramePaddingY = ImGui::GetStyle().FramePadding.y;
-        ImGui::GetStyle().FramePadding.y = std::max(0.0f, (kOverlayTitleBarHeight - ImGui::GetFontSize()) * 0.5f);
+        ImGui::GetStyle().FramePadding.y = std::max(0.0f, (OverlayTitleBarHeight() - ImGui::GetFontSize()) * 0.5f);
         ImGui::SetNextWindowSizeConstraints(ImVec2(300, 200), ImVec2(screenMax.x - screenMin.x, screenMax.y - screenMin.y),
                                             overlayTitleHeightConstraint);
         ImGui::Begin("VKIntox Overlay", nullptr, ImGuiWindowFlags_NoCollapse);
@@ -1277,8 +1298,11 @@ namespace VKIntox
         const ImVec2 windowPos = ImGui::GetWindowPos();
         const ImVec2 windowSize = ImGui::GetWindowSize();
         const float titleBarHeight = ImGui::GetCurrentWindowRead()->TitleBarHeight;
-        const float closeButtonSize = std::min(ImGui::GetFrameHeight(), titleBarHeight - 8.0f);
-        const float closeButtonRightInset = 12.0f;
+        const ImGuiM3Metrics& m3metrics = ImGuiM3GetMetrics();
+        // M3 expressive icon target: a compact circular button whose glyph is
+        // smaller and heavier than a text run.
+        const float closeButtonSize = 32.0f * m3metrics.density;
+        const float closeButtonRightInset = 12.0f * m3metrics.density;
         const ImVec2 buttonMin(windowPos.x + windowSize.x - closeButtonSize - closeButtonRightInset,
                                windowPos.y + (titleBarHeight - closeButtonSize) * 0.5f);
         const ImVec2 buttonMax(buttonMin.x + closeButtonSize, buttonMin.y + closeButtonSize);
@@ -1306,18 +1330,36 @@ namespace VKIntox
         ImDrawList* drawList = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
         ImVec4 surfaceColor = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
         surfaceColor.w = 1.0f;
+        // Mask the moving title behind the button, then layer hover/press on top.
         drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
                                   ImGui::ColorConvertFloat4ToU32(surfaceColor));
         if (buttonHovered)
+        {
+            const ImGuiM3State layer = ImGui::IsMouseDown(ImGuiMouseButton_Left) ? ImGuiM3State_Pressed : ImGuiM3State_Hovered;
+            drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
+                                      ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, layer));
             ImGui::SetTooltip("Close overlay");
-        const float crossInset = closeButtonSize * 0.18f;
-        const ImVec2 crossStart1(buttonCenter.x - crossInset, buttonCenter.y - crossInset);
-        const ImVec2 crossEnd1(buttonCenter.x + crossInset, buttonCenter.y + crossInset);
-        const ImVec2 crossStart2(buttonCenter.x + crossInset, buttonCenter.y - crossInset);
-        const ImVec2 crossEnd2(buttonCenter.x - crossInset, buttonCenter.y + crossInset);
-        const ImU32 checkColor = ImGui::GetColorU32(ImGuiCol_Text);
-        drawList->AddLine(crossStart1, crossEnd1, checkColor, 1.5f);
-        drawList->AddLine(crossStart2, crossEnd2, checkColor, 1.5f);
+        }
+        const ImU32 crossColor = buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
+                                               : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant);
+        // The Material Symbols `close` glyph is already rounded and evenly
+        // weighted, so it reads better than two hard line segments.
+        static const char kCloseGlyph[] = "\xEE\x85\x8C";
+        ImFont* closeIcon = ImGuiM3IconFont();
+        if (closeIcon)
+        {
+            const float px = closeButtonSize * 0.46f;
+            ImGuiM3DrawIcon(drawList, kCloseGlyph, ImRect(buttonMin, buttonMax), px, crossColor);
+        }
+        else
+        {
+            const float crossInset = closeButtonSize * 0.15f;
+            const float crossThickness = 3.0f * m3metrics.density;
+            drawList->AddLine(ImVec2(buttonCenter.x - crossInset, buttonCenter.y - crossInset),
+                              ImVec2(buttonCenter.x + crossInset, buttonCenter.y + crossInset), crossColor, crossThickness);
+            drawList->AddLine(ImVec2(buttonCenter.x + crossInset, buttonCenter.y - crossInset),
+                              ImVec2(buttonCenter.x - crossInset, buttonCenter.y + crossInset), crossColor, crossThickness);
+        }
 
         // Clamp position after the window is created (prevents dragging offscreen)
         ImVec2 winPos = ImGui::GetWindowPos();
@@ -1339,44 +1381,41 @@ namespace VKIntox
         gatherDepthInfo();
         applyDepthPinRequests();
 
-        if (ImGui::BeginTabBar("OverlayTabs"))
+        // Top navigation: an M3 connected button group. The two ends are pills
+        // and the shared edges are modestly rounded, with the spec's 2dp inner
+        // padding, so the nav reads as one connected control rather than five
+        // floating tabs. Each segment leads with a Material Symbols icon and the
+        // selected one swaps to secondary-container and gains weight.
+        static int activeView = 0;
+        static const char* const kViewLabels[] = {"Effects", "Shaders", "Settings", "Advanced", "Diagnostics"};
+        static const ImWchar kViewIcons[] = {Icon::AutoAwesome, Icon::Palette, Icon::Settings, Icon::Tune, Icon::MonitorHeart};
+        constexpr int kViewCount = (int)(sizeof(kViewLabels) / sizeof(kViewLabels[0]));
+        ImGui::M3ConnectedButtonGroup("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons);
+
+        switch (activeView)
         {
-            if (ImGui::BeginTabItem("Effects"))
-            {
-                if (inSelectionMode)
-                    renderAddEffectsView();
-                else if (inConfigManageMode)
-                    renderConfigManagerView();
-                else
-                    renderMainView(keyboard);
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Shaders"))
-            {
-                renderShaderManagerView();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Settings"))
-            {
-                renderSettingsView(keyboard);
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Advanced"))
-            {
-                renderAdvancedView();
-                ImGui::EndTabItem();
-            }
-
-            if (ImGui::BeginTabItem("Diagnostics"))
-            {
-                renderDiagnosticsView();
-                ImGui::EndTabItem();
-            }
-
-            ImGui::EndTabBar();
+        case 0:
+            if (inSelectionMode)
+                renderAddEffectsView();
+            else if (inConfigManageMode)
+                renderConfigManagerView();
+            else
+                renderMainView(keyboard);
+            break;
+        case 1:
+            renderShaderManagerView();
+            break;
+        case 2:
+            renderSettingsView(keyboard);
+            break;
+        case 3:
+            renderAdvancedView();
+            break;
+        case 4:
+            renderDiagnosticsView();
+            break;
+        default:
+            break;
         }
 
         ImGui::End();  // VKIntox Overlay
@@ -1408,14 +1447,6 @@ namespace VKIntox
         if (profileDirty && !paramsDirty &&
             (!activeProfilePath.empty() || !activeShaderProfilePath.empty()))
             autoSaveProfile();
-
-        // Focus Effects window on first frame of the session
-        static bool firstFrame = true;
-        if (firstFrame)
-        {
-            ImGui::SetWindowFocus("Effects");
-            firstFrame = false;
-        }
 
         ImGui::Render();
 

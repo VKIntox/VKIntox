@@ -3,6 +3,7 @@
 #include "config_serializer.hh"
 #include "settings_manager.hh"
 #include "logger.hh"
+#include "overlay/ui_theme.hh"
 
 #include <cctype>
 #include <cstring>
@@ -81,7 +82,7 @@ namespace VKIntox
 
                         if (effect.hasFailed())
                         {
-                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
                             ImGui::TextWrapped("Error: %s", effect.compileError.c_str());
                             ImGui::PopStyleColor();
                         }
@@ -166,7 +167,7 @@ namespace VKIntox
 
                 if (hasSearch)
                 {
-                    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.2f, 0.2f, 0.3f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh));
                     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30);
                     ImGui::InputText("##logsearch", debugLogSearch, sizeof(debugLogSearch), ImGuiInputTextFlags_AutoSelectAll);
                     ImGui::PopStyleColor();
@@ -218,13 +219,20 @@ namespace VKIntox
 
                 auto history = Logger::getHistory();
 
-                static ImVec4 levelColors[5] = {
-                    ImVec4(0.5f, 0.5f, 0.5f, 1.0f),  // Trace - gray
-                    ImVec4(0.4f, 0.7f, 1.0f, 1.0f),  // Debug - light blue
-                    ImVec4(0.8f, 0.8f, 0.8f, 1.0f),  // Info - white-ish
-                    ImVec4(1.0f, 0.8f, 0.3f, 1.0f),  // Warn - yellow
-                    ImVec4(1.0f, 0.3f, 0.3f, 1.0f),  // Error - red
+                // Log levels borrow the same token mapping the toasts use, so a
+                // warning looks identical everywhere. Trace/debug fall back to
+                // the muted content colours.
+                static const LogLevel levelOrder[5] = {LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error};
+                auto levelColor = [](LogLevel lvl) -> ImVec4
+                {
+                    switch (lvl)
+                    {
+                    case LogLevel::Trace: return UI::Muted();
+                    case LogLevel::Debug: return UI::Secondary();
+                    default:             return UI::LogLevelColor(lvl);
+                    }
                 };
+                (void)levelOrder;
 
                 auto containsIgnoreCase = [](const std::string& haystack, const char* needle) {
                     if (!needle || needle[0] == '\0')
@@ -246,7 +254,7 @@ namespace VKIntox
                     if (hasSearch && !containsIgnoreCase(entry.message, debugLogSearch))
                         continue;
 
-                    ImGui::PushStyleColor(ImGuiCol_Text, levelColors[levelIdx]);
+                    ImGui::PushStyleColor(ImGuiCol_Text, levelColor(levelOrder[levelIdx]));
                     ImGui::Text("[%s] %s", Logger::levelName(entry.level), entry.message.c_str());
                     ImGui::PopStyleColor();
                 }

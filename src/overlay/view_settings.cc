@@ -1,6 +1,8 @@
 #include "imgui_overlay.hh"
 #include "settings_manager.hh"
 #include "logger.hh"
+#include "overlay/ui_theme.hh"
+#include "overlay/ui_icons.hh"
 
 #include <algorithm>
 #include <cstring>
@@ -20,34 +22,35 @@ namespace VKIntox
 
         ImGui::BeginChild("SettingsContent", ImVec2(0, 0), false);
 
-        ImGui::Text("Key Bindings");
-        ImGui::Separator();
-        ImGui::TextDisabled("Click a button and press any key to set binding");
+        ImGui::TextDisabled("Controls, behaviour, debugging and theming.");
+        ImGui::Spacing();
 
-        // Helper lambda to render a keybind button
-        // Uses local char buffer for display, updates settingsManager on change
+        // Helper lambda to render a keybind button.
         auto renderKeyBind = [&](const char* label, const char* tooltip,
                                  const std::string& currentKey,
                                  std::function<void(const std::string&)> setter,
                                  int bindingId) {
-            ImGui::Text("%s", label);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(label);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("%s", tooltip);
-            ImGui::SameLine(150);
+            ImGui::SameLine(160.0f);
 
             bool isListening = (listeningForKey == bindingId);
             const char* buttonText = isListening ? "Press a key..." : currentKey.c_str();
 
             if (isListening)
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
+            {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGuiM3ColorU32(ImGuiM3Role_TertiaryContainer));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnTertiaryContainer));
+            }
 
-            if (ImGui::Button(buttonText, ImVec2(100, 0)))
+            if (ImGui::Button(buttonText, ImVec2(140, 0)))
                 listeningForKey = isListening ? 0 : bindingId;
 
             if (isListening)
-                ImGui::PopStyleColor();
+                ImGui::PopStyleColor(2);
 
-            // Capture key if listening
             if (isListening && !keyboard.lastKeyName.empty())
             {
                 setter(keyboard.lastKeyName);
@@ -56,22 +59,23 @@ namespace VKIntox
             }
         };
 
-        renderKeyBind("Toggle Effects:", "Key to enable/disable all effects",
+        // --- Controls ---
+        ImGui::M3CardBegin("set_controls", "Controls", Icon::TuneUtf8);
+        ImGui::TextDisabled("Click a binding, then press a key.");
+        ImGui::Spacing();
+        renderKeyBind("Toggle Effects", "Key to enable/disable all effects",
                       settingsManager.getToggleKey(),
                       [](const std::string& key) { settingsManager.setToggleKey(key); }, 1);
-        renderKeyBind("Reload Config:", "Key to reload the configuration file",
+        renderKeyBind("Reload Config", "Key to reload the configuration file",
                       settingsManager.getReloadKey(),
                       [](const std::string& key) { settingsManager.setReloadKey(key); }, 2);
-        renderKeyBind("Toggle Overlay:", "Key to show/hide this overlay",
+        renderKeyBind("Toggle Overlay", "Key to show/hide this overlay",
                       settingsManager.getOverlayKey(),
                       [](const std::string& key) { settingsManager.setOverlayKey(key); }, 3);
 
         ImGui::Spacing();
-        ImGui::Text("Overlay Options");
-        ImGui::Separator();
-
         bool blockInput = settingsManager.getOverlayBlockInput();
-        if (ImGui::Checkbox("Block Input When Overlay Open", &blockInput))
+        if (ImGui::Checkbox("Block input while the overlay is open", &blockInput))
         {
             settingsManager.setOverlayBlockInput(blockInput);
             saveSettings();
@@ -80,56 +84,50 @@ namespace VKIntox
         {
             ImGui::BeginTooltip();
             ImGui::Text("When enabled, keyboard and mouse input is captured by the overlay.");
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Warning: Experimental feature! May cause some games to freeze.");
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Also blocks ALL input system-wide, even outside the game window!");
+            ImGui::TextColored(UI::Error(), "Warning: experimental — may freeze some games.");
+            ImGui::TextColored(UI::Error(), "Also blocks all input system-wide.");
             ImGui::EndTooltip();
         }
+        ImGui::M3CardEnd();
 
-        ImGui::Text("Max Effects (requires restart):");
-        if (ImGui::IsItemHovered())
+        // --- Behaviour ---
+        ImGui::Spacing();
+        ImGui::M3CardBegin("set_behaviour", "Behaviour", Icon::PowerUtf8);
+
+        bool enableOnLaunch = settingsManager.getEnableOnLaunch();
+        if (ImGui::Checkbox("Enable effects on launch", &enableOnLaunch))
         {
-            ImGui::BeginTooltip();
-            ImGui::Text("Maximum number of effects that can be active simultaneously.");
-            ImGui::Text("Changes require restarting the application.");
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "Warning: High values use significant VRAM");
-            ImGui::EndTooltip();
-        }
-        ImGui::SetNextItemWidth(100);
-        int maxEffectsVal = settingsManager.getMaxEffects();
-        if (ImGui::InputInt("##maxEffects", &maxEffectsVal))
-        {
-            maxEffectsVal = std::clamp(maxEffectsVal, 1, 200);
-            settingsManager.setMaxEffects(maxEffectsVal);
+            settingsManager.setEnableOnLaunch(enableOnLaunch);
             saveSettings();
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("If enabled, effects are active when the game starts.");
 
-        // Show VRAM estimate based on current resolution (2 images per slot, 4 bytes per pixel)
-        float bytesPerSlot = 2.0f * currentWidth * currentHeight * 4.0f;
-        int estimatedVramMB = static_cast<int>((maxEffectsVal * bytesPerSlot) / (1024.0f * 1024.0f));
-        ImGui::SameLine();
-        if (maxEffectsVal > 20)
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "~%d MB @ %ux%u", estimatedVramMB, currentWidth, currentHeight);
-        else
-            ImGui::TextDisabled("~%d MB @ %ux%u", estimatedVramMB, currentWidth, currentHeight);
+        bool depthCapture = settingsManager.getDepthCapture();
+        if (ImGui::Checkbox("Depth capture (requires restart)", &depthCapture))
+        {
+            settingsManager.setDepthCapture(depthCapture);
+            saveSettings();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Enable depth buffer capture for effects that use depth.\nMay impact performance.");
 
         bool autoApply = settingsManager.getAutoApply();
-        if (ImGui::Checkbox("Auto-apply Changes", &autoApply))
+        if (ImGui::Checkbox("Auto-apply changes", &autoApply))
         {
             settingsManager.setAutoApply(autoApply);
             saveSettings();
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Automatically apply parameter changes after a short delay.\nDisable to require manual Apply button clicks.");
+            ImGui::SetTooltip("Automatically apply parameter changes after a short delay.");
 
         if (autoApply)
         {
             ImGui::Indent();
-            ImGui::Text("Delay:");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Delay before automatically applying changes.\nLower values feel more responsive, higher values reduce stutter.");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120);
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("Delay");
+            ImGui::SameLine(160.0f);
+            ImGui::SetNextItemWidth(160);
             int delayVal = settingsManager.getAutoApplyDelay();
             if (ImGui::SliderInt("##autoApplyDelay", &delayVal, 20, 1000, "%d ms"))
                 settingsManager.setAutoApplyDelay(delayVal);
@@ -139,51 +137,72 @@ namespace VKIntox
         }
 
         ImGui::Spacing();
-        ImGui::Text("Startup Behavior");
-        ImGui::Separator();
-
-        bool enableOnLaunch = settingsManager.getEnableOnLaunch();
-        if (ImGui::Checkbox("Enable Effects on Launch", &enableOnLaunch))
-        {
-            settingsManager.setEnableOnLaunch(enableOnLaunch);
-            saveSettings();
-        }
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("%s  Max effects (requires restart)", Icon::MemoryUtf8);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("If enabled, effects are active when the game starts.\nIf disabled, effects start off and must be toggled on.");
-
-        bool depthCapture = settingsManager.getDepthCapture();
-        if (ImGui::Checkbox("Depth Capture (requires restart)", &depthCapture))
         {
-            settingsManager.setDepthCapture(depthCapture);
+            ImGui::BeginTooltip();
+            ImGui::Text("Maximum number of effects that can be active simultaneously.");
+            ImGui::TextColored(UI::Warning(), "High values use significant VRAM.");
+            ImGui::EndTooltip();
+        }
+        ImGui::SameLine(160.0f);
+        ImGui::SetNextItemWidth(120);
+        int maxEffectsVal = settingsManager.getMaxEffects();
+        if (ImGui::InputInt("##maxEffects", &maxEffectsVal))
+        {
+            maxEffectsVal = std::clamp(maxEffectsVal, 1, 200);
+            settingsManager.setMaxEffects(maxEffectsVal);
             saveSettings();
         }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Enable depth buffer capture for effects that use depth.\nMay impact performance. Most effects don't need this.\nChanges require restarting the application.");
+        float bytesPerSlot = 2.0f * currentWidth * currentHeight * 4.0f;
+        int estimatedVramMB = static_cast<int>((maxEffectsVal * bytesPerSlot) / (1024.0f * 1024.0f));
+        ImGui::SameLine();
+        if (maxEffectsVal > 20)
+            ImGui::TextColored(UI::Attention(), "~%d MB @ %ux%u", estimatedVramMB, currentWidth, currentHeight);
+        else
+            ImGui::TextDisabled("~%d MB @ %ux%u", estimatedVramMB, currentWidth, currentHeight);
+        ImGui::M3CardEnd();
 
+        // --- Developer ---
         ImGui::Spacing();
-        ImGui::Text("Debug");
-        ImGui::Separator();
-
+        ImGui::M3CardBegin("set_dev", "Developer", Icon::BugReportUtf8);
         bool showDebugWindow = settingsManager.getShowDebugWindow();
-        if (ImGui::Checkbox("Show Debug Window", &showDebugWindow))
+        if (ImGui::Checkbox("Show debug window", &showDebugWindow))
         {
             settingsManager.setShowDebugWindow(showDebugWindow);
             saveSettings();
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Show debug window with effect registry data and log output.");
+            ImGui::SetTooltip("Effect registry data and log output.");
 
-        ImGui::Spacing();
-        ImGui::Text("Layout");
-        ImGui::Separator();
-
-        if (ImGui::Button("Reset Window Position"))
+        const std::string resetLayoutLabel = std::string(Icon::StraightenUtf8) + "  Reset window position";
+        if (ImGui::Button(resetLayoutLabel.c_str()))
         {
             resetLayoutRequested = true;
             Logger::info("Window layout reset to default");
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Reset window position and size to defaults.");
+            ImGui::SetTooltip("Reset the overlay window position and size to defaults.");
+        ImGui::M3CardEnd();
+
+        // --- Appearance ---
+        ImGui::Spacing();
+        ImGui::M3CardBegin("set_appearance", "Appearance", Icon::PaletteUtf8);
+        const std::string themeEditorLabel = std::string(themeEditorOpen ? Icon::ExpandMoreUtf8 : Icon::ChevronRightUtf8) + "  Theme editor";
+        if (ImGui::Button(themeEditorLabel.c_str()))
+            themeEditorOpen = !themeEditorOpen;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Source colour, variant, contrast, and every colour token.");
+
+        if (themeEditorOpen)
+        {
+            ImGui::Spacing();
+            ImGui::BeginChild("ThemeEditor", ImVec2(0, 440), ImGuiChildFlags_None, ImGuiWindowFlags_None);
+            ImGui::M3ThemeEditor();
+            ImGui::EndChild();
+        }
+        ImGui::M3CardEnd();
 
         ImGui::EndChild();
     }

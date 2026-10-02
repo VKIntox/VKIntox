@@ -1,6 +1,8 @@
 #include "imgui_overlay.hh"
 #include "config_serializer.hh"
 #include "logger.hh"
+#include "overlay/ui_theme.hh"
+#include "overlay/ui_icons.hh"
 
 #include <fstream>
 #include <filesystem>
@@ -367,7 +369,7 @@ namespace VKIntox
 
         // Helper to draw a graph with label
         void drawGraph(const char* label, const char* id, RingBuffer<float, 300>& history, float minVal, float maxVal,
-                       const char* overlayFmt, ImVec4 color = ImVec4(0.4f, 0.8f, 0.4f, 1.0f))
+                       const char* overlayFmt, ImVec4 color = UI::GraphColor(0))
         {
             ImGui::Text("%s", label);
 
@@ -376,7 +378,7 @@ namespace VKIntox
             history.copyTo(data);
 
             ImGui::PushStyleColor(ImGuiCol_PlotLines, color);
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, UI::ContainerLow());
 
             char overlay[64];
             snprintf(overlay, sizeof(overlay), overlayFmt, history.size() > 0 ? history.get(history.size() - 1) : 0.0f);
@@ -413,10 +415,23 @@ namespace VKIntox
                 Logger::info("Diagnostics: No supported GPU found");
         }
 
+        // Frame rate and timing. The numeric readouts refresh once per second so
+        // they stay stable and readable; the graph histories keep sampling every
+        // frame, so the plots remain smooth.
+        //
+        // This view only runs while its tab is open. Detect the open edge so a
+        // stale `lastFrameTime`/window start from a previous visit doesn't spike
+        // the first frame time or stretch the first FPS window to seconds long.
+        static bool wasOpen = false;
+        const bool justOpened = !wasOpen;
+        wasOpen = true;
+
         // Calculate frame time
         auto now = std::chrono::steady_clock::now();
         float frameTimeMs = std::chrono::duration<float, std::milli>(now - lastFrameTime).count();
         lastFrameTime = now;
+        if (justOpened)
+            frameTimeMs = 0.0f;  // no meaningful delta across a tab switch
 
         // Only record if reasonable (avoid spikes from tab switching)
         if (frameTimeMs > 0.1f && frameTimeMs < 500.0f)
@@ -445,134 +460,148 @@ namespace VKIntox
 
         ImGui::BeginChild("DiagnosticsContent", ImVec2(0, 0), false);
 
-        // Frame rate and timing
-        float avgFrameTime = frameTimeHistory.avg();
-        float fps = avgFrameTime > 0 ? 1000.0f / avgFrameTime : 0;
-        float fps1Low = frameTimeHistory.max() > 0 ? 1000.0f / frameTimeHistory.max() : 0;
+        // Frame rate and timing. The numeric readouts refresh once per second so
+        // they stay stable and readable; the graph histories keep sampling every
+        // frame, so the plots remain smooth.
+        //
+        // The headline FPS is a true frames-in-the-last-second count, not the
+        // reciprocal of a rolling average: `frameTimeHistory` spans up to 300
+        // frames (many seconds), so 1000/avg() lags badly and reports history
+        // rather than the current rate. We count rendered frames over each
+        // wall-clock second and carry the remainder forward so the windows don't
+        // drift apart from real time.
+        static float dispFps = 0.0f;
+        static float dispFps1Low = 0.0f;
+        static float dispGpuUsage = -1.0f;
+        static float dispVramUsed = 0.0f, dispVramTotal = 0.0f;
+        static float dispGttUsed = 0.0f, dispGttTotal = 0.0f;
+        static bool dispHasVram = false, dispHasGtt = false;
+        static int   fpsFrameCount = 0;
+        static std::chrono::steady_clock::time_point fpsWindowStart = now;
+        if (justOpened)
+        {
+            // Fresh window each time the tab opens so the first second is real.
+            fpsWindowStart = now;
+            fpsFrameCount = 0;
+        }
+        fpsFrameCount++;
+        const double windowSeconds = std::chrono::duration<double>(now - fpsWindowStart).count();
+        if (windowSeconds >= 1.0)
+        {
+            dispFps = static_cast<float>(fpsFrameCount) / static_cast<float>(windowSeconds);
+            dispFps1Low = frameTimeHistory.max() > 0.0f ? 1000.0f / frameTimeHistory.max() : 0.0f;
+            dispGpuUsage = gpuInfo.hasGpuUsage ? getGpuUsage() : -1.0f;
+            dispHasVram = getVramUsage(dispVramUsed, dispVramTotal);
+            dispHasGtt = getGttUsage(dispGttUsed, dispGttTotal);
+            // Carry the leftover past a full second into the next window instead
+            // of snapping to exactly 1.0s, which would slowly under-count.
+            fpsWindowStart += std::chrono::milliseconds(static_cast<int64_t>(windowSeconds * 1000.0));
+            fpsFrameCount = 0;
+        }
+        const float fps = dispFps;
+        const float fps1Low = dispFps1Low;
 
         const float brandSize = std::min(512.0f, ImGui::GetContentRegionAvail().x * 0.288f);
         renderCenteredBrandIcon(brandSize);
         ImGui::Spacing();
 
-        ImGui::Text("Performance");
-        ImGui::Separator();
-
-        // Big FPS display
-        ImFont* font = ImGui::GetIO().Fonts->Fonts[0];
-        ImGui::PushFont(font, font->LegacySize);
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%.0f FPS", fps);
-        ImGui::PopFont();
-        ImGui::SameLine();
-        ImGui::TextDisabled("(1%% low: %.0f)", fps1Low);
-
+        // --- Performance ---
+        ImGui::M3CardBegin("diag_perf", "Performance", Icon::SpeedUtf8);
+        {
+            ImFont* heroFont = ImGuiM3FontBold();
+            if (!heroFont)
+                heroFont = ImGui::GetIO().Fonts->Fonts[0];
+            ImGui::PushFont(heroFont, ImGui::GetFontSize() * 2.4f);
+            ImGui::TextColored(UI::Success(), "%.0f FPS", fps);
+            ImGui::PopFont();
+            ImGui::SameLine();
+            ImGui::TextDisabled("(1%% low: %.0f)", fps1Low);
+        }
         ImGui::Spacing();
+        drawGraph("Frame Time", "##frametime", frameTimeHistory, 0.0f, 50.0f, "%.1f ms", UI::GraphColor(0));
+        ImGui::M3CardEnd();
 
-        // Frame time graph
-        drawGraph("Frame Time", "##frametime", frameTimeHistory, 0.0f, 50.0f, "%.1f ms",
-                  ImVec4(0.4f, 0.8f, 0.4f, 1.0f));
-
+        // --- GPU ---
         ImGui::Spacing();
-        ImGui::Spacing();
-
-        // GPU stats
+        ImGui::M3CardBegin("diag_gpu", "GPU", Icon::MemoryUtf8);
         if (gpuInfo.vendor != GpuVendor::Unknown)
         {
-            ImGui::Text("GPU (%s)", gpuInfo.vendorName.c_str());
-            ImGui::Separator();
+            ImGui::TextDisabled("%s", gpuInfo.vendorName.c_str());
+            ImGui::Spacing();
 
             if (gpuInfo.hasGpuUsage)
             {
-                float currentGpuUsage = getGpuUsage();
-                if (currentGpuUsage >= 0)
+                if (dispGpuUsage >= 0)
                 {
-                    const char* usageLabel = (gpuInfo.vendor == GpuVendor::Intel)
-                        ? "GPU Frequency" : "GPU Usage";
-                    drawGraph(usageLabel, "##gpuusage", gpuUsageHistory, 0.0f, 100.0f, "%.0f%%",
-                              ImVec4(0.8f, 0.6f, 0.2f, 1.0f));
+                    const char* usageLabel = (gpuInfo.vendor == GpuVendor::Intel) ? "GPU Frequency" : "GPU Usage";
+                    drawGraph(usageLabel, "##gpuusage", gpuUsageHistory, 0.0f, 100.0f, "%.0f%%", UI::GraphColor(1));
                     if (gpuInfo.vendor == GpuVendor::Intel)
                         ImGui::TextDisabled("(estimated from frequency ratio)");
                     ImGui::Spacing();
                 }
             }
 
-            float vramUsed, vramTotal;
-            if (getVramUsage(vramUsed, vramTotal))
+            if (dispHasVram)
             {
-                ImGui::Text("VRAM: %.0f / %.0f MB", vramUsed, vramTotal);
-                ImGui::ProgressBar(vramUsed / vramTotal, ImVec2(-1, 0));
+                ImGui::Text("VRAM: %.0f / %.0f MB", dispVramUsed, dispVramTotal);
+                ImGui::ProgressBar(dispVramUsed / dispVramTotal, ImVec2(-1, 0));
+                ImGui::Spacing();
             }
 
-            float gttUsed, gttTotal;
-            if (getGttUsage(gttUsed, gttTotal))
+            if (dispHasGtt)
             {
-                ImGui::Text("GTT (shared): %.0f / %.0f MB", gttUsed, gttTotal);
-                ImGui::ProgressBar(gttUsed / gttTotal, ImVec2(-1, 0));
-
+                ImGui::Text("GTT (shared): %.0f / %.0f MB", dispGttUsed, dispGttTotal);
+                ImGui::ProgressBar(dispGttUsed / dispGttTotal, ImVec2(-1, 0));
                 ImGui::Spacing();
-                drawGraph("Memory Usage", "##gttusage", gttUsageHistory, 0.0f, 100.0f, "%.0f%%",
-                          ImVec4(0.6f, 0.4f, 0.8f, 1.0f));
+                drawGraph("Memory Usage", "##gttusage", gttUsageHistory, 0.0f, 100.0f, "%.0f%%", UI::GraphColor(2));
             }
-            else if (getVramUsage(vramUsed, vramTotal))
+            else if (dispHasVram)
             {
-                ImGui::Spacing();
-                drawGraph("VRAM Usage", "##vramusage", vramUsageHistory, 0.0f, 100.0f, "%.0f%%",
-                          ImVec4(0.6f, 0.4f, 0.8f, 1.0f));
+                drawGraph("VRAM Usage", "##vramusage", vramUsageHistory, 0.0f, 100.0f, "%.0f%%", UI::GraphColor(2));
             }
         }
         else
         {
-            ImGui::Spacing();
-            ImGui::TextDisabled("GPU stats not available");
-            ImGui::TextDisabled("(No AMD/Intel/NVIDIA GPU detected via sysfs)");
+            ImGui::TextDisabled("GPU stats not available.");
+            ImGui::TextDisabled("No AMD/Intel/NVIDIA GPU detected via sysfs.");
         }
+        ImGui::M3CardEnd();
 
-        // Game info
+        // --- Game ---
         ImGui::Spacing();
-        ImGui::Spacing();
-        ImGui::Text("Game");
-        ImGui::Separator();
+        ImGui::M3CardBegin("diag_game", "Game", Icon::PlayArrowUtf8);
         if (!detectedGameName.empty())
         {
             ImGui::Text("Executable: %s", detectedGameName.c_str());
             if (!autoDetectedConfig.empty())
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Config: %s.conf (auto-detected)", autoDetectedConfig.c_str());
+                ImGui::TextColored(UI::Success(), "%s  Config: %s.conf (auto-detected)", Icon::CheckCircleUtf8, autoDetectedConfig.c_str());
             else
-                ImGui::TextDisabled("No per-game config found");
+                ImGui::TextDisabled("No per-game config found.");
         }
         else
         {
-            ImGui::TextDisabled("Could not detect game executable");
+            ImGui::TextDisabled("Could not detect the game executable.");
         }
+        ImGui::M3CardEnd();
 
-        // Credits and build info
+        // --- Credits ---
         ImGui::Spacing();
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+        ImGui::M3CardBegin("diag_credits", "Credits", Icon::InfoUtf8);
+        auto credit = [](const char* what, const char* handle, const char* url) {
+            ImGui::TextDisabled("%s", what);
+            ImGui::SameLine();
+            ImGui::TextLinkOpenURL(handle, url);
+        };
+        credit("VKIntox maintained by", "@buwryme", "https://github.com/buwryme");
+        credit("vkShade by", "@slobodaapl", "https://github.com/slobodaapl");
+        credit("vkBasalt by", "@DadSchoorse", "https://github.com/DadSchoorse/vkBasalt");
+        credit("Overlay fork by", "@Boux", "https://github.com/Boux/vkBasalt_overlay");
+        credit("Wayland overlay by", "@Daaboulex", "https://github.com/Daaboulex/vkBasalt_overlay_wayland");
+        credit("ReShade FX support by", "@crosire", "https://github.com/crosire/reshade");
+        credit("Dear ImGui by", "@ocornut", "https://github.com/ocornut/imgui");
+        ImGui::M3CardEnd();
 
-        ImGui::Text("Credits");
-        ImGui::TextDisabled("VKIntox maintained by");
-        ImGui::SameLine();
-        ImGui::TextLinkOpenURL("@buwryme", "https://github.com/buwryme");
-        ImGui::TextDisabled("vkShade by");
-        ImGui::SameLine();
-        ImGui::TextLinkOpenURL("@slobodaapl", "https://github.com/slobodaapl");
-        ImGui::TextDisabled("vkBasalt by");
-        ImGui::SameLine();
-        ImGui::TextLinkOpenURL("@DadSchoorse", "https://github.com/DadSchoorse/vkBasalt");
-        ImGui::TextDisabled("Overlay fork by");
-        ImGui::SameLine();
-        ImGui::TextLinkOpenURL("@Boux", "https://github.com/Boux/vkBasalt_overlay");
-        ImGui::TextDisabled("Wayland overlay by");
-        ImGui::SameLine();
-        ImGui::TextLinkOpenURL("@Daaboulex", "https://github.com/Daaboulex/vkBasalt_overlay_wayland");
-        ImGui::TextDisabled("ReShade FX support by");
-        ImGui::SameLine();
-        ImGui::TextLinkOpenURL("@crosire", "https://github.com/crosire/reshade");
-        ImGui::TextDisabled("Dear ImGui by");
-        ImGui::SameLine();
-        ImGui::TextLinkOpenURL("@ocornut", "https://github.com/ocornut/imgui");
-
+        // --- Build footer ---
         ImGui::Spacing();
         static const std::string runtimeVersion = [] {
             std::ifstream versionFile(ConfigSerializer::getBaseConfigDir() + "/version");
@@ -588,6 +617,7 @@ namespace VKIntox
         }();
         ImGui::TextDisabled("VKIntox version %s", runtimeVersion.c_str());
         ImGui::TextDisabled("Report issues:");
+        ImGui::SameLine();
         ImGui::TextLinkOpenURL("github.com/buwryme/VKIntox/issues", "https://github.com/buwryme/VKIntox/issues");
 
         ImGui::EndChild();

@@ -217,7 +217,8 @@ static bool g_FunctionsLoaded = true;
     IMGUI_VULKAN_FUNC_MAP_MACRO(vkResetFences) \
     IMGUI_VULKAN_FUNC_MAP_MACRO(vkUnmapMemory) \
     IMGUI_VULKAN_FUNC_MAP_MACRO(vkUpdateDescriptorSets) \
-    IMGUI_VULKAN_FUNC_MAP_MACRO(vkWaitForFences)
+    IMGUI_VULKAN_FUNC_MAP_MACRO(vkWaitForFences) \
+    IMGUI_VULKAN_FUNC_MAP_MACRO(vkGetFenceStatus)
 
 // Define function pointers
 #define IMGUI_VULKAN_FUNC_DEF(func) static PFN_##func func;
@@ -257,6 +258,14 @@ struct ImGui_ImplVulkan_Texture
     VkImage                     Image;
     VkImageView                 ImageView;
     VkDescriptorSet             DescriptorSet;
+
+    // VKIntox: texture uploads are submitted asynchronously and their staging
+    // resources are released when the fence signals. Waiting inline with
+    // vkQueueWaitIdle() could hang the render thread when the game's queue was
+    // parked in a present while the window was unfocused.
+    VkBuffer                    UploadBuffer;
+    VkDeviceMemory              UploadBufferMemory;
+    VkFence                     UploadFence;
 
     ImGui_ImplVulkan_Texture() { memset((void*)this, 0, sizeof(*this)); }
 };
@@ -549,13 +558,31 @@ void ImGui_ImplVulkan_RenderDrawData(ImDrawData* draw_data, VkCommandBuffer comm
 
     // Catch up with texture updates. Most of the times, the list will have 1 element with an OK status, aka nothing to do.
     // (This almost always points to ImGui::GetPlatformIO().Textures[] but is part of ImDrawData to allow overriding or disabling texture updates).
+    ImGui_ImplVulkan_Data* bd = ImGui_ImplVulkan_GetBackendData();
+    ImGui_ImplVulkan_InitInfo* v = &bd->VulkanInitInfo;
     if (draw_data->Textures != nullptr)
+    {
+        // Reclaim staging buffers from uploads that have completed. Texture
+        // visibility is already covered by the upload command buffer's own
+        // transfer->shader barrier plus same-queue submission order.
+        for (ImTextureData* tex : *draw_data->Textures)
+        {
+            ImGui_ImplVulkan_Texture* bt = (ImGui_ImplVulkan_Texture*)tex->BackendUserData;
+            if (bt && bt->UploadFence != VK_NULL_HANDLE && vkGetFenceStatus(v->Device, bt->UploadFence) == VK_SUCCESS)
+            {
+                vkDestroyFence(v->Device, bt->UploadFence, v->Allocator);
+                bt->UploadFence = VK_NULL_HANDLE;
+                vkDestroyBuffer(v->Device, bt->UploadBuffer, v->Allocator);
+                bt->UploadBuffer = VK_NULL_HANDLE;
+                vkFreeMemory(v->Device, bt->UploadBufferMemory, v->Allocator);
+                bt->UploadBufferMemory = VK_NULL_HANDLE;
+            }
+        }
         for (ImTextureData* tex : *draw_data->Textures)
             if (tex->Status != ImTextureStatus_OK)
                 ImGui_ImplVulkan_UpdateTexture(tex);
+    }
 
-    ImGui_ImplVulkan_Data* bd = ImGui_ImplVulkan_GetBackendData();
-    ImGui_ImplVulkan_InitInfo* v = &bd->VulkanInitInfo;
     if (pipeline == VK_NULL_HANDLE)
         pipeline = bd->Pipeline;
 
@@ -702,6 +729,16 @@ static void ImGui_ImplVulkan_DestroyTexture(ImTextureData* tex)
         ImGui_ImplVulkan_Data* bd = ImGui_ImplVulkan_GetBackendData();
         ImGui_ImplVulkan_InitInfo* v = &bd->VulkanInitInfo;
         ImGui_ImplVulkan_RemoveTexture(backend_tex->DescriptorSet);
+        if (backend_tex->UploadFence != VK_NULL_HANDLE)
+        {
+            // Teardown path: the caller has already drained the queue.
+            vkWaitForFences(v->Device, 1, &backend_tex->UploadFence, VK_TRUE, UINT64_MAX);
+            vkDestroyFence(v->Device, backend_tex->UploadFence, v->Allocator);
+        }
+        if (backend_tex->UploadBuffer != VK_NULL_HANDLE)
+            vkDestroyBuffer(v->Device, backend_tex->UploadBuffer, v->Allocator);
+        if (backend_tex->UploadBufferMemory != VK_NULL_HANDLE)
+            vkFreeMemory(v->Device, backend_tex->UploadBufferMemory, v->Allocator);
         vkDestroyImageView(v->Device, backend_tex->ImageView, v->Allocator);
         vkDestroyImage(v->Device, backend_tex->Image, v->Allocator);
         vkFreeMemory(v->Device, backend_tex->Memory, v->Allocator);
@@ -721,6 +758,22 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
     ImGui_ImplVulkan_Data* bd = ImGui_ImplVulkan_GetBackendData();
     ImGui_ImplVulkan_InitInfo* v = &bd->VulkanInitInfo;
     VkResult err;
+
+    // Release staging buffers whose upload has completed. Done here (rather than
+    // inline with a blocking wait) so the render thread never stalls on the
+    // queue — see the submit path below.
+    if (ImGui_ImplVulkan_Texture* prior = (ImGui_ImplVulkan_Texture*)tex->BackendUserData)
+    {
+        if (prior->UploadFence != VK_NULL_HANDLE && vkGetFenceStatus(v->Device, prior->UploadFence) == VK_SUCCESS)
+        {
+            vkDestroyFence(v->Device, prior->UploadFence, v->Allocator);
+            prior->UploadFence = VK_NULL_HANDLE;
+            vkDestroyBuffer(v->Device, prior->UploadBuffer, v->Allocator);
+            prior->UploadBuffer = VK_NULL_HANDLE;
+            vkFreeMemory(v->Device, prior->UploadBufferMemory, v->Allocator);
+            prior->UploadBufferMemory = VK_NULL_HANDLE;
+        }
+    }
 
     if (tex->Status == ImTextureStatus_WantCreate)
     {
@@ -785,6 +838,20 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
     if (tex->Status == ImTextureStatus_WantCreate || tex->Status == ImTextureStatus_WantUpdates)
     {
         ImGui_ImplVulkan_Texture* backend_tex = (ImGui_ImplVulkan_Texture*)tex->BackendUserData;
+
+        // Reuse the shared command pool, so a previous upload for this texture
+        // must have finished before we reset it. Rare (atlas growth) and scoped
+        // to our own submission rather than a full queue drain.
+        if (backend_tex->UploadFence != VK_NULL_HANDLE)
+        {
+            vkWaitForFences(v->Device, 1, &backend_tex->UploadFence, VK_TRUE, UINT64_MAX);
+            vkDestroyFence(v->Device, backend_tex->UploadFence, v->Allocator);
+            backend_tex->UploadFence = VK_NULL_HANDLE;
+            vkDestroyBuffer(v->Device, backend_tex->UploadBuffer, v->Allocator);
+            backend_tex->UploadBuffer = VK_NULL_HANDLE;
+            vkFreeMemory(v->Device, backend_tex->UploadBufferMemory, v->Allocator);
+            backend_tex->UploadBufferMemory = VK_NULL_HANDLE;
+        }
 
         // Update full texture or selected blocks. We only ever write to textures regions which have never been used before!
         // This backend choose to use tex->UpdateRect but you can use tex->Updates[] to upload individual regions.
@@ -898,7 +965,10 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
             vkCmdPipelineBarrier(bd->TexCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, use_barrier);
         }
 
-        // End command buffer
+        // End + submit asynchronously. Status is still set to OK so ImGui's
+        // texture contract holds; the overlay command buffer inserts a barrier
+        // (see RenderDrawData) so the transfer is visible to the draws. Staging
+        // resources are freed when the fence signals.
         {
             VkSubmitInfo end_info = {};
             end_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -906,15 +976,20 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
             end_info.pCommandBuffers = &bd->TexCommandBuffer;
             err = vkEndCommandBuffer(bd->TexCommandBuffer);
             check_vk_result(err);
-            err = vkQueueSubmit(v->Queue, 1, &end_info, VK_NULL_HANDLE);
+
+            if (backend_tex->UploadFence == VK_NULL_HANDLE)
+            {
+                VkFenceCreateInfo fence_info = {};
+                fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+                err = vkCreateFence(v->Device, &fence_info, v->Allocator, &backend_tex->UploadFence);
+                check_vk_result(err);
+            }
+            err = vkQueueSubmit(v->Queue, 1, &end_info, backend_tex->UploadFence);
             check_vk_result(err);
         }
 
-        err = vkQueueWaitIdle(v->Queue); // FIXME-OPT: Suboptimal!
-        check_vk_result(err);
-        vkDestroyBuffer(v->Device, upload_buffer, v->Allocator);
-        vkFreeMemory(v->Device, upload_buffer_memory, v->Allocator);
-
+        backend_tex->UploadBuffer = upload_buffer;
+        backend_tex->UploadBufferMemory = upload_buffer_memory;
         tex->SetStatus(ImTextureStatus_OK);
     }
 

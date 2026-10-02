@@ -4,6 +4,8 @@
 #include "config_serializer.hh"
 #include "params/field_editor.hh"
 #include "logger.hh"
+#include "overlay/ui_theme.hh"
+#include "overlay/ui_icons.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -19,24 +21,54 @@ namespace VKIntox
         constexpr const char* kEffectReorderPayload = "VKINTOX_EFFECT_REORDER";
 
         // Render a single preprocessor definition input, returns true if value changed
-        bool renderPreprocessorDef(PreprocessorDefinition& def, EffectRegistry* registry, const std::string& effectName)
+        bool renderPreprocessorDef(PreprocessorDefinition& def, EffectRegistry* registry, const std::string& effectName, float nameColumn)
         {
             bool changed = false;
             char valueBuf[64];
             strncpy(valueBuf, def.value.c_str(), sizeof(valueBuf) - 1);
             valueBuf[sizeof(valueBuf) - 1] = '\0';
+            const bool modified = def.value != def.defaultValue;
 
-            ImGui::SetNextItemWidth(80);
-            if (ImGui::InputText(def.name.c_str(), valueBuf, sizeof(valueBuf)))
+            ImGui::PushID(def.name.c_str());
+
+            // Name in a fixed leading column, vertically centred against the field.
+            ImGui::AlignTextToFramePadding();
+            ImFont* medium = ImGuiM3FontMedium();
+            if (medium)
+                ImGui::PushFont(medium, ImGui::GetFontSize());
+            ImGui::TextUnformatted(def.name.c_str());
+            if (medium)
+                ImGui::PopFont();
+            ImGui::SameLine(nameColumn);
+
+            ImGui::SetNextItemWidth(-96.0f);
+            if (ImGui::InputText("##value", valueBuf, sizeof(valueBuf)))
             {
                 registry->setPreprocessorDefValue(effectName, def.name, valueBuf);
                 changed = true;
             }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Default: %s", def.defaultValue.c_str());
 
-            if (def.value != def.defaultValue)
+            // Reset affordance, only meaningful once modified.
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!modified);
+            const std::string refreshLabel = std::string(Icon::RefreshUtf8) + "##reset";
+            if (ImGui::Button(refreshLabel.c_str()))
+            {
+                registry->setPreprocessorDefValue(effectName, def.name, def.defaultValue);
+                changed = true;
+            }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(modified ? "Reset to default (%s)" : "Using default (%s)", def.defaultValue.c_str());
+
+            if (modified)
             {
                 ImGui::SameLine();
-                ImGui::TextDisabled("(modified)");
+                ImGui::TextColored(UI::Warning(), "%s", Icon::WarningUtf8);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Modified from default");
             }
 
             if (ImGui::BeginPopupContextItem("##preproc_reset"))
@@ -49,8 +81,7 @@ namespace VKIntox
                 ImGui::EndPopup();
             }
 
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Default: %s\nRight-click to reset", def.defaultValue.c_str());
+            ImGui::PopID();
             return changed;
         }
 
@@ -106,11 +137,12 @@ namespace VKIntox
         // Profile section — auto-detected game with fixed config and shader INI selector
         if (!activeGameName.empty())
         {
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", activeGameName.c_str());
+            ImGui::TextColored(UI::Success(), "%s  %s", Icon::BoltUtf8, activeGameName.c_str());
 
-            ImGui::Text("Shader INI:");
-            ImGui::SameLine(100.0f);
-            ImGui::SetNextItemWidth(120);
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("%s  Shader INI:", Icon::BrushUtf8);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(150);
             const char* shaderLabel = activeShaderProfileName.empty() ? "None" : activeShaderProfileName.c_str();
             if (ImGui::BeginCombo("##shaderprofile", shaderLabel))
             {
@@ -135,14 +167,16 @@ namespace VKIntox
                 ImGui::EndCombo();
             }
             ImGui::SameLine();
-            if (ImGui::Button("+##newshaderprofile"))
+            const std::string newProfileLabel = std::string(Icon::AddUtf8) + "##newshaderprofile";
+            if (ImGui::Button(newProfileLabel.c_str()))
                 ImGui::OpenPopup("NewShaderProfilePopup");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Create shader INI profile");
             if (!activeShaderProfileName.empty())
             {
                 ImGui::SameLine();
-                if (ImGui::Button("-##delshaderprofile"))
+                const std::string delProfileLabel = std::string(Icon::DeleteUtf8) + "##delshaderprofile";
+                if (ImGui::Button(delProfileLabel.c_str()))
                 {
                     if (!ConfigSerializer::deleteShaderProfile(activeGameName, activeShaderProfileName))
                         pushToast(LogLevel::Error, "Could not delete the shader profile.");
@@ -226,15 +260,18 @@ namespace VKIntox
         ImGui::Separator();
 
         // Add Effects button
-        if (ImGui::Button("Add Effects..."))
+        const std::string addEffectsLabel = std::string(Icon::AddUtf8) + "  Add Effects...";
+        if (ImGui::Button(addEffectsLabel.c_str()))
         {
             inSelectionMode = true;
+            addEffectsFocusSearch = true;
             insertPosition = -1;  // Append to end
             pendingAddEffects.clear();
         }
         ImGui::SameLine();
         ImGui::BeginDisabled(selectedEffects.empty());
-        if (ImGui::Button("Clear All"))
+        const std::string clearAllLabel = std::string(Icon::DeleteUtf8) + "  Clear All";
+        if (ImGui::Button(clearAllLabel.c_str()))
         {
             selectedEffects.clear();
             effectRegistry->clearSelectedEffects();
@@ -269,13 +306,16 @@ namespace VKIntox
             const bool handleHovered = ImGui::IsItemHovered();
             if (handleHovered)
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-            ImU32 gripColor = handleHovered ? IM_COL32(200, 200, 200, 255) : IM_COL32(140, 140, 140, 220);
+            // The grip needs a concrete resting colour: an "enabled" state layer
+            // is fully transparent, which made the handle invisible until hover.
+            ImU32 gripColor = handleHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
+                                             : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant);
             float cx = (handleMin.x + handleMax.x) * 0.5f;
             float cy = (handleMin.y + handleMax.y) * 0.5f;
             for (int bar = -1; bar <= 1; ++bar)
             {
-                float y = cy + bar * 3.0f;
-                drawList->AddLine(ImVec2(cx - 4.0f, y), ImVec2(cx + 4.0f, y), gripColor, 1.5f);
+                float y = cy + bar * 4.0f;
+                drawList->AddLine(ImVec2(cx - 5.0f, y), ImVec2(cx + 5.0f, y), gripColor, 2.0f);
             }
             if (ImGui::BeginDragDropSource(
                     ImGuiDragDropFlags_SourceNoDisableHover |
@@ -315,7 +355,7 @@ namespace VKIntox
 
             // Show failed effects in red
             if (effectFailed)
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
 
             bool treeOpen = ImGui::TreeNode("effect", "%s%s", effectName.c_str(), effectFailed ? " (FAILED)" : "");
 
@@ -359,6 +399,7 @@ namespace VKIntox
                         ? static_cast<int>(std::distance(selectedEffects.begin(), baseIt))
                         : static_cast<int>(i);
                     inSelectionMode = true;
+                    addEffectsFocusSearch = true;
                     pendingAddEffects.clear();
                 }
 
@@ -457,7 +498,7 @@ namespace VKIntox
             // Show error for failed effects
             if (effectFailed)
             {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
                 ImGui::TextWrapped("Error: %s", effectError.c_str());
                 ImGui::PopStyleColor();
                 ImGui::TreePop();
@@ -470,21 +511,29 @@ namespace VKIntox
                 auto& defs = effectRegistry->getPreprocessorDefs(effectName);
                 if (!defs.empty())
                 {
-                    // Draw background rect behind preprocessor section using channels
+                    // A framed section: the card background is drawn on a
+                    // separate draw channel so it sits behind the tree node and
+                    // its inputs, matching the M3 list/card treatment.
                     ImVec2 startPos = ImGui::GetCursorScreenPos();
                     float contentWidth = ImGui::GetContentRegionAvail().x;
                     ImDrawList* drawList = ImGui::GetWindowDrawList();
                     drawList->ChannelsSplit(2);
                     drawList->ChannelsSetCurrent(1);  // Foreground for content
 
-                    if (ImGui::TreeNode("preprocessor", "Preprocessor (%zu)", defs.size()))
+                    if (ImGui::TreeNode("preprocessor", "%s  Preprocessor (%zu)", Icon::BuildUtf8, defs.size()))
                     {
-                        ImGui::TextDisabled("Click Apply or press %s to recompile", settingsManager.getReloadKey().c_str());
+                        ImGui::TextDisabled("Applied when you press %s or Apply", settingsManager.getReloadKey().c_str());
+                        ImGui::Spacing();
+
+                        // Align every field to the widest definition name.
+                        float nameColumn = 60.0f;
+                        for (const auto& def : defs)
+                            nameColumn = ImMax(nameColumn, ImGui::CalcTextSize(def.name.c_str()).x + 20.0f);
 
                         for (size_t defIdx = 0; defIdx < defs.size(); defIdx++)
                         {
                             ImGui::PushID(static_cast<int>(defIdx + 1000));
-                            if (renderPreprocessorDef(defs[defIdx], effectRegistry, effectName))
+                            if (renderPreprocessorDef(defs[defIdx], effectRegistry, effectName, nameColumn))
                             {
                                 paramsDirty = true;
                                 profileDirty = true;
@@ -495,14 +544,14 @@ namespace VKIntox
                         ImGui::TreePop();
                     }
 
-                    // Draw background rect on channel 0 (behind content)
+                    // Card background, on channel 0 (behind content).
                     ImVec2 endPos = ImGui::GetCursorScreenPos();
-                    drawList->ChannelsSetCurrent(0);  // Background
-                    drawList->AddRectFilled(
-                        startPos,
-                        ImVec2(startPos.x + contentWidth, endPos.y),
-                        IM_COL32(0, 0, 0, 128),  // 50% opacity black
-                        0.0f);
+                    drawList->ChannelsSetCurrent(0);
+                    const float card_r = ImGuiM3Radius(ImGuiM3Shape_Medium);
+                    const ImRect card(ImVec2(startPos.x - 10.0f, startPos.y - 6.0f),
+                                      ImVec2(startPos.x + contentWidth + 10.0f, endPos.y + 6.0f));
+                    ImGuiM3PathRoundedRect(drawList, card, ImGuiM3ShapeRounding{ card_r, card_r, card_r, card_r },
+                                           ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
                     drawList->ChannelsMerge();
                 }
             }
@@ -561,7 +610,8 @@ namespace VKIntox
         ImGui::SameLine(ImGui::GetWindowWidth() - applyWidth - ImGui::GetStyle().WindowPadding.x);
 
         // Apply button is always clickable
-        if (ImGui::Button("Apply"))
+        const std::string applyLabel = std::string(Icon::CheckUtf8) + "  Apply";
+        if (ImGui::Button(applyLabel.c_str()))
         {
             applyRequested = true;
             paramsDirty = false;

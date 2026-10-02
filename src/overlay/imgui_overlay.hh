@@ -212,6 +212,7 @@ namespace VKIntox
         bool inSelectionMode = false;
         int insertPosition = -1;  // Position to insert effects (-1 = append to end)
         char addEffectsSearch[64] = "";  // Search filter for add effects view
+        bool addEffectsFocusSearch = false;  // Focus the search box on the next frame
         bool inConfigManageMode = false;
         std::vector<std::string> configList;
 
@@ -233,6 +234,7 @@ namespace VKIntox
         std::set<std::string> checkedShaders; // Effects already checked for depth (avoids recompiling)
 
         // UI state for settings view
+        bool themeEditorOpen = false;  // Material 3 token editor panel
         int listeningForKey = 0;  // 0=none, 1=toggle, 2=reload, 3=overlay
         bool settingsSaved = false;  // True when settings saved, cleared by vkintox.cpp
         bool shaderPathsChanged = false;  // True when shader manager saved, cleared by vkintox.cpp

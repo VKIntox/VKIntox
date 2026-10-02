@@ -436,130 +436,15 @@ with open(path, "w", encoding="utf-8") as f:
 PYEOF
 say "depth inversion default: $DEPTH_INVERT"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version"
-# fonts aren't on raw.githubusercontent until pushed to the font ref, so a local
-# flatpak build would silently seed nothing. prefer the checkout, else download.
-# BASH_SOURCE is unset when the script is piped to bash (curl | bash) or run via
-# bash -c, which is how fish users invoke it; guard so set -u doesn't trip. the
-# licence texts are the only thing still read from beside the script.
-SCRIPT_DIR=""
-if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-fi
-
-# Faces come from Google Fonts at install time, so the repository does not carry
-# them. The text families are taken whole from the google/fonts repo: the css
-# endpoint splits a text family into unicode-range subsets, which would leave the
-# overlay with latin only. Material Symbols has no repo entry, but its css file
-# is the entire icon font, so that one is resolved there. A face that cannot be
-# fetched is never fatal - the overlay has a fallback for each - because an
-# install that dies over a display face is the worse trade.
-google_font_url() {
-    local family="$1" spec="${2:-}" css
-    css=$(curl -fsSL -A "Mozilla/4.0" \
-        "https://fonts.googleapis.com/css2?family=${family}${spec:+:$spec}" 2>/dev/null) || css=""
-    printf '%s\n' "$css" | grep -om1 'https://[^)]*\.ttf' || true
-}
-
-repo_font_url() {
-    curl -fsSL "${AUTH_ARGS[@]}" \
-        "https://api.github.com/repos/google/fonts/contents/ofl/$1" 2>/dev/null |
-        jq -r '[.[]? | select(.name | test("\\.ttf$"))] | .[0].download_url // empty' 2>/dev/null || true
-}
-
-is_font_file() {
-    local magic
-    magic=$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')
-    case "$magic" in
-        00010000 | 4f54544f | 74727565) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# <installed name> <url>...  - the first url that comes back as a font wins
-seed_google_font() {
-    local dest="$1"
-    shift
-    local url
-    for url in "$@"; do
-        [[ -n "$url" ]] || continue
-        if curl -fsSL "$url" -o "$APP_CONFIG/font/$dest" 2>/dev/null &&
-            [[ -s "$APP_CONFIG/font/$dest" ]] && is_font_file "$APP_CONFIG/font/$dest"; then
-            return 0
-        fi
-        rm -f "$APP_CONFIG/font/$dest"
-    done
-    warn "couldn't fetch $dest; leaving the overlay's fallback in place"
-    return 1
-}
-
-seed_google_license() {
-    local dir="$1" dest="$2"
-    [[ -s "$APP_CONFIG/font/$dest" ]] && return 0
-    curl -fsSL "https://raw.githubusercontent.com/google/fonts/main/ofl/$dir/OFL.txt" \
-        -o "$APP_CONFIG/font/$dest" 2>/dev/null || rm -f "$APP_CONFIG/font/$dest"
-    return 0
-}
-
-# 0.2.0 moved the overlay from the static weights to the variable faces, and the
-# switchover landed on 14 October 2026. a 0.2.0 build from before that still asks
-# for the static names, so the choice is by build date as well as version - the
-# version alone cannot tell those two builds apart.
-SELECTED_VERSION="$SELECTED_VERSION_NAME"
-SELECTED_NUMERIC="${SELECTED_VERSION#v}"; SELECTED_NUMERIC="${SELECTED_NUMERIC%%-*}"; SELECTED_NUMERIC="${SELECTED_NUMERIC%%+*}"
-version_ge() {
-    if [[ "$1" == "$2" ]]; then
-        return 0
-    fi
-    [[ "$(printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort -V | tail -n1)" == "$1" ]]
-}
-
-use_variable_fonts=false
-if version_ge "$SELECTED_NUMERIC" "0.2.0" &&
-    [[ "$SELECTED_BUILD_DATE" =~ ^[0-9]{8}$ && "$SELECTED_BUILD_DATE" > "20261013" ]]; then
-    use_variable_fonts=true
-fi
-
-if [[ "$use_variable_fonts" == true ]]; then
-    seed_google_font RobotoFlex.ttf "$(repo_font_url robotoflex)" || true
-    seed_google_font GoogleSansFlex.ttf "$(repo_font_url googlesansflex)" \
-        "$(google_font_url "Google+Sans+Flex")" || true
-    seed_google_font MaterialSymbolsRounded.ttf "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
-    seed_google_font MaterialSymbolsRoundedBold.ttf \
-        "$(google_font_url "Material+Symbols+Rounded" "wght@700")" \
-        "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
-    [[ -s "$APP_CONFIG/font/MaterialSymbolsRoundedBold.ttf" ]] ||
-        cp "$APP_CONFIG/font/MaterialSymbolsRounded.ttf" "$APP_CONFIG/font/MaterialSymbolsRoundedBold.ttf" 2>/dev/null || true
-    seed_google_license robotoflex LICENSE-SIL-OFL-1.1.txt
-    seed_google_license materialsymbolsrounded LICENSE-Apache-2.0.txt
-else
-    # static weights: font.ttf carries the body, the named files carry the steps a
-    # pre-Flex build looks for by name. these come from the css endpoint, which is
-    # where Google serves the static instances of Google Sans.
-    seed_google_font GoogleSans-Medium.ttf "$(google_font_url "Google+Sans" "wght@500")" || true
-    seed_google_font GoogleSans-Regular.ttf "$(google_font_url "Google+Sans" "wght@400")" || true
-    seed_google_font GoogleSans-Bold.ttf "$(google_font_url "Google+Sans" "wght@700")" || true
-    # Google Sans ships four steps and no 800, so the extra-bold face is the bold
-    # file under the name a pre-Flex build looks for.
-    cp "$APP_CONFIG/font/GoogleSans-Bold.ttf" "$APP_CONFIG/font/GoogleSans-ExtraBold.ttf" 2>/dev/null || true
-    for replacement in GoogleSans-Regular.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf; do
-        [[ -s "$APP_CONFIG/font/$replacement" ]] ||
-            cp "$APP_CONFIG/font/GoogleSans-Medium.ttf" "$APP_CONFIG/font/$replacement" 2>/dev/null || true
-    done
-    seed_google_license googlesans LICENSE-SIL-OFL-1.1.txt
-fi
-
-# the licence texts ship with the repository; a family's OFL file is not part of
-# the font download
-for licence in LICENSE LICENSE-SIL-OFL-1.1.txt LICENSE-Apache-2.0.txt LICENSE-GoogleSansFlex-OFL.txt; do
-    [[ -f "$SCRIPT_DIR/assets/font/$licence" ]] && cp "$SCRIPT_DIR/assets/font/$licence" "$APP_CONFIG/font/"
+# Google Sans Flex is instantiated into the M3 type weights at build time.
+# Google Sans Flex is instantiated into the M3 type weights at build time; the
+# Material Symbols subset carries the UI icons VKIntox references by codepoint.
+for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded-subset.ttf; do
+    curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/font/$font" -o "$APP_CONFIG/font/$font"
 done
-
-# the historical filename is what a library that predates Flex still opens
-for variable in RobotoFlex.ttf GoogleSans-Medium.ttf; do
-    [[ -s "$APP_CONFIG/font/$variable" ]] && cp "$APP_CONFIG/font/$variable" "$APP_CONFIG/font/font.ttf"
-done
-[[ -s "$APP_CONFIG/font/font.ttf" ]] || warn "no body face was seeded; the overlay will use its built-in font"
-
+# Keep the historical filename as a regular-weight compatibility fallback.
+cp "$APP_CONFIG/font/GoogleSans-Regular.ttf" "$APP_CONFIG/font/font.ttf"
+curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/font/LICENSE" -o "$APP_CONFIG/font/LICENSE"
 curl -fsSL "$EFFECT_PACKAGES_URL" -o "$TMP_DIR/EffectPackages.ini"
 
 EFFECTS_HASH=$(sha256sum "$TMP_DIR/EffectPackages.ini" | cut -d' ' -f1)

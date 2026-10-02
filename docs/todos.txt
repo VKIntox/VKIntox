@@ -146,8 +146,8 @@ becomes a genuine end-to-end check for free.
 TODOS for v0.2.0
 ================================================
 
-1. Overhaul UI to use Flutter/Dart instead of ImGui with Vulkan frame buffer casts & proper input passthrough (for V2, not any soon, probably not even for this year lol):
-Render icon in titlebar next to game icon, fetch that dynamically online?
-Also render icon in new tab: About, move acknowledgements there too
+1. ~~Overhaul UI to use Flutter/Dart instead of ImGui with Vulkan frame buffer casts & proper input passthrough~~ — dropped: modifying the vendored ImGui source directly got us close enough to Material 3 Expressive that a rewrite isn't worth it. Remaining ideas from this item kept below as their own tasks.
+   Render icon in titlebar next to game icon, fetch that dynamically online?
+   Also render icon in new tab: About, move acknowledgements there too
 2. Ensure stability, yet again
 3. Try to improve performance?

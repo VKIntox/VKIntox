@@ -2,6 +2,7 @@
 #include "reshade_parser.hh"
 #include "config_serializer.hh"
 #include "logger.hh"
+#include "overlay/ui_theme.hh"
 
 #include <filesystem>
 #include <set>
@@ -155,13 +156,13 @@ namespace VKIntox
             }
             int depthCount = static_cast<int>(depthShaders.size());
             if (failCount == 0)
-                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "All %d passed!", passCount);
+                ImGui::TextColored(UI::Success(), "All %d passed!", passCount);
             else
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "%d passed, %d failed", passCount, failCount);
+                ImGui::TextColored(UI::Warning(), "%d passed, %d failed", passCount, failCount);
             if (depthCount > 0)
             {
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "(%d use depth)", depthCount);
+                ImGui::TextColored(UI::Secondary(), "(%d use depth)", depthCount);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("These shaders require depth buffer access.");
             }
@@ -169,7 +170,7 @@ namespace VKIntox
             // Show duplicate warning if any were skipped
             if (shaderTestDuplicateCount > 0)
             {
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "(%d duplicates skipped)", shaderTestDuplicateCount);
+                ImGui::TextColored(UI::Attention(), "(%d duplicates skipped)", shaderTestDuplicateCount);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Identical files (symlinks or copies) found in multiple shader paths.\nEach unique file is tested exactly once.");
             }
@@ -199,7 +200,7 @@ namespace VKIntox
         // Show failed shaders first (if any)
         if (failCount > 0)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, UI::Warning());
             bool failedOpen = ImGui::TreeNode("FailedShaders", "Failed Shaders (%d)", failCount);
             ImGui::PopStyleColor();
 
@@ -210,7 +211,7 @@ namespace VKIntox
                     if (success)
                         continue;
 
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
                     // Use path as unique ID to avoid conflicts with duplicate names
                     if (ImGui::TreeNode(path.c_str(), "%s", name.c_str()))
                     {
@@ -233,7 +234,7 @@ namespace VKIntox
         // Show depth shaders (if any)
         if (depthCount > 0)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, UI::Secondary());
             bool depthOpen = ImGui::TreeNode("DepthShaders", "Depth Shaders (%d)", depthCount);
             ImGui::PopStyleColor();
 
@@ -244,14 +245,14 @@ namespace VKIntox
                     if (!success || !depthShaderNames.count(name))
                         continue;
 
-                    ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "%s", name.c_str());
+                    ImGui::TextColored(UI::Secondary(), "%s", name.c_str());
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s", path.c_str());
 
                     if (!error.empty())
                     {
                         ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "(warnings)");
+                        ImGui::TextColored(UI::Attention(), "(warnings)");
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("%s", error.c_str());
                     }
@@ -266,7 +267,7 @@ namespace VKIntox
         int safeCount = static_cast<int>(results.size()) - failCount - depthCount;
         if (safeCount > 0)
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, UI::Success());
             bool passedOpen = ImGui::TreeNode("PassedShaders", "Safe Shaders (%d)", safeCount);
             ImGui::PopStyleColor();
 
@@ -277,7 +278,7 @@ namespace VKIntox
                     if (!success || depthShaderNames.count(name))
                         continue;
 
-                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", name.c_str());
+                    ImGui::TextColored(UI::Success(), "%s", name.c_str());
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s", path.c_str());
 
@@ -285,7 +286,7 @@ namespace VKIntox
                     if (!error.empty())
                     {
                         ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.3f, 1.0f), "(warnings)");
+                        ImGui::TextColored(UI::Attention(), "(warnings)");
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("%s", error.c_str());
                     }

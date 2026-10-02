@@ -1,6 +1,8 @@
 #include "imgui_overlay.hh"
 #include "settings_manager.hh"
 #include "logger.hh"
+#include "overlay/ui_theme.hh"
+#include "overlay/ui_icons.hh"
 
 #include <algorithm>
 #include <sstream>
@@ -218,19 +220,16 @@ namespace VKIntox
     {
         ImGui::BeginChild("AdvancedContent", ImVec2(0, 0), false);
 
-        // --- Status header ---
-        ImGui::TextDisabled("Depth buffer capture and selection.");
-        ImGui::Spacing();
-
+        ImGui::TextDisabled("Depth buffer capture, decoding and selection.");
         if (!depthInfo.depthCaptureEnabled)
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f),
-                               "Depth capture is OFF. Enable it in Settings (requires restart).");
             ImGui::Spacing();
+            ImGui::TextColored(UI::Warning(), "%s  Depth capture is OFF — enable it in Settings (requires restart).", Icon::WarningUtf8);
         }
+        ImGui::Spacing();
 
-        // --- Active depth buffer info ---
-        ImGui::Separator();
+        // --- Status ---
+        ImGui::M3CardBegin("adv_status", "Status", Icon::LayersUtf8);
         if (depthInfo.active.imageView == VK_NULL_HANDLE)
         {
             ImGui::TextDisabled("No depth buffer detected yet.");
@@ -238,7 +237,8 @@ namespace VKIntox
         }
         else
         {
-            ImGui::Text("Active: %s  %ux%u  %s",
+            ImGui::Text("%s  %s  %ux%u  %s",
+                depthInfo.depthIsPinned ? "PINNED" : "AUTO",
                 depthFormatName(depthInfo.active.format),
                 depthInfo.active.extent.width, depthInfo.active.extent.height,
                 sampleName(depthInfo.active.samples));
@@ -246,20 +246,21 @@ namespace VKIntox
             {
                 const char* mode = (depthInfo.depthResolveMode == VK_RESOLVE_MODE_AVERAGE_BIT) ? "average" : "sample-zero";
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), "[MSAA: %s]", mode);
+                ImGui::TextColored(UI::Secondary(), "[MSAA: %s]", mode);
             }
             if (depthInfo.depthIsPinned)
             {
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.4f, 1.0f), "[PINNED]");
+                ImGui::TextColored(UI::Warning(), "[PINNED]");
             }
+            ImGui::Spacing();
+            ImGui::TextDisabled("HW resolve modes: 0x%x", depthInfo.supportedResolveModes);
         }
+        ImGui::M3CardEnd();
 
-        // --- Selection mode ---
+        // --- Selection ---
         ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
+        ImGui::M3CardBegin("adv_select", "Selection", Icon::FilterAltUtf8);
         const bool isPinned = depthInfo.depthIsPinned;
 
         if (ImGui::RadioButton("Auto (best candidate)", !isPinned))
@@ -270,82 +271,66 @@ namespace VKIntox
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Automatically pick the depth buffer with the most draws\nor a swapchain-linked snapshot target.");
 
-        ImGui::SameLine(0, 16);
+        ImGui::SameLine();
         if (ImGui::RadioButton("Manual pin", isPinned))
         {
-            // No-op: user must click Pin on a specific row below to set a pin.
-            // If already pinned, they pick a different row to change the pin.
+            // No-op: pin a specific row below to set it.
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Pin a specific depth buffer from the list below.\nOverrides auto-promotion. If the pinned buffer is destroyed,\nfalls back to auto automatically.");
+            ImGui::SetTooltip("Pin a specific depth buffer from the list below.\nIf the pinned buffer is destroyed, falls back to auto.");
 
-        // Pinned indicator + clear button
         if (isPinned)
         {
             ImGui::Spacing();
-            ImGui::Indent(8);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.8f, 0.4f, 1.0f));
-            ImGui::Text("Pinned: %s  %ux%u  %s",
+            ImGui::TextColored(UI::Warning(), "Pinned: %s  %ux%u  %s",
                 depthFormatName(depthInfo.active.format),
                 depthInfo.active.extent.width, depthInfo.active.extent.height,
                 sampleName(depthInfo.active.samples));
-            ImGui::PopStyleColor();
-            ImGui::SameLine(0, 12);
-            if (ImGui::Button("Clear Pin"))
+            ImGui::SameLine();
+            const std::string clearLabel = std::string(Icon::CloseUtf8) + "  Clear Pin";
+            if (ImGui::Button(clearLabel.c_str()))
                 depthPinPendingClear = true;
-            ImGui::Unindent(8);
         }
+        ImGui::M3CardEnd();
 
-        // --- Candidate table ---
+        // --- Tracked depth buffers ---
         ImGui::Spacing();
-        ImGui::Spacing();
-
         if (!depthInfo.candidates.empty())
         {
-            ImGui::Text("Tracked Depth Buffers (%zu)", depthInfo.candidates.size());
-
+            ImGui::M3CardBegin("adv_buffers", "Tracked Depth Buffers", Icon::GridViewUtf8);
             if (ImGui::BeginTable("##depth_tbl", 5,
-                                  ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
-                                  ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * static_cast<float>(std::min(depthInfo.candidates.size() + 1, static_cast<size_t>(8))) + 4)))
+                                  ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg,
+                                  ImVec2(0, 0)))
             {
-                ImGui::TableSetupScrollFreeze(0, 1);
-                ImGui::TableSetupColumn("#",    ImGuiTableColumnFlags_WidthFixed, 28);
-                ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthStretch, 0.25f);
-                ImGui::TableSetupColumn("Size",   ImGuiTableColumnFlags_WidthStretch, 0.2f);
-                ImGui::TableSetupColumn("Info",   ImGuiTableColumnFlags_WidthStretch, 0.3f);
-                ImGui::TableSetupColumn("",       ImGuiTableColumnFlags_WidthFixed, 52);
+                ImGui::TableSetupColumn("#",      ImGuiTableColumnFlags_WidthFixed, 32.0f);
+                ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+                ImGui::TableSetupColumn("Size",   ImGuiTableColumnFlags_WidthFixed, 96.0f);
+                ImGui::TableSetupColumn("Info",   ImGuiTableColumnFlags_WidthStretch, 1.2f);
+                ImGui::TableSetupColumn("",       ImGuiTableColumnFlags_WidthFixed, 72.0f);
                 ImGui::TableHeadersRow();
 
                 for (size_t i = 0; i < depthInfo.candidates.size(); ++i)
                 {
                     const DepthCandidateInfo& c = depthInfo.candidates[i];
-                    // Compare by VkImageView handle — multiple distinct views can
-                    // share the same format:WxHxSamples but point to different images.
                     const bool isActive  = (c.imageView == depthInfo.active.imageView);
                     const bool thisPinned = isPinned && (c.imageView == depthInfo.pinnedView);
 
                     ImGui::TableNextRow();
                     ImGui::PushID(static_cast<int>(i));
-
-                    // Highlight color for active / pinned rows
                     if (isActive)
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.5f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, UI::Success());
                     else if (thisPinned)
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.8f, 0.4f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, UI::Warning());
 
-                    // Column 0: index
                     ImGui::TableSetColumnIndex(0);
                     ImGui::Text("%zu", i);
 
-                    // Column 1: format
                     ImGui::TableSetColumnIndex(1);
                     ImGui::Text("%s", depthFormatName(c.format));
 
-                    // Column 2: size
                     ImGui::TableSetColumnIndex(2);
                     ImGui::Text("%ux%u", c.extent.width, c.extent.height);
 
-                    // Column 3: info badges
                     ImGui::TableSetColumnIndex(3);
                     {
                         std::string info;
@@ -358,10 +343,9 @@ namespace VKIntox
                             info += "  ACTIVE";
                         else if (thisPinned)
                             info += "  PINNED";
-                        ImGui::Text("%s", info.c_str());
+                        ImGui::TextUnformatted(info.c_str());
                     }
 
-                    // Column 4: Pin/Unpin button
                     ImGui::TableSetColumnIndex(4);
                     if (thisPinned)
                     {
@@ -374,7 +358,6 @@ namespace VKIntox
                             depthPinPendingView = c.imageView;
                     }
 
-                    // Tooltip on hover over the row (the button is the last widget)
                     if (ImGui::IsItemHovered())
                     {
                         ImGui::BeginTooltip();
@@ -387,78 +370,21 @@ namespace VKIntox
 
                     if (isActive || thisPinned)
                         ImGui::PopStyleColor();
-
                     ImGui::PopID();
                 }
-
                 ImGui::EndTable();
             }
+            ImGui::M3CardEnd();
         }
         else
         {
             ImGui::TextDisabled("No depth views tracked yet. Render a frame with depth.");
         }
 
-        // --- MSAA resolve mode ---
+        // --- Depth decoding ---
         ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+        ImGui::M3CardBegin("adv_decode", "Depth Decoding", Icon::ContrastUtf8);
 
-        const bool avgSupported = (depthInfo.supportedResolveModes & VK_RESOLVE_MODE_AVERAGE_BIT) != 0;
-        int modePref = settingsManager.getDepthResolveMode();
-
-        ImGui::Text("MSAA Resolve Mode");
-        ImGui::Spacing();
-
-        if (ImGui::RadioButton("Auto##resolveauto", modePref == 0))
-        { settingsManager.setDepthResolveMode(0); markSettingsDirty(); }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Prefers average when the device supports it.");
-
-        ImGui::SameLine(0, 16);
-        if (ImGui::RadioButton("Sample Zero##resolvezero", modePref == 1))
-        { settingsManager.setDepthResolveMode(1); markSettingsDirty(); }
-
-        ImGui::SameLine(0, 16);
-        ImGui::BeginDisabled(!avgSupported);
-        if (ImGui::RadioButton("Average##resolveavg", modePref == 2))
-        { settingsManager.setDepthResolveMode(2); markSettingsDirty(); }
-        ImGui::EndDisabled();
-
-        if (!avgSupported)
-        {
-            ImGui::Spacing();
-            ImGui::TextDisabled("Average mode not supported by this device.");
-        }
-
-        // --- Alternative depth buffer handling ---
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::Text("Depth Source Mode (Deferred Rendering)");
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::BeginTooltip();
-            ImGui::Text("Select the depth buffer encoding used by this application:");
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Standard:");
-            ImGui::BulletText("Luminance/Red: Standard Vulkan depth (R channel)");
-            ImGui::BulletText("Alpha: Depth encoded in alpha channel");
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "Deferred Renderers:");
-            ImGui::BulletText("Packed RGB: Depth distributed across RGB");
-            ImGui::BulletText("Logarithmic: Log-encoded depth values");
-            ImGui::BulletText("View-space Z: Raw view-space Z value");
-            ImGui::BulletText("NDC: Normalized Device Coordinates");
-            ImGui::BulletText("Reversed-Z: Inverted for precision");
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f), "Requires restart to take effect.");
-            ImGui::EndTooltip();
-        }
-        ImGui::Spacing();
-
-        // Depth mode names for UI
         const char* depthModeNames[] = {
             "Luminance/Red (standard)",
             "Alpha (alpha-encoded)",
@@ -468,11 +394,11 @@ namespace VKIntox
             "NDC (Normalized Device Coords)",
             "Reversed-Z"
         };
-        
         int dsc = settingsManager.getDepthSourceChannel();
-        
-        // Use combo box for cleaner UI with many options
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Encoding");
+        ImGui::SameLine(150.0f);
+        ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::Combo("##depthSourceChannelCombo", &dsc, depthModeNames, IM_ARRAYSIZE(depthModeNames)))
         {
             settingsManager.setDepthSourceChannel(dsc);
@@ -492,11 +418,8 @@ namespace VKIntox
             ImGui::SetTooltip("%s", tooltips[dsc]);
         }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-
         bool depthInvert = settingsManager.getDepthInvert();
-        if (ImGui::Checkbox("Invert Depth Values##depthInvertToggle", &depthInvert))
+        if (ImGui::Checkbox("Invert depth values", &depthInvert))
         {
             settingsManager.setDepthInvert(depthInvert);
             markSettingsDirty();
@@ -506,41 +429,44 @@ namespace VKIntox
             ImGui::BeginTooltip();
             ImGui::Text("Invert depth values: depth = 1.0 - depth");
             ImGui::Text("Flips the near/far plane interpretation.");
-            ImGui::Text("Useful when:");
-            ImGui::BulletText("Depth buffer uses reversed-Z encoding");
-            ImGui::BulletText("Effects expect inverted depth range");
-            ImGui::BulletText("Visual debugging of depth precision");
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f), "Can be toggled at runtime!");
+            ImGui::TextColored(UI::Success(), "Can be toggled at runtime.");
             ImGui::EndTooltip();
         }
+        ImGui::TextDisabled("Current: %s%s", depthModeNames[dsc], depthInvert ? ", INVERTED" : "");
+        ImGui::M3CardEnd();
 
-        // Visual indicator for current mode
-        ImGui::Indent();
-        {
-            ImGui::TextDisabled("Current: %s%s%s", 
-                depthModeNames[dsc],
-                depthInvert ? ", INVERTED" : "",
-                depthInvert ? " [INV]" : "");
-        }
-        ImGui::Unindent();
-
-        // --- Transient workaround ---
+        // --- MSAA resolve ---
         ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+        ImGui::M3CardBegin("adv_resolve", "MSAA Resolve", Icon::BlurOnUtf8);
+        const bool avgSupported = (depthInfo.supportedResolveModes & VK_RESOLVE_MODE_AVERAGE_BIT) != 0;
+        int modePref = settingsManager.getDepthResolveMode();
 
-        // --- Depth Capture Method ---
-        ImGui::Text("Depth Capture Method");
-        ImGui::Spacing();
+        if (ImGui::RadioButton("Auto##resolveauto", modePref == 0))
+        { settingsManager.setDepthResolveMode(0); markSettingsDirty(); }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Prefers average when the device supports it.");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Sample Zero##resolvezero", modePref == 1))
+        { settingsManager.setDepthResolveMode(1); markSettingsDirty(); }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!avgSupported);
+        if (ImGui::RadioButton("Average##resolveavg", modePref == 2))
+        { settingsManager.setDepthResolveMode(2); markSettingsDirty(); }
+        ImGui::EndDisabled();
+        if (!avgSupported)
+            ImGui::TextDisabled("Average mode not supported by this device.");
+        ImGui::M3CardEnd();
 
+        // --- Capture method ---
+        ImGui::Spacing();
+        ImGui::M3CardBegin("adv_capture", "Capture Method", Icon::BoltUtf8);
         int dcm = settingsManager.getDepthCaptureMethod();
         if (ImGui::RadioButton("Off (legacy resolve only)##dcm0", dcm == 0))
         { settingsManager.setDepthCaptureMethod(0); markSettingsDirty(); }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Use the legacy per-swapchain resolve path only.\nNo persistent depth storage.");
 
-        ImGui::SameLine(0, 16);
+        ImGui::Spacing();
         if (ImGui::RadioButton("Option A: RenderPass End##dcm1", dcm == 1))
         { settingsManager.setDepthCaptureMethod(1); markSettingsDirty(); }
         if (ImGui::IsItemHovered())
@@ -548,24 +474,20 @@ namespace VKIntox
             ImGui::BeginTooltip();
             ImGui::Text("Blit depth to a persistent storage image at each CmdEndRenderPass.");
             ImGui::Text("Low overhead (~1-2ms/frame). Recommended for most games.");
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "Auto-switches to Option B after 30s if no main-res captures.");
+            ImGui::TextColored(UI::Warning(), "Auto-switches to Option B after 30s if no main-res captures.");
             ImGui::EndTooltip();
         }
-
-        ImGui::SameLine(0, 16);
         if (ImGui::RadioButton("Option B: QueueSubmit##dcm2", dcm == 2))
         { settingsManager.setDepthCaptureMethod(2); markSettingsDirty(); }
         if (ImGui::IsItemHovered())
         {
             ImGui::BeginTooltip();
             ImGui::Text("Intercept QueueSubmit to inject depth blit into the command stream.");
-            ImGui::Text("More robust — catches edge cases where CmdEndRenderPass is bypassed.");
-            ImGui::Text("Slightly higher overhead due to command buffer analysis per frame.");
+            ImGui::Text("More robust, slightly higher overhead.");
             ImGui::EndTooltip();
         }
 
         ImGui::Spacing();
-
         bool transientWorkaround = settingsManager.getDepthTransientWorkaround();
         if (ImGui::Checkbox("Transient attachment workaround", &transientWorkaround))
         {
@@ -575,15 +497,16 @@ namespace VKIntox
         if (ImGui::IsItemHovered())
         {
             ImGui::BeginTooltip();
-            ImGui::Text("Forces STORE on depth attachments and tracks transient (lazy-allocated) depth images.");
-            ImGui::Text("Enable for games that render MSAA depth with transient attachments (e.g. Roblox via Sober).");
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "StoreOp forcing is always on; this adds extra tracking.");
+            ImGui::Text("Forces STORE on depth attachments and tracks transient depth images.");
+            ImGui::Text("Enable for games that render MSAA depth with transient attachments.");
             ImGui::EndTooltip();
         }
+        ImGui::M3CardEnd();
 
-        // --- Force re-detect ---
+        // --- Footer ---
         ImGui::Spacing();
-        if (ImGui::Button("Force Re-detect"))
+        const std::string redetectLabel = std::string(Icon::RefreshUtf8) + "  Force Re-detect";
+        if (ImGui::Button(redetectLabel.c_str()))
         {
             std::lock_guard<std::mutex> l(globalLock);
             logicalDevice->activeDepthState    = DepthState{};
@@ -595,13 +518,7 @@ namespace VKIntox
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Clear active depth buffer, best candidate, and any pin.\nThe layer will re-evaluate all render passes next frame.");
 
-        ImGui::Spacing();
-        ImGui::TextDisabled("HW resolve modes: 0x%x", depthInfo.supportedResolveModes);
-
         // --- Deferred save ---
-        // Perform the actual file I/O exactly once per frame, regardless of how
-        // many UI widgets changed.  This eliminates the per-widget disk I/O that
-        // was causing the Advanced tab to freeze/hang on interaction.
         flushSettingsSaveIfNeeded();
 
         ImGui::EndChild();

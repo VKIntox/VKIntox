@@ -4043,25 +4043,25 @@ void ImGui::RenderNavCursor(const ImRect& bb, ImGuiID id, ImGuiNavRenderCursorFl
     if (window->DC.NavHideHighlightOneFrame)
         return;
 
-    float rounding = (flags & ImGuiNavRenderCursorFlags_NoRounding) ? 0.0f : g.Style.FrameRounding;
+    // VKIntox M3 focus indicator: a 3dp `primary` ring sitting 2dp outside the
+    // item, per md.sys.state.focus-indicator (thickness 3, outer-offset 2).
+    const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
     ImRect display_rect = bb;
     display_rect.ClipWith(window->ClipRect);
-    const float thickness = 2.0f;
-    if (flags & ImGuiNavRenderCursorFlags_Compact)
-    {
-        window->DrawList->AddRect(display_rect.Min, display_rect.Max, GetColorU32(ImGuiCol_NavCursor), rounding, 0, thickness);
-    }
-    else
-    {
-        const float distance = 3.0f + thickness * 0.5f;
-        display_rect.Expand(ImVec2(distance, distance));
-        bool fully_visible = window->ClipRect.Contains(display_rect);
-        if (!fully_visible)
-            window->DrawList->PushClipRect(display_rect.Min, display_rect.Max);
-        window->DrawList->AddRect(display_rect.Min, display_rect.Max, GetColorU32(ImGuiCol_NavCursor), rounding, 0, thickness);
-        if (!fully_visible)
-            window->DrawList->PopClipRect();
-    }
+    const float thickness = (flags & ImGuiNavRenderCursorFlags_Compact) ? m.focus_indicator_thickness * m.density
+                                                                        : m.focus_indicator_thickness * m.density;
+    const float offset = m.focus_indicator_outer_offset * m.density;
+    display_rect.Expand(ImVec2(offset, offset));
+    bool fully_visible = window->ClipRect.Contains(display_rect);
+    if (!fully_visible)
+        window->DrawList->PushClipRect(display_rect.Min, display_rect.Max);
+    const float rounding = (flags & ImGuiNavRenderCursorFlags_NoRounding) ? 0.0f
+                                                                             : ImGuiM3PillRadius(display_rect.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
+    const ImGuiM3ShapeRounding ring_rounding{ rounding, rounding, rounding, rounding };
+    ImGuiM3PathRoundedRect(window->DrawList, ImRect(display_rect.Min + ImVec2(thickness, thickness), display_rect.Max - ImVec2(thickness, thickness)),
+                           ring_rounding, ImGuiM3ColorU32(ImGuiM3Role_Primary));
+    if (!fully_visible)
+        window->DrawList->PopClipRect();
 }
 
 void ImGui::RenderMouseCursor(ImVec2 base_pos, float base_scale, ImGuiMouseCursor mouse_cursor, ImU32 col_fill, ImU32 col_border, ImU32 col_shadow)
@@ -5635,6 +5635,10 @@ void ImGui::NewFrame()
             g.Hooks.erase(&g.Hooks[n]);
 
     CallContextHooks(&g, ImGuiContextHookType_NewFramePre);
+
+    // VKIntox M3: reload the theme `.colors` file if it changed on disk and
+    // advance the motion springs. Must run before anything reads the style.
+    ImGuiM3NewFrame();
 
     // Check and assert for various common IO and Configuration mistakes
     g.ConfigFlagsLastFrame = g.ConfigFlagsCurrFrame;
@@ -7499,10 +7503,16 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
         // in order for their pos/size to be matching their undocking state.)
         if (!(flags & ImGuiWindowFlags_NoTitleBar) && !window->DockIsActive)
         {
-            ImU32 title_bar_col = GetColorU32(title_bar_is_highlight ? ImGuiCol_TitleBgActive : ImGuiCol_TitleBg);
+            // VKIntox M3: the title bar is surface-container-low, so the shell
+            // reads as one surface with a lifted header rather than two unrelated
+            // fills. Rounding is on the top corners only, matching the body.
+            ImU32 title_bar_col = ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow);
             if (window->ViewportOwned)
                 title_bar_col |= IM_COL32_A_MASK; // No alpha
             window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max, title_bar_col, window_rounding, ImDrawFlags_RoundCornersTop);
+            if (title_bar_is_highlight)
+                window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max,
+                                                ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, ImGuiM3State_Hovered), window_rounding, ImDrawFlags_RoundCornersTop);
         }
 
         // Menu bar
@@ -7628,6 +7638,11 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     // Title bar text (with: horizontal alignment, avoiding collapse/close button, optional "unsaved document" marker)
     // FIXME: Refactor text alignment facilities along with RenderText helpers, this is WAY too much messy code..
     const float marker_size_x = (flags & ImGuiWindowFlags_UnsavedDocument) ? button_sz * 0.80f : 0.0f;
+    // VKIntox M3: the title is the app bar's emphasized run, so measure and draw
+    // it with the bold face rather than the body weight.
+    ImFont* title_font = ImGuiM3FontBold();
+    if (title_font)
+        PushFont(title_font, g.FontSize);
     const ImVec2 text_size = CalcTextSize(name, NULL, true) + ImVec2(marker_size_x, 0.0f);
 
     // As a nice touch we try to ensure that centered title text doesn't get affected by visibility of Close/Collapse button,
@@ -7660,6 +7675,8 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     //if (g.IO.KeyShift) window->DrawList->AddRect(layout_r.Min, layout_r.Max, IM_COL32(255, 128, 0, 255)); // [DEBUG]
     //if (g.IO.KeyCtrl) window->DrawList->AddRect(clip_r.Min, clip_r.Max, IM_COL32(255, 128, 0, 255)); // [DEBUG]
     RenderTextClipped(layout_r.Min, layout_r.Max, name, NULL, &text_size, style.WindowTitleAlign, &clip_r);
+    if (title_font)
+        PopFont();
 }
 
 void ImGui::UpdateWindowParentAndRootLinks(ImGuiWindow* window, ImGuiWindowFlags flags, ImGuiWindow* parent_window)

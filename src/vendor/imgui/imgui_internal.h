@@ -54,6 +54,10 @@ Index of this file:
 #include "imgui.h"
 #endif
 
+// VKIntox: the Material 3 Expressive theme, declared here so every ImGui
+// translation unit can reach the tokens without a second include.
+#include "imgui_m3.h"
+
 #include <stdio.h>      // FILE*, sscanf
 #include <stdlib.h>     // NULL, malloc, free, qsort, atoi, atof
 #include <math.h>       // sqrtf, fabsf, fmodf, powf, floorf, ceilf, cosf, sinf
