@@ -81,6 +81,17 @@ namespace VKIntox
         VkImageView         pinnedView = VK_NULL_HANDLE;  // The pinned view handle (for UI highlighting)
     };
 
+    // identity of the VkPhysicalDevice the game is actually using. reported
+    // verbatim because the sysfs DRM scan can't tell hybrid GPUs apart.
+    struct DeviceInfo
+    {
+        std::string gpuName;
+        std::string gpuDriverInfo;
+        std::string gpuPciSlot;
+        uint32_t    gpuApiVersion = 0;
+        uint32_t    gpuVendorId = 0;
+    };
+
     class ImGuiOverlay
     {
     public:
@@ -247,6 +258,7 @@ namespace VKIntox
 
         // UI state for Advanced (depth buffer) view
         DepthInfo depthInfo;  // Refreshed each frame before rendering
+        DeviceInfo deviceInfo;  // Same, for the Diagnostics GPU card
         bool depthPinPendingClear = false;   // Request to clear pinned depth (from UI)
         VkImageView depthPinPendingView = VK_NULL_HANDLE;  // Request to pin a specific view (from UI)
         bool depthPinChanged = false;         // Set when pin/clear was applied (triggers cmd buf reallocation)

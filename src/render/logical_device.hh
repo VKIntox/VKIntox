@@ -1,6 +1,7 @@
 #ifndef LOGICAL_DEVICE_HPP_INCLUDED
 #define LOGICAL_DEVICE_HPP_INCLUDED
 #include <atomic>
+#include <string>
 #include <vector>
 #include <memory>
 #include <unordered_map>
@@ -99,6 +100,14 @@ namespace VKIntox
         VkCommandPool            commandPool;
         bool                     supportsMutableFormat;
         bool                     isNvidiaGpu;
+        // Real identity of the device the game is actually running on. The
+        // sysfs DRM scan can't tell hybrid GPUs apart, so the UI reports these
+        // instead of guessing a vendor from card enumeration order.
+        std::string              gpuName;
+        std::string              gpuDriverInfo;
+        std::string              gpuPciSlot;  // "0000:01:00.0", empty if none
+        uint32_t                 gpuApiVersion = 0;
+        uint32_t                 gpuVendorId = 0;
         bool                     gpuCrashDiagnosticsEnabled = false;
         bool                     supportsNvDiagnosticCheckpoints = false;
         bool                     supportsNvDiagnosticsConfig = false;

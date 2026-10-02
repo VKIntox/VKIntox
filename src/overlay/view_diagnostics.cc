@@ -205,9 +205,32 @@ namespace VKIntox
             return id;
         }
 
-        static GpuInfo findGpu()
+        static GpuInfo findGpu(const DeviceInfo& device)
         {
             GpuInfo info;
+
+            // the DRM node for the slot the game is actually on. on hybrid
+            // laptops the first cardN is usually the iGPU, which is why this
+            // used to report Intel while the game rendered on the dGPU.
+            std::error_code ec;
+            std::string wantedCard;
+            if (!device.gpuPciSlot.empty())
+            {
+                for (const auto& entry : std::filesystem::directory_iterator("/sys/class/drm", ec))
+                {
+                    std::string name = entry.path().filename().string();
+                    if (name.find("card") != 0 || name.find("-") != std::string::npos)
+                        continue;
+                    std::error_code linkEc;
+                    std::string target = std::filesystem::canonical(entry.path() / "device", linkEc).string();
+                    const size_t slash = target.rfind('/');
+                    if (slash != std::string::npos && target.substr(slash + 1) == device.gpuPciSlot)
+                    {
+                        wantedCard = entry.path().string();
+                        break;
+                    }
+                }
+            }
 
             try
             {
@@ -218,7 +241,14 @@ namespace VKIntox
                         continue;
 
                     std::string cardPath = entry.path().string();
+                    // prefer the slot the game is on; fall back to any supported
+                    // card only when the slot can't be resolved
+                    if (!wantedCard.empty() && cardPath != wantedCard)
+                        continue;
+
                     uint16_t vendorId = readVendorId(cardPath);
+                    if (!wantedCard.empty() && vendorId != device.gpuVendorId)
+                        continue;
 
                     // 0x1002 = AMD, 0x8086 = Intel, 0x10de = NVIDIA
                     if (vendorId == 0x1002)
@@ -401,9 +431,15 @@ namespace VKIntox
     {
         // Initialize on first call
         static bool initialized = false;
-        if (!initialized)
+        // re-resolve when the device changes, not just once: the DRM scan is
+        // keyed on the PCI slot the game is actually running on
+        static std::string resolvedSlot;
+        if (!initialized || resolvedSlot != deviceInfo.gpuPciSlot)
         {
-            gpuInfo = findGpu();
+            if (initialized)
+                Logger::info("Diagnostics: GPU changed to " + deviceInfo.gpuName + ", re-resolving");
+            gpuInfo = findGpu(deviceInfo);
+            resolvedSlot = deviceInfo.gpuPciSlot;
             detectedGameName = ConfigSerializer::detectGameName();
             autoDetectedConfig = ConfigSerializer::autoDetectConfig();
             lastFrameTime = std::chrono::steady_clock::now();
@@ -511,12 +547,35 @@ namespace VKIntox
         // --- GPU ---
         ImGui::Spacing();
         ImGui::M3CardBegin("diag_gpu", "GPU", Icon::MemoryUtf8);
-        if (gpuInfo.vendor != GpuVendor::Unknown)
         {
-            ImGui::TextDisabled("%s", gpuInfo.vendorName.c_str());
+            // report what the game is really running on, not a vendor guessed
+            // from DRM card order
+            if (!deviceInfo.gpuName.empty())
+            {
+                ImFont* bold = ImGuiM3FontBold();
+                if (bold)
+                    ImGui::PushFont(bold, ImGui::GetFontSize());
+                ImGui::TextUnformatted(deviceInfo.gpuName.c_str());
+                if (bold)
+                    ImGui::PopFont();
+
+                std::string info;
+                if (deviceInfo.gpuApiVersion)
+                    info = "Vulkan " + std::to_string(VK_API_VERSION_MAJOR(deviceInfo.gpuApiVersion)) + "." +
+                           std::to_string(VK_API_VERSION_MINOR(deviceInfo.gpuApiVersion)) + "." +
+                           std::to_string(VK_API_VERSION_PATCH(deviceInfo.gpuApiVersion));
+                if (!deviceInfo.gpuDriverInfo.empty())
+                    info += info.empty() ? deviceInfo.gpuDriverInfo : "  ·  " + deviceInfo.gpuDriverInfo;
+                if (!info.empty())
+                    ImGui::TextDisabled("%s", info.c_str());
+            }
+            else if (gpuInfo.vendor != GpuVendor::Unknown)
+            {
+                ImGui::TextDisabled("%s", gpuInfo.vendorName.c_str());
+            }
             ImGui::Spacing();
 
-            if (gpuInfo.hasGpuUsage)
+            if (gpuInfo.vendor != GpuVendor::Unknown && gpuInfo.hasGpuUsage)
             {
                 if (dispGpuUsage >= 0)
                 {
@@ -547,7 +606,7 @@ namespace VKIntox
                 drawGraph("VRAM Usage", "##vramusage", vramUsageHistory, 0.0f, 100.0f, "%.0f%%", UI::GraphColor(2));
             }
         }
-        else
+        if (deviceInfo.gpuName.empty())
         {
             ImGui::TextDisabled("GPU stats not available.");
             ImGui::TextDisabled("No AMD/Intel/NVIDIA GPU detected via sysfs.");

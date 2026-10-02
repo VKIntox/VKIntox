@@ -1762,15 +1762,45 @@ namespace VKIntox
         {
             VkPhysicalDeviceDepthStencilResolveProperties resolveProps = {};
             resolveProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;
+            // the core PCIE struct is missing from our vulkan headers; VK_EXT_pci_bus_info
+            // has the same layout and sType
+            VkPhysicalDevicePCIBusInfoPropertiesEXT pcieProps = {};
+            pcieProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT;
+            VkPhysicalDeviceDriverProperties driverProps = {};
+            driverProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
             VkPhysicalDeviceProperties2 props2 = {};
             props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
             props2.pNext = &resolveProps;
+            resolveProps.pNext = &pcieProps;
+            pcieProps.pNext = &driverProps;
             if (instanceDispatchMap[GetKey(physicalDevice)].GetPhysicalDeviceProperties2)
             {
                 instanceDispatchMap[GetKey(physicalDevice)].GetPhysicalDeviceProperties2(physicalDevice, &props2);
                 logicalDevice->supportedDepthResolveModes = resolveProps.supportedDepthResolveModes;
                 if (logicalDevice->supportedDepthResolveModes == 0)
                     logicalDevice->supportedDepthResolveModes = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+
+                // identity + driver string, for the Diagnostics GPU card
+                logicalDevice->gpuName      = props2.properties.deviceName;
+                logicalDevice->gpuApiVersion = props2.properties.apiVersion;
+                logicalDevice->gpuVendorId   = props2.properties.vendorID;
+                if (driverProps.driverName[0] || driverProps.driverInfo[0])
+                {
+                    std::string info = driverProps.driverName;
+                    if (driverProps.driverInfo[0])
+                    {
+                        if (!info.empty()) info += " ";
+                        info += driverProps.driverInfo;
+                    }
+                    logicalDevice->gpuDriverInfo = info;
+                }
+                if (pcieProps.pciDomain != 0 || pcieProps.pciBus != 0 || pcieProps.pciDevice != 0 || pcieProps.pciFunction != 0)
+                {
+                    char slot[32] = {};
+                    snprintf(slot, sizeof(slot), "%04x:%02x:%02x.%x",
+                             pcieProps.pciDomain, pcieProps.pciBus, pcieProps.pciDevice, pcieProps.pciFunction);
+                    logicalDevice->gpuPciSlot = slot;
+                }
             }
             else
             {

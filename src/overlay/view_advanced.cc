@@ -87,6 +87,12 @@ namespace VKIntox
         depthInfo.supportedResolveModes = logicalDevice->supportedDepthResolveModes;
         depthInfo.depthCaptureEnabled   = settingsManager.getDepthCapture();
 
+        deviceInfo.gpuName      = logicalDevice->gpuName;
+        deviceInfo.gpuDriverInfo = logicalDevice->gpuDriverInfo;
+        deviceInfo.gpuPciSlot   = logicalDevice->gpuPciSlot;
+        deviceInfo.gpuApiVersion = logicalDevice->gpuApiVersion;
+        deviceInfo.gpuVendorId  = logicalDevice->gpuVendorId;
+
         const int modePref = settingsManager.getDepthResolveMode();
         const bool avgSupported = (logicalDevice->supportedDepthResolveModes & VK_RESOLVE_MODE_AVERAGE_BIT) != 0;
         if (modePref == 2 && avgSupported)
