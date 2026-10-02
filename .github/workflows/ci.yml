@@ -69,14 +69,9 @@ jobs:
 
       - name: Install smoke test dependencies
         run: |
-          # xauth is named explicitly because it is only a Recommends of xvfb, and
-          # --no-install-recommends leaves it out. xvfb-run shells out to xauth to
-          # authorise the display it starts, so without it the wrapper dies before
-          # vkcube ever runs and the step fails with nothing useful in the log.
           sudo apt-get install --no-install-recommends -y \
             mesa-vulkan-drivers \
             vulkan-tools \
-            xauth \
             xvfb
 
       - name: Smoke test the layer under vkcube
@@ -86,21 +81,7 @@ jobs:
           # window. The script fails the build when the loader never picked up
           # the freshly built layer, so a green run cannot be a vacuous one where
           # the layer silently never loaded and vkcube ran untouched.
-          command -v xauth >/dev/null || { echo "xauth missing; xvfb-run cannot work" >&2; exit 1; }
-          # Two things vary by distro. Ubuntu ships an arch-independent
-          # lvp_icd.json where Fedora ships lvp_icd.x86_64.json, so the pattern
-          # must not require a suffix. And several distros ship i686 alongside
-          # the native build, so a bare head -1 can pick the 32-bit driver and
-          # then vkcube reports no compatible ICD. Prefer the native arch, fall
-          # back to the unsuffixed one, and never take an i686 ICD.
-          ICD_DIR=/usr/share/vulkan/icd.d
-          LVP_ICD=""
-          for candidate in "$ICD_DIR/lvp_icd.$(uname -m).json" "$ICD_DIR/lvp_icd.json"; do
-            if [ -f "$candidate" ]; then LVP_ICD="$candidate"; break; fi
-          done
-          if [ -z "$LVP_ICD" ]; then
-            LVP_ICD=$(ls "$ICD_DIR"/lvp_icd*.json 2>/dev/null | grep -v i686 | head -1)
-          fi
+          LVP_ICD=$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)
           if [ -z "$LVP_ICD" ]; then
             echo "lavapipe ICD not found; mesa-vulkan-drivers did not install" >&2
             ls /usr/share/vulkan/icd.d/ >&2
@@ -108,14 +89,3 @@ jobs:
           fi
           echo "using software vulkan: $LVP_ICD"
           VK_ICD_FILENAMES="$LVP_ICD" xvfb-run -a src/tests/smoke_vkcube.sh build/src/libvkintox.so 11
-
-      - name: Report smoke test diagnostics
-        if: failure()
-        run: |
-          # the script deliberately keeps its temp dir on failure, so print what it
-          # found rather than leaving the next person with a bare red step
-          for log in /tmp/tmp.*/vkcube.log; do
-            [ -f "$log" ] || continue
-            echo "=== $log ==="
-            cat "$log"
-          done
