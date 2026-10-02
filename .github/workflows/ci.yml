@@ -112,9 +112,14 @@ jobs:
 
       - name: Install smoke test dependencies
         run: |
+          # xauth is named explicitly because it is only a Recommends of xvfb, and
+          # --no-install-recommends leaves it out. xvfb-run shells out to xauth to
+          # authorise the display it starts, so without it the wrapper dies before
+          # vkcube ever runs and the step fails with nothing useful in the log.
           sudo apt-get install --no-install-recommends -y \
             mesa-vulkan-drivers \
             vulkan-tools \
+            xauth \
             xvfb
 
       - name: Smoke test the layer under vkcube
@@ -124,6 +129,7 @@ jobs:
           # window. The script fails the build when the loader never picked up
           # the freshly built layer, so a green run cannot be a vacuous one where
           # the layer silently never loaded and vkcube ran untouched.
+          command -v xauth >/dev/null || { echo "xauth missing; xvfb-run cannot work" >&2; exit 1; }
           LVP_ICD=$(ls /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)
           if [ -z "$LVP_ICD" ]; then
             echo "lavapipe ICD not found; mesa-vulkan-drivers did not install" >&2
@@ -132,3 +138,14 @@ jobs:
           fi
           echo "using software vulkan: $LVP_ICD"
           VK_ICD_FILENAMES="$LVP_ICD" xvfb-run -a src/tests/smoke_vkcube.sh build/src/libvkintox.so 11
+
+      - name: Report smoke test diagnostics
+        if: failure()
+        run: |
+          # the script deliberately keeps its temp dir on failure, so print what it
+          # found rather than leaving the next person with a bare red step
+          for log in /tmp/tmp.*/vkcube.log; do
+            [ -f "$log" ] || continue
+            echo "=== $log ==="
+            cat "$log"
+          done
