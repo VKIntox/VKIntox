@@ -44,7 +44,14 @@ command -v vkcube >/dev/null 2>&1 || die "vkcube not found; install vulkan-tools
 LIBRARY="$(cd "$(dirname "$LIBRARY")" && pwd)/$(basename "$LIBRARY")"
 
 if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
-    die "no display; run under xvfb-run"
+    # A headless runner has no display at all and vkcube cannot open a window
+    # without one. Re-exec under xvfb-run so the same command works on a
+    # developer desktop and on CI. The env marker keeps a broken xvfb-run from
+    # turning this into an exec loop.
+    if [[ -z "${VKINTOX_SMOKE_XVFB:-}" ]] && command -v xvfb-run >/dev/null 2>&1; then
+        VKINTOX_SMOKE_XVFB=1 exec xvfb-run -a "$0" "$@"
+    fi
+    die "no display, and xvfb-run is not available to provide one"
 fi
 
 WORK_DIR=$(mktemp -d)
