@@ -12,9 +12,14 @@ EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubuserconten
 if [[ -t 1 ]]; then
     B='\033[1m'; BLUE='\033[34m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; DIM='\033[2m'; NC='\033[0m'
     SPIN_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    # Nerd Font chevron up then down, shown dimmed beside a prompt to advertise
+    # that the list takes arrow keys. Real bytes rather than the literal-escape
+    # form the colour variables use, because this one is passed as a %s argument.
+    NAV_HINT=$''
 else
     B=''; BLUE=''; GREEN=''; YELLOW=''; RED=''; DIM=''; NC=''
     SPIN_FRAMES=()
+    NAV_HINT=''
 fi
 
 spin_pid=""
@@ -61,11 +66,112 @@ run_progress() {
     fi
 }
 
+# The terminal state the menu found the tty in, captured once so it can be put
+# back no matter how the script ends. A terminal left in -icanon -echo does not
+# look broken so much as feel broken: nothing echoes and reads swallow one
+# character at a time, so the shell that invoked us is unusable until reset.
+TTY_SAVED=""
+save_tty() {
+    [[ -t 0 ]] || return 0
+    TTY_SAVED=$(stty -g 2>/dev/null || true)
+}
+restore_tty() {
+    [[ -n "$TTY_SAVED" ]] && stty "$TTY_SAVED" 2>/dev/null || true
+}
+
 usage() {
     cat <<'EOF'
 usage:
   bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script) [APP_ID]
 EOF
+}
+
+# Arrow-key picker used for the install method and the version list. The chosen
+# index comes back in SELECTED. Without a terminal on stdin there is nobody to
+# answer the prompt, so it takes the first entry and returns instead of hanging —
+# that is what keeps the curl|bash path usable from CI and nested scripts.
+select_menu() {
+    local prompt="$1"; shift
+    local -a labels=("$@")
+    local count=${#labels[@]}
+    local cursor=0 drawn=0 index key rest
+
+    SELECTED=0
+    (( count > 0 )) || return 0
+
+    if [[ ! -t 0 ]]; then
+        printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
+        return 0
+    fi
+    # without stty the terminal stays canonical, arrow keys would sit in the line
+    # buffer until enter, and the prompt would look frozen. say so and take the
+    # default instead of pretending the keys work
+    if ! command -v stty >/dev/null 2>&1; then
+        warn "stty is unavailable, so arrow keys cannot be read; taking the default"
+        printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
+        return 0
+    fi
+
+    # -icanon rather than raw: canonical mode buffers until Enter, so a single
+    # read would never see an arrow key. ISIG stays on so ctrl-c still aborts,
+    # and because that means ctrl-c arrives as a signal rather than a byte, the
+    # restore lives in the EXIT trap instead of at the end of this function
+    stty -icanon min 1 time 0 -echo 2>/dev/null || true
+
+    # leading blank line, so a prompt sits like section() does instead of
+    # crowding whatever the previous step printed
+    printf "\n"
+
+    while true; do
+        if (( drawn > 0 )); then
+            printf "\033[%dA" "$drawn"
+        fi
+        printf "\r\033[K${B}%s${NC} ${DIM}%s${NC}\n" "$prompt" "$NAV_HINT"
+        for ((index = 0; index < count; index++)); do
+            # %b, not %s: the labels carry colour codes built from the literal
+            # -escape variables, and printf only expands those in a format
+            # string. With %s the raw "\033[32m" text would land on the screen.
+            if (( index == cursor )); then
+                printf "\r\033[K  ${BLUE}${B}>${NC} %b\n" "${labels[index]}"
+            else
+                printf "\r\033[K    %b\n" "${labels[index]}"
+            fi
+        done
+        drawn=$(( count + 1 ))
+
+        key=""
+        IFS= read -rsn1 key || true
+        [[ -n "$key" ]] || break
+        if [[ "$key" == $'\e' || "$key" == $'\033' ]]; then
+            # arrows arrive as ESC [ A/B, or ESC O A/B from some terminals
+            rest=""
+            IFS= read -rsn2 rest || true
+            case "$rest" in
+                '[A' | 'OA') cursor=$(( (cursor - 1 + count) % count )) ;;
+                '[B' | 'OB') cursor=$(( (cursor + 1) % count )) ;;
+            esac
+            continue
+        fi
+        case "$key" in
+            $'\r' | $'\n') break ;;
+            # ctrl-c is normally a signal, not a byte, so this only fires on a
+            # terminal with ISIG off. ctrl-d does arrive as a byte in raw mode.
+            # either way die() exits and the EXIT trap puts the tty back.
+            $'\003' | $'\004') die "aborted" ;;
+        esac
+    done
+
+    restore_tty
+
+    # wipe the menu and leave one confirmation line, so the transcript reads as
+    # a choice rather than a scrolling list that was redrawn a dozen times
+    printf "\033[%dA" "$drawn"
+    for ((index = 0; index < drawn; index++)); do
+        printf "\r\033[K\n"
+    done
+    printf "\033[%dA" "$drawn"
+    printf "  ${GREEN}✓${NC} %b\n" "${labels[$cursor]}"
+    SELECTED=$cursor
 }
 
 APP_ID="${1:-sober}"
@@ -78,6 +184,9 @@ BUILD_ROOT="$HOME/.local/share/flatpak-builder/vkintox-remote-setup"
 cleanup() {
     local status=$?
     trap - EXIT HUP INT TERM
+    # first, because a signal that kills us mid-menu leaves the tty in raw mode
+    # and the user's shell inherits it
+    restore_tty
     if [[ -n "${TMP_DIR:-}" && -d "$TMP_DIR" ]]; then
         rm -rf -- "$TMP_DIR"
     fi
@@ -88,6 +197,7 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+save_tty
 
 section "dependencies"
 if ! flatpak remote-list --user 2>/dev/null | grep -q '^flathub'; then
@@ -97,17 +207,64 @@ else
     ok "flathub remote exists"
 fi
 
-section "fetching latest vkintox build"
+section "fetching vkintox build"
 API="https://api.github.com/repos/$REPO"
 curl -fsSL -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
     "$API/releases/tags/flatpak-build" -o "$TMP_DIR/release.json" ||
     die "the public flatpak-build release is missing; run the manual $WORKFLOW workflow first"
-RUN_ID=$(jq -er '.target_commitish // "latest"' "$TMP_DIR/release.json")
-ASSET_URL=$(jq -er '[.assets[] | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$"))] | sort_by(.created_at) | last | .browser_download_url // empty' \
-    "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
+
+# Every published build lands in the one rolling flatpak-build release, with the
+# version and build date encoded in the asset name, so the version list is
+# whatever has actually been built instead of a list someone has to maintain.
+# Newest build per version wins, stable builds are listed before experimental
+# ones, and a version counts as experimental only when it ends in -experimental.
+jq -r '
+    [.assets[]
+     | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$"))
+     | { v: (.name | sub("^libvkintox_flatpak_"; "") | sub("_[0-9]{8}\\.so$"; "")),
+         url: .browser_download_url,
+         created: .created_at }]
+    | sort_by(.created) | reverse
+    | reduce .[] as $a ([];
+        (map(select(.v == $a.v)) | length) as $seen
+        | if $seen == 0 then . + [$a] else . end)
+    | (map(select(.v | endswith("-experimental") | not))) as $stable
+    | (map(select(.v | endswith("-experimental")))) as $experimental
+    | ($stable + $experimental)[]
+    | "\(.v)\t\(.url)"
+' "$TMP_DIR/release.json" >"$TMP_DIR/versions.tsv"
+
+declare -a VERSION_NAMES=() VERSION_URLS=() VERSION_LABELS=()
+while IFS=$'\t' read -r version_name version_url; do
+    [[ -n "$version_name" ]] || continue
+    VERSION_NAMES+=("$version_name")
+    VERSION_URLS+=("$version_url")
+done <"$TMP_DIR/versions.tsv"
+((${#VERSION_NAMES[@]})) || die "the flatpak-build release has no dated library asset"
+
+# stable entries sort first, so the newest stable build is index 0 and is the
+# one we mark recommended
+for version_index in "${!VERSION_NAMES[@]}"; do
+    version_label="${VERSION_NAMES[$version_index]}"
+    if [[ "$version_label" == *-experimental ]]; then
+        version_label="${YELLOW}${version_label} (experimental! be careful)${NC}"
+    elif (( version_index == 0 )); then
+        version_label="${GREEN}${version_label} (recommended)${NC}"
+    fi
+    VERSION_LABELS+=("$version_label")
+done
+
+select_menu "pick installation method:" "fetch latest" "choose manually"
+if (( SELECTED == 1 )); then
+    select_menu "multiple versions found:" "${VERSION_LABELS[@]}"
+    ASSET_URL="${VERSION_URLS[$SELECTED]}"
+else
+    ASSET_URL=$(jq -er '[.assets[] | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$"))] | sort_by(.created_at) | last | .browser_download_url // empty' \
+        "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
+fi
 LIBRARY="$TMP_DIR/$(basename "$ASSET_URL")"
 say "downloading $(basename "$ASSET_URL")"
-curl -fsSL "$ASSET_URL" -o "$LIBRARY" || die "couldn't download the latest Flatpak library"
+curl -fsSL "$ASSET_URL" -o "$LIBRARY" || die "couldn't download the Flatpak library for $ASSET_URL"
 [[ -s "$LIBRARY" ]] || die "downloaded Flatpak library is empty"
 if ! ELF_HEADER=$(LC_ALL=C readelf -h "$LIBRARY" 2>/dev/null); then
     die "downloaded file is not a readable ELF library"
