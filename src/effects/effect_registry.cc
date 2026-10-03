@@ -232,6 +232,7 @@ namespace VKIntox
         std::lock_guard<std::mutex> lock(mutex);
         this->rootConfig = config;
         effects.clear();
+        paramGeneration.fetch_add(1, std::memory_order_release);
 
         std::vector<std::string> effectNames = config->getOption<std::vector<std::string>>("effects");
         std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects");
@@ -308,6 +309,7 @@ namespace VKIntox
         }
 
         effects.push_back(std::move(config));
+        paramGeneration.fetch_add(1, std::memory_order_release);
     }
 
     void EffectRegistry::initReshadeEffect(const std::string& name, const std::string& path)
@@ -361,6 +363,7 @@ namespace VKIntox
         }
 
         effects.push_back(std::move(config));
+        paramGeneration.fetch_add(1, std::memory_order_release);
     }
 
     std::vector<const EffectConfig*> EffectRegistry::getEnabledEffects() const
@@ -621,6 +624,8 @@ namespace VKIntox
                     // Remove the stale entry so we re-parse below
                     effects.remove_if(
                         [&](const EffectConfig& e) { return e.name == instanceName; });
+                    // the removed config freed its params; readers must rebuild
+                    paramGeneration.fetch_add(1, std::memory_order_release);
                 }
                 else
                 {
@@ -660,6 +665,8 @@ namespace VKIntox
             
             effects.remove_if(
                 [&](const EffectConfig& e) { return e.name == name; });
+
+            paramGeneration.fetch_add(1, std::memory_order_release);
 
             size_t sizeAfter = effects.size();
             

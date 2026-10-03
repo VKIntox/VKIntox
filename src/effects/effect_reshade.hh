@@ -134,9 +134,10 @@ namespace VKIntox
         bool                     disableComputePipelineOptimization = false;
 
         std::vector<std::shared_ptr<ReshadeUniform>> uniforms;
-        // registry params resolved once at construction; the registry holds them
-        // in a std::list so the pointers stay valid until the effect is rebuilt
+        // registry params resolved at build time; valid only while the registry
+        // generation is unchanged, since a reparse frees the old param vector
         std::unordered_map<std::string, EffectParam*> uiParamCache;
+        uint64_t uiParamCacheGeneration = 0;
 
         void          buildUiParamCache();
         void          createReshadeModule();

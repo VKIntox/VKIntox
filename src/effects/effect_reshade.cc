@@ -1263,8 +1263,8 @@ namespace VKIntox
 
     // Resolving the registry param per frame meant taking the registry mutex and
     // scanning effect then parameter name lists for every uniform of every
-    // enabled effect. The registry never swaps a parameter's pointer after
-    // construction, so resolve once here instead.
+    // enabled effect. the registry bumps its generation when a reparse frees
+    // params, so cache once here and rebuild when that generation moves.
     void ReshadeEffect::buildUiParamCache()
     {
         uiParamCache.clear();
@@ -1275,10 +1275,14 @@ namespace VKIntox
             auto paramOpt = effectRegistry->getParameter(effectName, uniform.name);
             uiParamCache[uniform.name] = paramOpt ? *paramOpt : nullptr;
         }
+        uiParamCacheGeneration = effectRegistry->parameterGeneration();
     }
 
     void ReshadeEffect::updateEffect()
     {
+        if (effectRegistry->parameterGeneration() != uiParamCacheGeneration)
+            buildUiParamCache();
+
         if (stagingBufferMapped)
         {
             for (const auto& uniform : module.uniforms)

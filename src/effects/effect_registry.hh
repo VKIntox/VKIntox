@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <atomic>
 #include <list>
 #include <unordered_map>
 #include <map>
@@ -107,6 +108,10 @@ namespace VKIntox
         void setSelectedEffects(const std::vector<std::string>& effects);
         void clearSelectedEffects();
 
+        // monotonic counter, bumped whenever a structural mutation can free or
+        // replace parameters. cached param pointers must not outlive a bump.
+        uint64_t parameterGeneration() const { return paramGeneration.load(std::memory_order_acquire); }
+
         // Check if effects have been initialized from config (first load complete)
         bool isInitializedFromConfig() const { return initializedFromConfig; }
 
@@ -124,6 +129,7 @@ namespace VKIntox
         // which of two same-ish things this is.
         Config* rootConfig = nullptr;
         mutable std::mutex mutex;
+        std::atomic<uint64_t> paramGeneration{0};
 
         // Initialize built-in effect configs
         void initBuiltInEffect(const std::string& instanceName, const std::string& effectType);
