@@ -812,6 +812,11 @@ namespace VKIntox
                 {
                     if (effects.size() >= maxEffects)
                         break;
+                    // TechniqueSorting lists every technique a preset knows;
+                    // Techniques is the enabled set. expanding sorting imports
+                    // hundreds of disabled instances and buries the UI.
+                    if (hasExplicitEnabledTechniques && !enabledTechniques.count(technique))
+                        continue;
                     const size_t separator = technique.rfind('@');
                     if (separator == std::string::npos || separator + 1 >= technique.size())
                         continue;
@@ -845,14 +850,24 @@ namespace VKIntox
                                  !matchedConfiguredEffects.count(configuredNames->second.front()))
                             effectName = configuredNames->second.front();
                     }
+                    // not a configured instance: create one for the installed
+                    // shader, so importing isn't limited to effects the game
+                    // config already listed. never fall back to the bare
+                    // technique name, which resolves to nothing and ghosts.
                     if (effectName.empty())
                     {
-                        // never fall back to the bare technique name. effect keys are
-                        // instance names (qUINT_mxao, qUINT_mxao.2), so "MXAO"
-                        // resolves to nothing and showed up as a ghost row the UI
-                        // couldn't enable or remove. skipping keeps the list honest.
+                        const std::string stem = std::filesystem::path(filename).stem().string();
+                        const std::string resolved = EffectRegistry::resolveEffectPath(stem, config);
+                        if (!resolved.empty())
+                        {
+                            effectName = stem;
+                            config->setOption(stem, resolved);
+                        }
+                    }
+                    if (effectName.empty())
+                    {
                         Logger::debug("preset technique '" + techniqueName + "' from " + filename
-                                      + " matches no configured effect instance; skipping");
+                                      + " matches no installed effect; skipping");
                         continue;
                     }
 
@@ -860,8 +875,6 @@ namespace VKIntox
                         continue;
                     matchedConfiguredEffects.insert(effectName);
                     effects.push_back(effectName);
-                    if (hasExplicitEnabledTechniques && !enabledTechniques.count(technique))
-                        disabled.push_back(effectName);
                 }
 
                 config->setOption("effects", join(effects));

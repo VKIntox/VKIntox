@@ -227,6 +227,13 @@ namespace VKIntox
         return BuiltInEffects::instance().isBuiltIn(name);
     }
 
+    std::string EffectRegistry::resolveEffectPath(const std::string& name, Config* config)
+    {
+        if (name.empty() || !config)
+            return "";
+        return findEffectPath(name, config);
+    }
+
     void EffectRegistry::initialize(Config* config)
     {
         std::lock_guard<std::mutex> lock(mutex);

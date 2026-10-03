@@ -68,6 +68,11 @@ namespace VKIntox
         // Check if an effect is a built-in effect
         static bool isBuiltInEffect(const std::string& name);
 
+        // Resolve an effect name, stem or filename to an installed .fx path using
+        // the same search directories the registry uses. Static because preset
+        // import resolves effects before initialize() sets the root config.
+        static std::string resolveEffectPath(const std::string& name, Config* config);
+
         // Add an effect if not already present (for dynamically added effects).
         // If the shader file changed on disk since last load, re-parses automatically.
         void ensureEffect(const std::string& name, const std::string& effectPath = "");
