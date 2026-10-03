@@ -338,7 +338,8 @@ namespace VKIntox
                     const AddEffectsEntry& e = entries[i];
                     ImGui::PushID(i);
                     const ImVec2 pos = ImGui::GetCursorScreenPos();
-                    const float width = ImGui::GetContentRegionAvail().x;
+                    // clamp vs a zero avail width: InvisibleButton asserts on a zero axis
+                    const float width = std::max(ImGui::GetContentRegionAvail().x, 1.0f);
                     const ImRect bb(pos, ImVec2(pos.x + width, pos.y + rowH));
                     ImGui::InvisibleButton("##row", ImVec2(width, rowH - 2.0f));
                     const bool hovered = ImGui::IsItemHovered();
