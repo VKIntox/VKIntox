@@ -123,9 +123,10 @@ namespace VKIntox
 
     std::string ConfigSerializer::getDefaultConfigPath()
     {
-        if (const char* home = std::getenv("HOME"))
-            return std::string(home) + "/.config/VKIntox/default_config";
-        return "";
+        const std::string baseDir = getBaseConfigDir();
+        if (baseDir.empty())
+            return "";
+        return baseDir + "/default_config";
     }
 
     bool ConfigSerializer::setDefaultConfig(const std::string& configName)
