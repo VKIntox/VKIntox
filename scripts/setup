@@ -410,10 +410,11 @@ fi
 
 seed_font() {
     local font="$1"
+    local dest="${2:-$font}"
     if [[ -n "$FONT_SRC" && -f "$FONT_SRC/$font" ]]; then
-        cp "$FONT_SRC/$font" "$APP_CONFIG/font/$font"
+        cp "$FONT_SRC/$font" "$APP_CONFIG/font/$dest"
     else
-        curl -fsSL "https://raw.githubusercontent.com/$REPO/$FONT_REF/assets/font/$font" -o "$APP_CONFIG/font/$font" ||
+        curl -fsSL "https://raw.githubusercontent.com/$REPO/$FONT_REF/assets/font/$font" -o "$APP_CONFIG/font/$dest" ||
             die "couldn't fetch $font; re-run this script from inside a VKIntox checkout"
     fi
 }
@@ -435,7 +436,8 @@ if version_ge "$SELECTED_NUMERIC" "0.2.0"; then
     # Keep the historical filename as a regular-weight compatibility fallback.
     cp "$APP_CONFIG/font/GoogleSans-Regular.ttf" "$APP_CONFIG/font/font.ttf"
 else
-    seed_font font.ttf
+    # the single-font overlay reads bolder on the medium weight than regular.
+    seed_font GoogleSans-Medium.ttf font.ttf
     seed_font LICENSE
 fi
 curl -fsSL "$EFFECT_PACKAGES_URL" -o "$TMP_DIR/EffectPackages.ini"
