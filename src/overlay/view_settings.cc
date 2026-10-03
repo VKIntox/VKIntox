@@ -84,8 +84,6 @@ namespace VKIntox
         {
             ImGui::BeginTooltip();
             ImGui::Text("When enabled, keyboard and mouse input is captured by the overlay.");
-            ImGui::TextColored(UI::Error(), "Warning: experimental — may freeze some games.");
-            ImGui::TextColored(UI::Error(), "Also blocks all input system-wide.");
             ImGui::EndTooltip();
         }
         ImGui::M3CardEnd();
