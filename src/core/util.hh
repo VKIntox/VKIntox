@@ -9,6 +9,11 @@ namespace VKIntox
 {
     void addUniqueCString(std::vector<const char*>& stringVector, const char* addString);
 
+    // Opens a file or url with the system handler: xdg-open normally, or
+    // `flatpak-spawn --host xdg-open` inside a flatpak sandbox. never runs a
+    // shell, so a url can't smuggle in extra arguments.
+    bool openInShell(const char* url);
+
     enum class Color
     {
         defaultColor,

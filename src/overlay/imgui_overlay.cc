@@ -5,6 +5,7 @@
 #include "settings_manager.hh"
 #include "reshade_parser.hh"
 #include "logger.hh"
+#include "util.hh"
 #include "mouse_input.hh"
 #include "keyboard_input.hh"
 #include "input_blocker.hh"
@@ -146,6 +147,12 @@ namespace VKIntox
     {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
+        // imconfig disables ImGui's default shell handler, so TextLinkOpenURL
+        // would silently do nothing. route it through our xdg-open helper.
+        ImGui::GetPlatformIO().Platform_OpenInShellFn = [](ImGuiContext*, const char* url) -> bool
+        {
+            return openInShell(url);
+        };
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.ConfigWindowsMoveFromTitleBarOnly = true;
