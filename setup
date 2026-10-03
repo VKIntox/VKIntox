@@ -234,6 +234,9 @@ if [[ "$MODE" != "system" ]]; then
     run_progress "pulling gnome sdk" flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/51
     flatpak info --user runtime/org.gnome.Sdk/x86_64/51 >/dev/null 2>&1 || die "gnome sdk install failed"
 
+    run_progress "pulling freedesktop runtime" flatpak install -y --user flathub runtime/org.freedesktop.Platform/x86_64/26.08
+    flatpak info --user runtime/org.freedesktop.Platform/x86_64/26.08 >/dev/null 2>&1 || die "freedesktop runtime install failed"
+
     run_progress "pulling freedesktop sdk" flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/26.08
     flatpak info --user runtime/org.freedesktop.Sdk/x86_64/26.08 >/dev/null 2>&1 || die "freedesktop sdk install failed"
 
