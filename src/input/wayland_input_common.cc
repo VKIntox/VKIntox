@@ -403,9 +403,16 @@ namespace VKIntox
         if (!display)
             return;
 
-        // Drain any already-queued events first (prepare_read requires empty queue)
-        while (wl_display_prepare_read_queue(display, queue) != 0)
+        // Drain any already-queued events first. If another thread is mid-read
+        // (prepare_read fails with EAGAIN) we must not read or retry in a loop:
+        // that spins until the other thread releases the read lock, which stalls
+        // the present thread whenever the game holds it. Just drain and return;
+        // the next frame tries again.
+        if (wl_display_prepare_read_queue(display, queue) != 0)
+        {
             wl_display_dispatch_queue_pending(display, queue);
+            return;
+        }
 
         // Non-blocking socket read — many games only call
         // wl_display_dispatch_pending() in their render loop, which does
