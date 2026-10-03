@@ -123,12 +123,6 @@ remaining / follow-ups for v0.2.0 (documented, not fixed):
 - QueueSubmit depth-copy state (pendingDepthCopy and the ring fields) is read
   and mutated without globalLock. needs its own mutex, because globalLock can't
   be held there while panicLayer()->flush() runs.
-- settings_manager const& getters alias fields the setters mutate, so another
-  thread can read a token mid-reassignment. return by value, or add a settings
-  mutex once the lock order is audited.
-- Wayland keyboard state (pressedKeys/keyPressEvents and the accumulators) is
-  mutated from the game's dispatcher thread while the overlay thread reads and
-  clears it. needs a keyboard-local mutex.
 
 future ideas (not scheduled):
    before/after screenshot compare
