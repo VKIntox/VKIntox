@@ -87,7 +87,7 @@ TODOS for v0.2.0
 
 1. ~~Overhaul UI to use Flutter/Dart instead of ImGui with Vulkan frame buffer casts & proper input passthrough~~ — dropped: modifying the vendored ImGui source directly got us close enough to Material 3 that a rewrite isn't worth it. Remaining ideas from this item kept below as their own tasks.
    Render icon in titlebar next to game icon, fetch that dynamically online? DONE, but didn't render game icon, that would usually require baking the icon into the binary , and dynamically fetching is too hard
-   Also render icon in new tab: About, move acknowledgements there too WIP
+   Also render icon in new tab: About, move acknowledgements there too DONE
 2. Ensure stability, yet again
 3. Try to improve performance?
 4. added x11 support
