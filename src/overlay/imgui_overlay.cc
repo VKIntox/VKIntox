@@ -620,6 +620,13 @@ namespace VKIntox
 
     void ImGuiOverlay::updateState(OverlayState newState)
     {
+        // only the fields the add-effects view reads; a change here invalidates
+        // its cached entry list
+        if (newState.currentConfigEffects != state.currentConfigEffects
+            || newState.defaultConfigEffects != state.defaultConfigEffects
+            || newState.effectPaths != state.effectPaths)
+            ++overlayStateVersion;
+
         state = std::move(newState);
 
         if (!effectRegistry)
@@ -735,6 +742,7 @@ namespace VKIntox
         collectSaveData(effects, disabledEffects, params, effectPaths, allDefs, disabledEffectParams);
 
         ConfigSerializer::saveConfig(saveConfigName, effects, disabledEffects, params, effectPaths, allDefs);
+        configListRefreshPending = true;
         profileDirty = false;
     }
 

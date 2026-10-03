@@ -9,6 +9,7 @@
 #include <mutex>
 #include <map>
 #include <set>
+#include <cstdint>
 
 #include "vulkan_include.hh"
 #include "logical_device.hh"
@@ -233,8 +234,27 @@ namespace VKIntox
         int insertPosition = -1;  // Position to insert effects (-1 = append to end)
         char addEffectsSearch[64] = "";  // Search filter for add effects view
         bool addEffectsFocusSearch = false;  // Focus the search box on the next frame
+
+        // Bumped when updateState sees different effect sources, so the
+        // add-effects view can cache its entry list instead of rebuilding it
+        uint64_t overlayStateVersion = 0;
+
+        // add-effects view: rebuilt only when state, search or filter changes
+        struct AddEffectsEntry
+        {
+            std::string type;
+            std::string path;
+            int         group = 0;
+            int         score = 0;
+        };
+        std::vector<AddEffectsEntry> addEffectsEntries;
+        std::string                  addEffectsCacheSearch;
+        int                          addEffectsCacheFilter = -1;
+        uint64_t                     addEffectsCacheVersion = UINT64_MAX;
         bool inConfigManageMode = false;
         std::vector<std::string> configList;
+        std::string configListDefault;          // cached default_config, refreshed with configList
+        bool configListRefreshPending = true;   // re-scan the configs dir on next render
 
         // Shader Manager state
         std::vector<std::string> shaderMgrParentDirs;
@@ -276,6 +296,9 @@ namespace VKIntox
         int debugWindowTab = 0;  // 0=Registry, 1=Log
         bool debugLogFilters[5] = {false, false, true, true, true};  // Trace, Debug, Info, Warn, Error
         char debugLogSearch[128] = "";  // Search filter for log tab
+        std::vector<LogEntry> debugLogSnapshot;  // cached history for the log tab
+        std::vector<std::string> debugLogLower;  // lowercased snapshot messages for search
+        uint64_t debugLogVersion = 0;            // Logger::historyVersion of the snapshot
         bool applyRequested = false;
         bool toggleEffectsRequested = false;
         bool paramsDirty = false;  // True when params changed, waiting for debounce

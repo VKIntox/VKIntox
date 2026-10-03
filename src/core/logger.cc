@@ -99,6 +99,7 @@ namespace VKIntox
             history.push_back({level, message});
             if (history.size() > MAX_HISTORY_SIZE)
                 history.pop_front();
+            ++historyVersionCounter;
         }
 
         if (level >= minLevel)
@@ -133,10 +134,17 @@ namespace VKIntox
         return std::vector<LogEntry>(s_instance.history.begin(), s_instance.history.end());
     }
 
+    uint64_t Logger::historyVersion()
+    {
+        std::lock_guard<std::mutex> lock(s_instance.mutex);
+        return s_instance.historyVersionCounter;
+    }
+
     void Logger::clearHistory()
     {
         std::lock_guard<std::mutex> lock(s_instance.mutex);
         s_instance.history.clear();
+        ++s_instance.historyVersionCounter;
     }
 
     void Logger::setHistoryEnabled(bool enabled)
@@ -145,6 +153,7 @@ namespace VKIntox
         s_instance.historyEnabled = enabled;
         if (!enabled)
             s_instance.history.clear();  // Free memory when disabled
+        ++s_instance.historyVersionCounter;
     }
 
     bool Logger::isHistoryEnabled()

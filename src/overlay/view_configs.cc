@@ -14,8 +14,12 @@ namespace VKIntox
         ImGui::Separator();
 
         // Refresh config list and get current default
-        configList = ConfigSerializer::listConfigs();
-        std::string currentDefault = ConfigSerializer::getDefaultConfig();
+        if (configListRefreshPending)
+        {
+            configList = ConfigSerializer::listConfigs();
+            configListDefault = ConfigSerializer::getDefaultConfig();
+            configListRefreshPending = false;
+        }
 
         // Calculate button group width once
         float setDefaultWidth = ImGui::CalcTextSize("Set Default").x + ImGui::GetStyle().FramePadding.x * 2;
@@ -41,12 +45,13 @@ namespace VKIntox
             }
             ImGui::SameLine(buttonGroupX);
 
-            bool isDefault = (cfg == currentDefault);
+            bool isDefault = (cfg == configListDefault);
             if (isDefault)
                 ImGui::BeginDisabled();
             if (ImGui::SmallButton("Set Default"))
             {
-                ConfigSerializer::setDefaultConfig(cfg);
+                if (ConfigSerializer::setDefaultConfig(cfg))
+                    configListDefault = cfg;
             }
             if (isDefault)
                 ImGui::EndDisabled();
@@ -54,6 +59,7 @@ namespace VKIntox
             if (ImGui::SmallButton("Delete"))
             {
                 ConfigSerializer::deleteConfig(cfg);
+                configListRefreshPending = true;
             }
             ImGui::PopID();
         }

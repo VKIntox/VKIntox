@@ -217,7 +217,28 @@ namespace VKIntox
                 // Log output in scrolling region
                 ImGui::BeginChild("LogScrollRegion", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
-                auto history = Logger::getHistory();
+                // Only re-copy the whole history when the logger actually
+                // mutated it; the log tab otherwise re-read it every frame.
+                const uint64_t logVersion = Logger::historyVersion();
+                if (logVersion != debugLogVersion)
+                {
+                    debugLogSnapshot = Logger::getHistory();
+                    debugLogLower.resize(debugLogSnapshot.size());
+                    for (size_t i = 0; i < debugLogSnapshot.size(); i++)
+                    {
+                        debugLogLower[i] = debugLogSnapshot[i].message;
+                        for (auto& c : debugLogLower[i])
+                            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    }
+                    debugLogVersion = logVersion;
+                }
+                std::string lowerNeedle;
+                if (hasSearch)
+                {
+                    lowerNeedle = debugLogSearch;
+                    for (auto& c : lowerNeedle)
+                        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                }
 
                 // Log levels borrow the same token mapping the toasts use, so a
                 // warning looks identical everywhere. Trace/debug fall back to
@@ -234,24 +255,15 @@ namespace VKIntox
                 };
                 (void)levelOrder;
 
-                auto containsIgnoreCase = [](const std::string& haystack, const char* needle) {
-                    if (!needle || needle[0] == '\0')
-                        return true;
-                    std::string lowerHaystack = haystack;
-                    std::string lowerNeedle = needle;
-                    for (auto& c : lowerHaystack) c = std::tolower(c);
-                    for (auto& c : lowerNeedle) c = std::tolower(c);
-                    return lowerHaystack.find(lowerNeedle) != std::string::npos;
-                };
-
-                for (const auto& entry : history)
+                for (size_t i = 0; i < debugLogSnapshot.size(); i++)
                 {
+                    const LogEntry& entry = debugLogSnapshot[i];
                     uint32_t levelIdx = static_cast<uint32_t>(entry.level);
                     if (levelIdx >= 5)
                         continue;
                     if (!debugLogFilters[levelIdx])
                         continue;
-                    if (hasSearch && !containsIgnoreCase(entry.message, debugLogSearch))
+                    if (hasSearch && debugLogLower[i].find(lowerNeedle) == std::string::npos)
                         continue;
 
                     ImGui::PushStyleColor(ImGuiCol_Text, levelColor(levelOrder[levelIdx]));

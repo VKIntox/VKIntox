@@ -238,7 +238,10 @@ namespace VKIntox
             ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::Button("..."))
+            {
                 inConfigManageMode = true;
+                configListRefreshPending = true;
+            }
         }
         ImGui::Separator();
 

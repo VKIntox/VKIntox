@@ -170,49 +170,60 @@ namespace VKIntox
         };
 
         // ---- Build the working set ------------------------------------------
-        struct Entry { std::string type; std::string path; int group; int score; };
-        std::vector<Entry> entries;
-
-        static const char* const builtinEffects[] = {"cas", "dls", "fxaa", "smaa", "deband", "lut"};
-        std::vector<std::string> sortedCurrent = state.currentConfigEffects;
-        std::vector<std::string> sortedDefault = state.defaultConfigEffects;
-        std::sort(sortedCurrent.begin(), sortedCurrent.end());
-        std::sort(sortedDefault.begin(), sortedDefault.end());
-
-        auto addEntry = [&](const std::string& type, const std::string& path, int group) {
-            const int score = matchScore(type, addEffectsSearch);
-            if (score >= 0)
-                entries.push_back({type, path, group, score});
-        };
-        for (const char* et : builtinEffects)
-            addEntry(et, "", 0);
-        for (const auto& et : sortedCurrent)
-        {
-            auto it = state.effectPaths.find(et);
-            addEntry(et, (it != state.effectPaths.end()) ? it->second : "", 1);
-        }
-        for (const auto& et : sortedDefault)
-        {
-            if (std::find(sortedCurrent.begin(), sortedCurrent.end(), et) != sortedCurrent.end())
-                continue;
-            auto it = state.effectPaths.find(et);
-            addEntry(et, (it != state.effectPaths.end()) ? it->second : "", 2);
-        }
-
-        // Filter chips.
+        // Rebuilding and re-sorting 300+ shaders every frame is wasted when the
+        // inputs rarely move, so cache the result until state, search or filter
+        // actually changes.
         static int filter = 0;   // 0 all, 1 built-in, 2 this config, 3 reshade
-        if (filter != 0)
-            entries.erase(std::remove_if(entries.begin(), entries.end(),
-                                         [&](const Entry& e) { return e.group != filter - 1; }),
-                          entries.end());
+        if (overlayStateVersion != addEffectsCacheVersion
+            || std::string(addEffectsSearch) != addEffectsCacheSearch
+            || filter != addEffectsCacheFilter)
+        {
+            addEffectsEntries.clear();
 
-        std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
-            if (a.score != b.score)
-                return a.score < b.score;
-            if (a.group != b.group)
-                return a.group < b.group;
-            return a.type < b.type;
-        });
+            static const char* const builtinEffects[] = {"cas", "dls", "fxaa", "smaa", "deband", "lut"};
+            std::vector<std::string> sortedCurrent = state.currentConfigEffects;
+            std::vector<std::string> sortedDefault = state.defaultConfigEffects;
+            std::sort(sortedCurrent.begin(), sortedCurrent.end());
+            std::sort(sortedDefault.begin(), sortedDefault.end());
+
+            auto addEntry = [&](const std::string& type, const std::string& path, int group) {
+                const int score = matchScore(type, addEffectsSearch);
+                if (score >= 0)
+                    addEffectsEntries.push_back({type, path, group, score});
+            };
+            for (const char* et : builtinEffects)
+                addEntry(et, "", 0);
+            for (const auto& et : sortedCurrent)
+            {
+                auto it = state.effectPaths.find(et);
+                addEntry(et, (it != state.effectPaths.end()) ? it->second : "", 1);
+            }
+            for (const auto& et : sortedDefault)
+            {
+                if (std::find(sortedCurrent.begin(), sortedCurrent.end(), et) != sortedCurrent.end())
+                    continue;
+                auto it = state.effectPaths.find(et);
+                addEntry(et, (it != state.effectPaths.end()) ? it->second : "", 2);
+            }
+
+            if (filter != 0)
+                addEffectsEntries.erase(std::remove_if(addEffectsEntries.begin(), addEffectsEntries.end(),
+                                                       [&](const AddEffectsEntry& e) { return e.group != filter - 1; }),
+                                        addEffectsEntries.end());
+
+            std::stable_sort(addEffectsEntries.begin(), addEffectsEntries.end(), [](const AddEffectsEntry& a, const AddEffectsEntry& b) {
+                if (a.score != b.score)
+                    return a.score < b.score;
+                if (a.group != b.group)
+                    return a.group < b.group;
+                return a.type < b.type;
+            });
+
+            addEffectsCacheVersion = overlayStateVersion;
+            addEffectsCacheSearch = addEffectsSearch;
+            addEffectsCacheFilter = filter;
+        }
+        const std::vector<AddEffectsEntry>& entries = addEffectsEntries;
 
         const int entryCount = static_cast<int>(entries.size());
         const bool hasSearch = addEffectsSearch[0] != '\0';
@@ -324,7 +335,7 @@ namespace VKIntox
             {
                 for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
                 {
-                    const Entry& e = entries[i];
+                    const AddEffectsEntry& e = entries[i];
                     ImGui::PushID(i);
                     const ImVec2 pos = ImGui::GetCursorScreenPos();
                     const float width = ImGui::GetContentRegionAvail().x;

@@ -10,6 +10,7 @@
 #include <functional>
 #include <vector>
 #include <deque>
+#include <cstdint>
 
 namespace VKIntox
 {
@@ -81,6 +82,10 @@ namespace VKIntox
         // Get log history (thread-safe copy)
         static std::vector<LogEntry> getHistory();
 
+        // Monotonic counter bumped on every history mutation. Callers that
+        // cache a history snapshot compare this instead of copying each frame.
+        static uint64_t historyVersion();
+
         // Clear log history
         static void clearHistory();
 
@@ -105,6 +110,7 @@ namespace VKIntox
 
         std::deque<LogEntry> history;
         bool historyEnabled = false;  // Disabled by default to save memory
+        uint64_t historyVersionCounter = 0;
 
         void emitMsg(LogLevel level, const std::string& message);
 
