@@ -959,7 +959,13 @@ namespace VKIntox
                                                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                                                        imageMemory);
             // createImages returns exactly 1 image for depth resolve.
-            logicalSwapchain->depthResolvePerImage[i].image = images[0];
+            if (images.empty() || imageMemory == VK_NULL_HANDLE)
+            {
+                Logger::err("initializeDepthResolveLayout: failed to create depth resolve image " + std::to_string(i));
+                destroyDepthResolveResources(logicalSwapchain);
+                return;
+            }
+            logicalSwapchain->depthResolvePerImage[i].image  = images[0];
             logicalSwapchain->depthResolvePerImage[i].memory = imageMemory;
         }
 
