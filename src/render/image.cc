@@ -55,7 +55,13 @@ namespace VKIntox
         for (uint32_t i = 0; i < count; i++)
         {
             result = logicalDevice->vkd.CreateImage(logicalDevice->device, &imageCreateInfo, nullptr, &(images[i]));
-            ASSERT_VULKAN_VAL(result, {});
+            if (result != VK_SUCCESS)
+            {
+                Logger::err("createImages: vkCreateImage failed: " + std::to_string(result));
+                for (uint32_t created = 0; created < i; created++)
+                    logicalDevice->vkd.DestroyImage(logicalDevice->device, images[created], nullptr);
+                return {};
+            }
         }
         // Allocate a bunch of memory for all images at one
         VkMemoryRequirements memoryRequirements;
@@ -73,12 +79,27 @@ namespace VKIntox
         memoryAllocateInfo.memoryTypeIndex = findMemoryTypeIndex(logicalDevice, memoryRequirements.memoryTypeBits, properties);
 
         result = logicalDevice->vkd.AllocateMemory(logicalDevice->device, &memoryAllocateInfo, nullptr, &imageMemory);
-        ASSERT_VULKAN_VAL(result, {});
+        if (result != VK_SUCCESS)
+        {
+            Logger::err("createImages: vkAllocateMemory failed: " + std::to_string(result));
+            for (auto image : images)
+                logicalDevice->vkd.DestroyImage(logicalDevice->device, image, nullptr);
+            imageMemory = VK_NULL_HANDLE;
+            return {};
+        }
 
         for (uint32_t i = 0; i < count; i++)
         {
             result = logicalDevice->vkd.BindImageMemory(logicalDevice->device, images[i], imageMemory, memoryRequirements.size * i);
-            ASSERT_VULKAN_VAL(result, {});
+            if (result != VK_SUCCESS)
+            {
+                Logger::err("createImages: vkBindImageMemory failed: " + std::to_string(result));
+                for (auto image : images)
+                    logicalDevice->vkd.DestroyImage(logicalDevice->device, image, nullptr);
+                logicalDevice->vkd.FreeMemory(logicalDevice->device, imageMemory, nullptr);
+                imageMemory = VK_NULL_HANDLE;
+                return {};
+            }
         }
         return images;
     }
@@ -87,8 +108,8 @@ namespace VKIntox
     uploadToImage(LogicalDevice* logicalDevice, VkImage image, VkExtent3D extent, uint32_t size, const unsigned char* writeData, uint32_t mipLevels)
     {
 
-        VkBuffer       stagingBuffer;
-        VkDeviceMemory stagingMemory;
+        VkBuffer       stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
 
         createBuffer(logicalDevice,
                      size,
@@ -96,9 +117,21 @@ namespace VKIntox
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                      stagingBuffer,
                      stagingMemory);
-        void*    data;
+        if (stagingBuffer == VK_NULL_HANDLE || stagingMemory == VK_NULL_HANDLE)
+        {
+            Logger::err("uploadToImage: staging buffer creation failed");
+            return;
+        }
+
+        void*    data   = nullptr;
         VkResult result = logicalDevice->vkd.MapMemory(logicalDevice->device, stagingMemory, 0, size, 0, &data);
-        ASSERT_VULKAN(result);
+        if (result != VK_SUCCESS)
+        {
+            Logger::err("uploadToImage: vkMapMemory failed: " + std::to_string(result));
+            logicalDevice->vkd.DestroyBuffer(logicalDevice->device, stagingBuffer, nullptr);
+            logicalDevice->vkd.FreeMemory(logicalDevice->device, stagingMemory, nullptr);
+            return;
+        }
         std::memcpy(data, writeData, size);
         logicalDevice->vkd.UnmapMemory(logicalDevice->device, stagingMemory);
 
@@ -109,8 +142,15 @@ namespace VKIntox
         allocInfo.commandPool        = logicalDevice->commandPool;
         allocInfo.commandBufferCount = 1;
 
-        VkCommandBuffer commandBuffer;
-        logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &allocInfo, &commandBuffer);
+        VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+        result = logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &allocInfo, &commandBuffer);
+        if (result != VK_SUCCESS || commandBuffer == VK_NULL_HANDLE)
+        {
+            Logger::err("uploadToImage: vkAllocateCommandBuffers failed: " + std::to_string(result));
+            logicalDevice->vkd.DestroyBuffer(logicalDevice->device, stagingBuffer, nullptr);
+            logicalDevice->vkd.FreeMemory(logicalDevice->device, stagingMemory, nullptr);
+            return;
+        }
         // initialize dispatch table for commandBuffer since it is a dispatchable object
         initializeDispatchTable(commandBuffer, logicalDevice->device);
 
