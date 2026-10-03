@@ -79,11 +79,21 @@ run_progress() {
 # character at a time, so the shell that invoked us is unusable until reset.
 TTY_SAVED=""
 save_tty() {
-    [[ -t 0 ]] || return 0
-    TTY_SAVED=$(stty -g 2>/dev/null || true)
+    # a piped script (curl | bash) has no tty on stdin, but the user is still
+    # sitting at one, so capture the controlling terminal instead
+    if [[ -t 0 ]]; then
+        TTY_SAVED=$(stty -g 2>/dev/null || true)
+    elif [[ -r /dev/tty ]]; then
+        TTY_SAVED=$(stty -g </dev/tty 2>/dev/null || true)
+    fi
 }
 restore_tty() {
-    [[ -n "$TTY_SAVED" ]] && stty "$TTY_SAVED" 2>/dev/null || true
+    [[ -n "$TTY_SAVED" ]] || return 0
+    if [[ -t 0 ]]; then
+        stty "$TTY_SAVED" 2>/dev/null || true
+    elif [[ -r /dev/tty ]]; then
+        stty "$TTY_SAVED" </dev/tty 2>/dev/null || true
+    fi
 }
 
 usage() {
@@ -148,9 +158,16 @@ select_menu() {
     SELECTED=0
     (( count > 0 )) || return 0
 
+    # stdin is the script itself when piped (curl | bash), so read from the
+    # controlling terminal instead of silently taking the default
+    local read_fd=0
     if [[ ! -t 0 ]]; then
-        printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
-        return 0
+        if exec 3</dev/tty 2>/dev/null && [[ -t 3 ]]; then
+            read_fd=3
+        else
+            printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
+            return 0
+        fi
     fi
     # without stty the terminal stays canonical, arrow keys would sit in the line
     # buffer until enter, and the prompt would look frozen. say so and take the
@@ -158,6 +175,7 @@ select_menu() {
     if ! command -v stty >/dev/null 2>&1; then
         warn "stty is unavailable, so arrow keys cannot be read; taking the default"
         printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
+        if (( read_fd == 3 )); then exec 3<&-; fi
         return 0
     fi
 
@@ -165,7 +183,7 @@ select_menu() {
     # read would never see an arrow key. ISIG stays on so ctrl-c still aborts,
     # and because that means ctrl-c arrives as a signal rather than a byte, the
     # restore lives in the EXIT trap instead of at the end of this function
-    stty -icanon min 1 time 0 -echo 2>/dev/null || true
+    stty -icanon min 1 time 0 -echo <&"$read_fd" 2>/dev/null || true
 
     # leading blank line, so a prompt sits like section() does instead of
     # crowding whatever the previous step printed
@@ -189,12 +207,12 @@ select_menu() {
         drawn=$(( count + 1 ))
 
         key=""
-        IFS= read -rsn1 key || true
+        IFS= read -rsn1 -u "$read_fd" key || true
         [[ -n "$key" ]] || break
         if [[ "$key" == $'\e' || "$key" == $'\033' ]]; then
             # arrows arrive as ESC [ A/B, or ESC O A/B from some terminals
             rest=""
-            IFS= read -rsn2 rest || true
+            IFS= read -rsn2 -u "$read_fd" rest || true
             case "$rest" in
                 '[A' | 'OA') cursor=$(( (cursor - 1 + count) % count )) ;;
                 '[B' | 'OB') cursor=$(( (cursor + 1) % count )) ;;
@@ -211,6 +229,7 @@ select_menu() {
     done
 
     restore_tty
+    if (( read_fd == 3 )); then exec 3<&-; fi
 
     # wipe the menu and leave one confirmation line, so the transcript reads as
     # a choice rather than a scrolling list that was redrawn a dozen times
