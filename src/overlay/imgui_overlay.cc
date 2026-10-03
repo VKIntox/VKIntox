@@ -1470,8 +1470,8 @@ namespace VKIntox
         // 2dp inner padding. one control, not five floating tabs. the selected
         // segment swaps to secondary-container and gains weight.
         static int activeView = 0;
-        static const char* const kViewLabels[] = {"Effects", "Shaders", "Settings", "Advanced", "Diagnostics"};
-        static const ImWchar kViewIcons[] = {Icon::AutoAwesome, Icon::Palette, Icon::Settings, Icon::Tune, Icon::MonitorHeart};
+        static const char* const kViewLabels[] = {"Effects", "Shaders", "Settings", "Advanced", "Diagnostics", "About"};
+        static const ImWchar kViewIcons[] = {Icon::AutoAwesome, Icon::Palette, Icon::Settings, Icon::Tune, Icon::MonitorHeart, Icon::Info};
         constexpr int kViewCount = (int)(sizeof(kViewLabels) / sizeof(kViewLabels[0]));
         ImGui::M3ConnectedButtonGroup("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons);
 
@@ -1496,6 +1496,9 @@ namespace VKIntox
             break;
         case 4:
             renderDiagnosticsView();
+            break;
+        case 5:
+            renderAboutView();
             break;
         default:
             break;

@@ -524,10 +524,6 @@ namespace VKIntox
         const float fps = dispFps;
         const float fps1Low = dispFps1Low;
 
-        const float brandSize = std::min(512.0f, ImGui::GetContentRegionAvail().x * 0.288f);
-        renderCenteredBrandIcon(brandSize);
-        ImGui::Spacing();
-
         // --- Performance ---
         ImGui::M3CardBegin("diag_perf", "Performance", Icon::SpeedUtf8);
         {
@@ -629,42 +625,6 @@ namespace VKIntox
             ImGui::TextDisabled("Could not detect the game executable.");
         }
         ImGui::M3CardEnd();
-
-        // --- Credits ---
-        ImGui::Spacing();
-        ImGui::M3CardBegin("diag_credits", "Credits", Icon::InfoUtf8);
-        auto credit = [](const char* what, const char* handle, const char* url) {
-            ImGui::TextDisabled("%s", what);
-            ImGui::SameLine();
-            ImGui::TextLinkOpenURL(handle, url);
-        };
-        credit("VKIntox maintained by", "@buwryme", "https://github.com/buwryme");
-        credit("vkShade by", "@slobodaapl", "https://github.com/slobodaapl");
-        credit("vkBasalt by", "@DadSchoorse", "https://github.com/DadSchoorse/vkBasalt");
-        credit("Overlay fork by", "@Boux", "https://github.com/Boux/vkBasalt_overlay");
-        credit("Wayland overlay by", "@Daaboulex", "https://github.com/Daaboulex/vkBasalt_overlay_wayland");
-        credit("ReShade FX support by", "@crosire", "https://github.com/crosire/reshade");
-        credit("Dear ImGui by", "@ocornut", "https://github.com/ocornut/imgui");
-        ImGui::M3CardEnd();
-
-        // --- Build footer ---
-        ImGui::Spacing();
-        static const std::string runtimeVersion = [] {
-            std::ifstream versionFile(ConfigSerializer::getBaseConfigDir() + "/version");
-            std::string version;
-            if (versionFile.is_open() && std::getline(versionFile, version) && !version.empty())
-            {
-                if (!version.empty() && version.back() == '\r')
-                    version.pop_back();
-                if (!version.empty())
-                    return version;
-            }
-            return std::string("unknown");
-        }();
-        ImGui::TextDisabled("VKIntox version %s", runtimeVersion.c_str());
-        ImGui::TextDisabled("Report issues:");
-        ImGui::SameLine();
-        ImGui::TextLinkOpenURL("github.com/buwryme/VKIntox/issues", "https://github.com/buwryme/VKIntox/issues");
 
         ImGui::EndChild();
     }

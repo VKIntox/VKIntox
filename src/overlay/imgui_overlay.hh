@@ -197,6 +197,7 @@ namespace VKIntox
         void processShaderTest();        // Process one shader per frame (runs every frame)
         void renderMainView(const KeyboardState& keyboard);
         void renderDiagnosticsView();
+        void renderAboutView();
         void renderDebugWindow();  // Debug window with effect registry and log data
         void renderAdvancedView();  // Depth buffer switching (Advanced tab)
         void gatherDepthInfo();     // Snapshot LogicalDevice depth state under globalLock
