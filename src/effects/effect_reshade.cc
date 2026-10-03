@@ -190,7 +190,9 @@ namespace VKIntox
                 return;
 
             lastValues[key] = value;
-            Logger::debug("reshade ui uniform write: effect=" + effectName + " uniform=" + uniformName + " value=" + value);
+            VKINTOX_LOG_DEBUG([&](std::string& s) {
+                s = "reshade ui uniform write: effect=" + effectName + " uniform=" + uniformName + " value=" + value;
+            });
         }
 
         void writeDefaultUniformValue(void* mappedBuffer, const reshadefx::uniform_info& uniform)
@@ -1344,13 +1346,15 @@ namespace VKIntox
                         ? VK_IMAGE_LAYOUT_GENERAL
                         : (depthImageView ? depthImageLayout : VK_IMAGE_LAYOUT_GENERAL);
 
-                    Logger::debug("useDepthImage: effect=" + effectName
-                                  + " imageIndex=" + std::to_string(imageIndex)
-                                  + " binding=" + std::to_string(i)
-                                  + " texture=" + name
-                                  + " hasDepth=" + std::string(depthImageView ? "true" : "false")
-                                  + " imageView=" + convertToString(imageInfo.imageView)
-                                  + " imageLayout=" + convertToString(imageInfo.imageLayout));
+                    VKINTOX_LOG_DEBUG([&](std::string& s) {
+                        s = "useDepthImage: effect=" + effectName
+                            + " imageIndex=" + std::to_string(imageIndex)
+                            + " binding=" + std::to_string(i)
+                            + " texture=" + name
+                            + " hasDepth=" + std::string(depthImageView ? "true" : "false")
+                            + " imageView=" + convertToString(imageInfo.imageView)
+                            + " imageLayout=" + convertToString(imageInfo.imageLayout);
+                    });
 
                     VkWriteDescriptorSet writeDescriptorSet = {};
 

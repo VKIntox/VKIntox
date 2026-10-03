@@ -472,10 +472,12 @@ namespace VKIntox
 
         logicalSwapchain->depthResolvePerImage[imageIndex].initialized = true;
 
-        Logger::debug("depth MSAA resolve via subpass: image=" + convertToString(depthState.image)
-                      + " samples=" + convertToString(depthState.samples)
-                      + " mode=" + std::to_string(logicalSwapchain->depthResolveMode)
-                      + " sourceWasGeneral=" + std::string(sourceInGeneral ? "true" : "false"));
+        VKINTOX_LOG_DEBUG([&](std::string& s) {
+            s = "depth MSAA resolve via subpass: image=" + convertToString(depthState.image)
+                + " samples=" + convertToString(depthState.samples)
+                + " mode=" + std::to_string(logicalSwapchain->depthResolveMode)
+                + " sourceWasGeneral=" + std::string(sourceInGeneral ? "true" : "false");
+        });
     }
 
     // MSAA depth resolve FALLBACK via vkCmdResolveImage.
@@ -600,9 +602,11 @@ namespace VKIntox
                                                    0, 0, nullptr, 0, nullptr, 1, &srcBarrier);
         }
 
-        Logger::debug("depth MSAA resolve via vkCmdResolveImage: image=" + convertToString(depthState.image)
-                      + " samples=" + convertToString(depthState.samples)
-                      + " sourceWasGeneral=" + std::string(sourceInGeneral ? "true" : "false"));
+        VKINTOX_LOG_DEBUG([&](std::string& s) {
+            s = "depth MSAA resolve via vkCmdResolveImage: image=" + convertToString(depthState.image)
+                + " samples=" + convertToString(depthState.samples)
+                + " sourceWasGeneral=" + std::string(sourceInGeneral ? "true" : "false");
+        });
     }
 
     void recordDepthResolveSnapshot(LogicalDevice*  logicalDevice,
@@ -671,20 +675,24 @@ namespace VKIntox
         auto logMetadataIt = logicalDevice->depthImageMetadata.find(depthState.image);
         if (logMetadataIt != logicalDevice->depthImageMetadata.end())
         {
-            Logger::debug("depth snapshot source state: commandBuffer=" + convertToString(commandBuffer)
-                          + " image=" + convertToString(depthState.image)
-                          + " observedLayout=" + convertToString(depthState.observedLayout)
-                          + " usage=" + convertToString(logMetadataIt->second.usage)
-                          + " samples=" + convertToString(logMetadataIt->second.samples)
-                          + " tiling=" + convertToString(logMetadataIt->second.tiling)
-                          + " transient=" + std::string((logMetadataIt->second.usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT) != 0 ? "true" : "false"));
+            VKINTOX_LOG_DEBUG([&](std::string& s) {
+                s = "depth snapshot source state: commandBuffer=" + convertToString(commandBuffer)
+                    + " image=" + convertToString(depthState.image)
+                    + " observedLayout=" + convertToString(depthState.observedLayout)
+                    + " usage=" + convertToString(logMetadataIt->second.usage)
+                    + " samples=" + convertToString(logMetadataIt->second.samples)
+                    + " tiling=" + convertToString(logMetadataIt->second.tiling)
+                    + " transient=" + std::string((logMetadataIt->second.usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT) != 0 ? "true" : "false");
+            });
         }
         else
         {
-            Logger::debug("depth snapshot source state: commandBuffer=" + convertToString(commandBuffer)
-                          + " image=" + convertToString(depthState.image)
-                          + " observedLayout=" + convertToString(depthState.observedLayout)
-                          + " metadata=missing");
+            VKINTOX_LOG_DEBUG([&](std::string& s) {
+                s = "depth snapshot source state: commandBuffer=" + convertToString(commandBuffer)
+                    + " image=" + convertToString(depthState.image)
+                    + " observedLayout=" + convertToString(depthState.observedLayout)
+                    + " metadata=missing";
+            });
         }
 
         if (logicalSwapchain->depthResolveUsesShader)
