@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <vector>
 
 namespace VKIntox
@@ -103,6 +104,7 @@ namespace VKIntox
         // driver objects that the layer silently forgot about.
         size_t pending() const
         {
+            std::lock_guard<std::mutex> lock(pendingMutex);
             return pendingReleases.size();
         }
 
@@ -114,6 +116,9 @@ namespace VKIntox
     private:
         DeferredDestroyQueue() = default;
 
+        // push runs on the present thread while flush also runs from the submit
+        // thread and swapchain teardown, so the container needs its own lock
+        mutable std::mutex           pendingMutex;
         std::vector<DeferredRelease> pendingReleases;
         uint64_t                     nextSequence = 0;
     };
