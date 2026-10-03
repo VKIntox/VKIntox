@@ -32,7 +32,13 @@ namespace VKIntox
             framebufferCreateInfo.layers          = 1;
 
             VkResult result = logicalDevice->vkd.CreateFramebuffer(logicalDevice->device, &framebufferCreateInfo, nullptr, &(framebuffers[i]));
-            ASSERT_VULKAN_VAL(result, {});
+            if (result != VK_SUCCESS)
+            {
+                Logger::err("createFramebuffers: vkCreateFramebuffer failed: " + std::to_string(result));
+                for (uint32_t created = 0; created < i; created++)
+                    logicalDevice->vkd.DestroyFramebuffer(logicalDevice->device, framebuffers[created], nullptr);
+                return {};
+            }
             perFrameImageViews.clear();
         }
         return framebuffers;

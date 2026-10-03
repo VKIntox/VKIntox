@@ -34,7 +34,13 @@ namespace VKIntox
         {
             imageViewCreateInfo.image = images[i];
             VkResult result           = logicalDevice->vkd.CreateImageView(logicalDevice->device, &imageViewCreateInfo, nullptr, &(imageViews[i]));
-            ASSERT_VULKAN_VAL(result, {})
+            if (result != VK_SUCCESS)
+            {
+                Logger::err("createImageViews: vkCreateImageView failed: " + std::to_string(result));
+                for (uint32_t created = 0; created < i; created++)
+                    logicalDevice->vkd.DestroyImageView(logicalDevice->device, imageViews[created], nullptr);
+                return {};
+            }
         }
 
         return imageViews;

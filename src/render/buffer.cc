@@ -18,7 +18,11 @@ namespace VKIntox
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         VkResult result = logicalDevice->vkd.CreateBuffer(logicalDevice->device, &bufferInfo, nullptr, &buffer);
-        ASSERT_VULKAN(result);
+        if (result != VK_SUCCESS)
+        {
+            Logger::err("createBuffer: vkCreateBuffer failed: " + std::to_string(result));
+            return;
+        }
 
         VkMemoryRequirements memRequirements;
         logicalDevice->vkd.GetBufferMemoryRequirements(logicalDevice->device, buffer, &memRequirements);
@@ -30,10 +34,23 @@ namespace VKIntox
         allocInfo.memoryTypeIndex = findMemoryTypeIndex(logicalDevice, memRequirements.memoryTypeBits, properties);
 
         result = logicalDevice->vkd.AllocateMemory(logicalDevice->device, &allocInfo, nullptr, &bufferMemory);
-        ASSERT_VULKAN(result);
+        if (result != VK_SUCCESS)
+        {
+            Logger::err("createBuffer: vkAllocateMemory failed: " + std::to_string(result));
+            logicalDevice->vkd.DestroyBuffer(logicalDevice->device, buffer, nullptr);
+            buffer = VK_NULL_HANDLE;
+            return;
+        }
 
         result = logicalDevice->vkd.BindBufferMemory(logicalDevice->device, buffer, bufferMemory, 0);
-        ASSERT_VULKAN(result);
+        if (result != VK_SUCCESS)
+        {
+            Logger::err("createBuffer: vkBindBufferMemory failed: " + std::to_string(result));
+            logicalDevice->vkd.FreeMemory(logicalDevice->device, bufferMemory, nullptr);
+            logicalDevice->vkd.DestroyBuffer(logicalDevice->device, buffer, nullptr);
+            bufferMemory = VK_NULL_HANDLE;
+            buffer       = VK_NULL_HANDLE;
+        }
     }
 
 } // namespace VKIntox
