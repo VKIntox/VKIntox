@@ -82,67 +82,6 @@ fully? idk
 7. Fix compiler warnings (if any) & small audit check, push RC 1
 
 ================================================
-TODOS for v0.1.4
-================================================
-This version is the X11 one. VKIntox does not support X11 at all right now, and
-it does not fail gracefully either -- it looks like it works right up until you
-notice nothing happens.
-
-WHAT "UNSUPPORTED" ACTUALLY LOOKS LIKE
-
-- the overlay never opens, and no keybind does anything. input blocking is
-  disabled on a non-Wayland surface, so there is nothing to draw the overlay
-  into and nothing to route a keypress through.
-- depth resolve never engages. the layer detects your depth attachment, reports
-  hasDepth=false on every frame, and quietly renders the effect without depth.
-  discovered while fixing CI: a smoke test asserting the depth path was passing
-  locally and could not pass on a runner, and the reason was this, not the test.
-- before f6d18d2 the window was BLACK on X11. the layer handed the app fake
-  colour images at vkGetSwapchainImagesKHR, the app rendered into them, and the
-  copy from fakes into the real swapchain lived on the Wayland present path.
-  X11 presented the real images untouched, so they were blank. that one is fixed
-  -- X11 now gets its real images back, so it is a correct no-op instead of a
-  broken one. Nothing else about X11 is fixed.
-
-ROOT CAUSE IS ONE DECISION MADE IN ONE PLACE
-
-wayland_display.cc notices a non-Wayland surface and logs "pass through only".
-The problem is that pass-through was implemented by branching the entire present
-path on the WSI, so everything the layer does at present time became Wayland-only:
-the fake-image blit, the depth resolve, the overlay draw. Input blocking is
-genuinely WSI-specific and has to branch. The rest should not.
-
-So the shape of the work is probably not "add X11 support" but "stop branching
-the present path on the WSI, then let X11 fall out". Concretely:
-
-1. input blocking on X11. this part is real work and unavoidable: XGrabKeyboard
-   / XGrabPointer or XInput2 raw events, plus the same hold-to-release dance the
-   Wayland side already does. Look at src/input/input_blocker.cc for the shape of
-   what has to be reproduced.
-2. move the blit + depth resolve + overlay draw out of the Wayland branch so both
-   WSIs run them. the layer already owns the swapchain and does not care what the
-   surface is.
-3. then X11 gets depth resolve and effects, and the overlay needs an X11
-   presentation path.
-4. the README says "vulkan post-processing layer" with no mention that this is
-   Wayland-only. that is the documentation bug that cost an afternoon.
-
-TESTING THIS IS THE AWKWARD PART
-
-Every X11 test has to run headless under Xvfb, and the only X display on a
-Wayland dev box is Xwayland, whose root window the compositor owns -- a root
-grab returns solid black, so a screenshot check silently proves nothing. It has
-to be checked in a way that does not depend on capturing pixels: assert on what
-the layer logged and on which handles it created.
-
-CI ALREADY RUNS IN PASS-THROUGH MODE
-
-The smoke test runs on X11 + lavapipe, so every CI run has been checking that
-the layer loads and does not crash, and nothing about effects rendering. That is
-worth knowing before reading a green tick as coverage. Once X11 is real, CI
-becomes a genuine end-to-end check for free.
-
-================================================
 TODOS for v0.2.0
 ================================================
 

@@ -49,8 +49,8 @@ curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- com.target.a
 > [!IMPORTANT]
 > no system prebuilts exist yet due to dependency variance. use local compilation for native installs.
 
-> [!WARNING]
-> **wayland only, effectively.** x11 is not supported yet and fails quietly.
+> [!NOTE]
+> wayland and x11 are both supported. on x11 (including xwayland) the overlay holds an active input grab while it is open; if the compositor does not honour xwayland's keyboard-grab protocol, the game can still receive keys while the overlay is up.
 
 ## features
 
