@@ -92,7 +92,7 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 -   **catalog stability:** extremely poor in sober. avoid opening it.
 -   **settings:** changing in-game graphics quality often causes crashes.
 -   **wine:** games utilizing dxvk/vkd3d might break and anti-cheat could get you moderated.
--   **flatpak layer updates:** a reboot or a terminal restart might be needed after re-installing or updating the layer for flatpak targets (both remote-build and local-build installs). might also apply to native system installs.
+-   **flatpak layer updates:** a reboot might be needed after re-installing or updating the layer for flatpak targets (both remote-build and local-build installs). might possibly also apply to native system installs.
 
 > [!WARNING]
 > upgrading from v1.0.2? back up your `.conf` files first.
