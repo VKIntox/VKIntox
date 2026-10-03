@@ -439,9 +439,12 @@ namespace VKIntox
         const std::string& effectName,
         const std::string& effectPath,
         Config* config,
-        std::vector<std::string>* techniqueNames)
+        std::vector<std::string>* techniqueNames,
+        std::string* outError)
     {
         std::vector<std::unique_ptr<EffectParam>> params;
+        if (outError)
+            outError->clear();
 
         // Protect against SIGFPE/SIGABRT from reshadefx compiler
         installParserCrashHandlers();
@@ -449,6 +452,8 @@ namespace VKIntox
         {
             parserSignalJmpActive = 0;
             Logger::err("parseReshadeEffect: caught signal for " + effectName);
+            if (outError)
+                *outError = "signal during shader compilation";
             return params;
         }
         parserSignalJmpActive = 1;
@@ -462,7 +467,11 @@ namespace VKIntox
 
         if (!preprocessor.append_file(effectPath))
         {
-            Logger::err("reshade_parser: failed to load shader file: " + effectPath);
+            const std::string ppError = preprocessor.errors();
+            Logger::err("reshade_parser: failed to load shader file: " + effectPath +
+                        (ppError.empty() ? "" : ": " + ppError));
+            if (outError)
+                *outError = ppError.empty() ? "failed to load shader file" : ppError;
             return params;
         }
 
@@ -480,6 +489,8 @@ namespace VKIntox
             errors = parser.errors();
             if (!errors.empty())
                 Logger::err("reshade_parser parse errors: " + errors);
+            if (outError)
+                *outError = errors.empty() ? "parse failed" : errors;
             return params;
         }
 
@@ -489,6 +500,8 @@ namespace VKIntox
             if (hasFatalCompilerDiagnostics(errors))
             {
                 Logger::err("reshade_parser parse errors: " + errors);
+                if (outError)
+                    *outError = errors;
                 return params;
             }
 
@@ -651,10 +664,14 @@ namespace VKIntox
         catch (const std::exception& e)
         {
             Logger::err("parseReshadeEffect exception for " + effectName + ": " + e.what());
+            if (outError)
+                *outError = e.what();
         }
         catch (...)
         {
             Logger::err("parseReshadeEffect unknown exception for " + effectName);
+            if (outError)
+                *outError = "unknown exception during parsing";
         }
 
         parserSignalJmpActive = 0;

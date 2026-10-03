@@ -25,11 +25,15 @@ namespace VKIntox
     // effectName: display name for the effect (used in EffectParam.effectName)
     // effectPath: full path to the .fx file
     // config: config for getting includePath and current param values
+    // outError, when given, is set to a non-empty message on any fatal
+    // preprocessor/parse failure. That lets a caller use this parse as its
+    // compile check instead of compiling the same shader a second time.
     std::vector<std::unique_ptr<EffectParam>> parseReshadeEffect(
         const std::string& effectName,
         const std::string& effectPath,
         Config* config,
-        std::vector<std::string>* techniqueNames = nullptr);
+        std::vector<std::string>* techniqueNames = nullptr,
+        std::string* outError = nullptr);
 
     // Test a ReShade .fx shader for compilation errors without creating Vulkan resources.
     // Returns a ShaderTestResult with success status and any error messages.

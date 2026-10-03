@@ -335,19 +335,19 @@ namespace VKIntox
         std::filesystem::path p(path);
         config.effectType = p.stem().string();
 
-        // Test shader compilation first to catch errors
-        ShaderTestResult testResult = testShaderCompilation(name, path);
-        if (!testResult.success)
+        // parseReshadeEffect runs the full preprocessor/parser/codegen pass, so it
+        // is already the compile check; a separate testShaderCompilation call just
+        // compiled the same shader a second time.
+        std::string parseError;
+        config.parameters = parseReshadeEffect(name, path, rootConfig, &config.techniqueNames, &parseError);
+        if (!parseError.empty())
         {
-            config.compileError = testResult.errorMessage;
+            config.compileError = parseError;
             config.enabled = false;  // Disable failed effects by default
-            Logger::err("EffectRegistry: failed to compile " + name + ": " + testResult.errorMessage);
+            Logger::err("EffectRegistry: failed to compile " + name + ": " + parseError);
         }
         else
         {
-            // Only parse parameters if compilation succeeded
-            config.parameters = parseReshadeEffect(name, path, rootConfig, &config.techniqueNames);
-
             // Extract preprocessor definitions (user-configurable macros)
             config.preprocessorDefs = extractPreprocessorDefinitions(name, path);
 

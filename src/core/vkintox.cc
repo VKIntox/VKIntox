@@ -2917,15 +2917,18 @@ namespace VKIntox
 
             // Hot-reload: check for key press or config file change
             bool shouldReload = false;
+            bool reloadFromDisk = false;
             if (handleKeyPress(reloadKeySymbol, reloadPressed))
             {
                 Logger::debug("reload key pressed");
                 shouldReload = true;
+                reloadFromDisk = true;
             }
             if (config->hasConfigChanged())
             {
                 Logger::debug("config file changed detected");
                 shouldReload = true;
+                reloadFromDisk = true;
             }
 
             // Toggle overlay on/off
@@ -3018,8 +3021,14 @@ namespace VKIntox
                 }
                 else
                 {
-                    config->reload();
-                    applyShaderProfile(config.get(), overlayShaderPath);
+                    // only the reload key or an external file change re-reads the
+                    // config and re-applies the profile; a UI apply rebuilds the
+                    // chain from the registry, which is already the truth
+                    if (reloadFromDisk)
+                    {
+                        config->reload();
+                        applyShaderProfile(config.get(), overlayShaderPath);
+                    }
                     reloadSelectedEffects();
                 }
             }
