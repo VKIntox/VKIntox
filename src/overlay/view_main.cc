@@ -378,6 +378,7 @@ namespace VKIntox
                 if (effectRegistry)
                     effectRegistry->setEffectEnabled(effectName, effectEnabled);
                 paramsDirty = true;
+                reloadNeeded = true;  // enabled set decides the chain
                 lastChangeTime = std::chrono::steady_clock::now();
             }
 
@@ -405,6 +406,7 @@ namespace VKIntox
                     {
                         effectRegistry->setEffectEnabled(effectName, !effectEnabled);
                         paramsDirty = true;
+                        reloadNeeded = true;  // enabled set decides the chain
                         lastChangeTime = std::chrono::steady_clock::now();
                     }
                 }
@@ -419,6 +421,8 @@ namespace VKIntox
                             editor->resetToDefault(*param);
                     }
                     paramsDirty = true;
+                    if (effectRegistry->isEffectBuiltIn(effectName))
+                        reloadNeeded = true;  // built-ins need a rebuild for new values
                     lastChangeTime = std::chrono::steady_clock::now();
                 }
 
@@ -570,6 +574,7 @@ namespace VKIntox
                             {
                                 paramsDirty = true;
                                 profileDirty = true;
+                                reloadNeeded = true;  // macros are compile-time
                                 lastChangeTime = std::chrono::steady_clock::now();
                             }
                             ImGui::PopID();
@@ -589,7 +594,10 @@ namespace VKIntox
                 }
             }
 
-            // Show parameters for this effect
+            // Show parameters for this effect. ReShade uniforms are pushed every
+            // frame by updateEffect, so a value edit needs no rebuild; built-ins
+            // read their config at construction and do.
+            const bool builtInEffect = effectRegistry->isEffectBuiltIn(effectName);
             auto effectParams = effectRegistry->getParametersForEffect(effectName);
             for (size_t paramIdx = 0; paramIdx < effectParams.size(); paramIdx++)
             {
@@ -599,6 +607,8 @@ namespace VKIntox
                     paramsDirty = true;
                     profileDirty = true;
                     lastChangeTime = std::chrono::steady_clock::now();
+                    if (builtInEffect)
+                        reloadNeeded = true;
                 }
                 ImGui::PopID();
             }

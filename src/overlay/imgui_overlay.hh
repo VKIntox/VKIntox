@@ -110,7 +110,7 @@ namespace VKIntox
         // Returns modified parameters when Apply is clicked, empty otherwise
         std::vector<std::unique_ptr<EffectParam>> getModifiedParams() const;
         bool hasModifiedParams() const { return applyRequested; }
-        void clearApplyRequest() { applyRequested = false; }
+        void clearApplyRequest() { applyRequested = false; reloadNeeded = false; }
 
         // Config switching
         bool hasPendingConfig() const { return !pendingConfigPath.empty(); }
@@ -298,6 +298,9 @@ namespace VKIntox
         std::vector<std::string> debugLogLower;  // lowercased snapshot messages for search
         uint64_t debugLogVersion = 0;            // Logger::historyVersion of the snapshot
         bool applyRequested = false;
+        // a pending edit that genuinely needs the effect chain rebuilt; a plain
+        // ReShade uniform edit is applied live by updateEffect()
+        bool reloadNeeded = false;
         bool toggleEffectsRequested = false;
         bool paramsDirty = false;  // True when params changed, waiting for debounce
         std::chrono::steady_clock::time_point lastChangeTime;

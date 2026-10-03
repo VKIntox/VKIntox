@@ -1562,7 +1562,11 @@ namespace VKIntox
             // Apply on the first frame after release once delay has already elapsed.
             if (elapsed >= settingsManager.getAutoApplyDelay() && !mouseButtonDown)
             {
-                applyRequested = true;
+                // a ReShade uniform edit is already live via updateEffect, so
+                // only rebuild the chain when something structural changed
+                if (reloadNeeded)
+                    applyRequested = true;
+                reloadNeeded = false;
                 paramsDirty = false;
                 profileDirty = true;  // Mark for auto-save to profile
             }
