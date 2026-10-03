@@ -2,7 +2,33 @@ name: CI
 on:
   push:
     branches: [main, master]
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - 'packaging/**'
+      - 'scripts/**'
+      - 'setup'
+      - 'meson.build'
+      - 'meson_options.txt'
+      - 'Justfile'
+      - 'VERSION'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/**'
   pull_request:
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - 'packaging/**'
+      - 'scripts/**'
+      - 'setup'
+      - 'meson.build'
+      - 'meson_options.txt'
+      - 'Justfile'
+      - 'VERSION'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/**'
 
 permissions:
   contents: read
