@@ -95,7 +95,7 @@ namespace VKIntox
         {
             // the overlay went away while it held the keyboard: hand it back.
             keyboardWithheld = false;
-            notifyGameKeyboardFocus(true);
+            withholdGameKeys(false);
         }
     }
 
@@ -127,8 +127,9 @@ namespace VKIntox
         {
             // withhold keys only while the cursor is over the overlay, so the
             // rest of the game keeps playing when the pointer is elsewhere.
+            // releases/re-presses the exact held keys; mouse is left alone.
             keyboardWithheld = inside;
-            notifyGameKeyboardFocus(!inside);
+            withholdGameKeys(inside);
         }
     }
 

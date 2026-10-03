@@ -9,9 +9,12 @@ namespace VKIntox
     void registerOverlayProxy(wl_proxy* proxy);
     void unregisterOverlayProxy(wl_proxy* proxy);
 
-    // Send synthetic keyboard leave/enter to wrapped game keyboards.
-    // Called when overlay blocking state changes — makes the game release
-    // all held keys (leave) or re-acquire focus (enter).
-    // Only works when wl_proxy_add_listener interposition is active.
-    void notifyGameKeyboardFocus(bool hasFocus);
+    // Release every key the wrapped game keyboards currently hold (or re-press
+    // whatever is still physically held). Called when the pointer crosses the
+    // overlay hitbox, so a held movement key stops without dropping keyboard
+    // focus — a synthetic leave/enter stalls input until the next press.
+    // Mouse buttons are deliberately untouched: a synthetic release would break
+    // click/drag ordering. Only works when the listener/dispatcher interposition
+    // is active.
+    void withholdGameKeys(bool withhold);
 }

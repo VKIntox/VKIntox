@@ -110,6 +110,10 @@ static std::mutex gameDataMutex;
 static std::unordered_map<wl_pointer*, GamePointerData> gamePointers;
 static std::unordered_map<wl_keyboard*, GameKeyboardData> gameKeyboards;
 
+// Keys the game currently holds, tracked even while blocked so a hitbox
+// crossing can release exactly those and re-press whatever is still held.
+static std::unordered_map<wl_keyboard*, std::unordered_set<uint32_t>> gameHeldKeys;
+
 struct GamePointerDispatcherData
 {
     wl_dispatcher_func_t original;
@@ -281,6 +285,15 @@ static void wk_leave(void* data, wl_keyboard* kb, uint32_t serial, wl_surface* s
 
 static void wk_key(void* data, wl_keyboard* kb, uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
 {
+    {
+        std::lock_guard<std::mutex> lock(gameDataMutex);
+        std::unordered_set<uint32_t>& held = gameHeldKeys[kb];
+        if (state == WL_KEYBOARD_KEY_STATE_PRESSED)
+            held.insert(key);
+        else
+            held.erase(key);
+    }
+
     if (pointerBlocked())
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
@@ -354,8 +367,18 @@ static int wd_keyboard(const void* data, void* target, uint32_t opcode, const st
 {
     auto* proxy = static_cast<wl_proxy*>(target);
 
+    if (opcode == 3) // key: serial, time, key, state
+    {
+        std::lock_guard<std::mutex> lock(gameDataMutex);
+        std::unordered_set<uint32_t>& held = gameHeldKeys[(wl_keyboard*)proxy];
+        if (args[3].u == WL_KEYBOARD_KEY_STATE_PRESSED)
+            held.insert(args[2].u);
+        else
+            held.erase(args[2].u);
+    }
+
     // keyboard has no coordinates; it follows the pointer's hitbox.
-    if (opcode == 3 && pointerBlocked()) // key
+    if (opcode == 3 && pointerBlocked())
         return 0;
 
     std::lock_guard<std::mutex> lock(gameDataMutex);
@@ -627,35 +650,45 @@ int wl_proxy_add_dispatcher(struct wl_proxy* proxy,
 
 namespace VKIntox
 {
-    void notifyGameKeyboardFocus(bool hasFocus)
+    void withholdGameKeys(bool withhold)
     {
         std::lock_guard<std::mutex> lock(gameDataMutex);
-        if (gameKeyboards.empty())
-            return;
+
+        size_t changed = 0;
+        const uint32_t state = withhold ? WL_KEYBOARD_KEY_STATE_RELEASED : WL_KEYBOARD_KEY_STATE_PRESSED;
 
         for (auto& [kb, data] : gameKeyboards)
         {
-            if (hasFocus)
+            auto heldIt = gameHeldKeys.find(kb);
+            if (heldIt == gameHeldKeys.end())
+                continue;
+            for (uint32_t key : heldIt->second)
             {
-                // Synthetic enter — game regains keyboard focus with no pressed keys
-                if (data.original.enter)
-                {
-                    wl_array emptyKeys;
-                    wl_array_init(&emptyKeys);
-                    data.original.enter(data.userData, kb, 0, nullptr, &emptyKeys);
-                    wl_array_release(&emptyKeys);
-                }
-            }
-            else
-            {
-                // Synthetic leave — game drops all held keys
-                if (data.original.leave)
-                    data.original.leave(data.userData, kb, 0, nullptr);
+                if (data.original.key)
+                    data.original.key(data.userData, kb, 0, 0, key, state);
+                changed++;
             }
         }
 
-        Logger::debug(std::string("Wayland interpose: synthetic keyboard ") +
-                       (hasFocus ? "enter" : "leave") + " sent to " +
-                       std::to_string(gameKeyboards.size()) + " game keyboard(s)");
+        for (auto& [proxy, data] : gameKeyboardDispatchers)
+        {
+            auto heldIt = gameHeldKeys.find((wl_keyboard*)proxy);
+            if (heldIt == gameHeldKeys.end() || !data.original)
+                continue;
+            for (uint32_t key : heldIt->second)
+            {
+                union wl_argument args[4] = {};
+                args[0].u = 0; // serial
+                args[1].u = 0; // time
+                args[2].u = key;
+                args[3].u = state;
+                data.original(data.dispatcherData, proxy, 3, &wl_keyboard_interface.events[3], args);
+                changed++;
+            }
+        }
+
+        if (changed > 0)
+            Logger::debug(std::string("Wayland interpose: ") + (withhold ? "released " : "re-pressed ")
+                          + std::to_string(changed) + " held game key(s)");
     }
 } // namespace VKIntox
