@@ -13,6 +13,8 @@ namespace VKIntox
 {
     // Mouse-specific state (seat/queue come from wayland_input_common)
     static wl_pointer* wlPointer = nullptr;
+    // which surface the pointer currently has focus on (motion carries no surface)
+    static wl_surface* pointerFocusSurface = nullptr;
 
     // Mouse state
     static int pointerX = 0;
@@ -48,12 +50,18 @@ namespace VKIntox
 
     // Pointer listener callbacks
     static void pointerEnter(void* /*data*/, wl_pointer* /*pointer*/,
-                             uint32_t /*serial*/, wl_surface* /*surface*/,
+                             uint32_t /*serial*/, wl_surface* surface,
                              wl_fixed_t sx, wl_fixed_t sy)
     {
         pointerInsideSurface = true;
-        pointerX = wl_fixed_to_int(sx);
-        pointerY = wl_fixed_to_int(sy);
+        pointerFocusSurface = surface;
+        // events on our capture surface are surface-local; shift them into the
+        // game's framebuffer space, which is what ImGui draws in.
+        const bool onInputSurface = (surface == getWaylandInputSurface());
+        const int originX = onInputSurface ? static_cast<int>(getWaylandInputSurfaceX()) : 0;
+        const int originY = onInputSurface ? static_cast<int>(getWaylandInputSurfaceY()) : 0;
+        pointerX = wl_fixed_to_int(sx) + originX;
+        pointerY = wl_fixed_to_int(sy) + originY;
         lastMotionTime = Clock::now();
 
         // Do NOT clear button state here. Surface reconfigurations (swapchain
@@ -66,8 +74,10 @@ namespace VKIntox
     }
 
     static void pointerLeave(void* /*data*/, wl_pointer* /*pointer*/,
-                             uint32_t /*serial*/, wl_surface* /*surface*/)
+                             uint32_t /*serial*/, wl_surface* surface)
     {
+        (void)surface;   // keep the last focus: motion carries no surface, and
+                         // clearing it here mistranslates the next one.
         pointerInsideSurface = false;
         Logger::trace("Wayland: pointer leave");
     }
@@ -75,8 +85,12 @@ namespace VKIntox
     static void pointerMotion(void* /*data*/, wl_pointer* /*pointer*/,
                               uint32_t /*time*/, wl_fixed_t sx, wl_fixed_t sy)
     {
-        pointerX = wl_fixed_to_int(sx);
-        pointerY = wl_fixed_to_int(sy);
+        const bool onInputSurface =
+            getWaylandInputSurface() != nullptr && pointerFocusSurface == getWaylandInputSurface();
+        const int originX = onInputSurface ? static_cast<int>(getWaylandInputSurfaceX()) : 0;
+        const int originY = onInputSurface ? static_cast<int>(getWaylandInputSurfaceY()) : 0;
+        pointerX = wl_fixed_to_int(sx) + originX;
+        pointerY = wl_fixed_to_int(sy) + originY;
         motionSinceLastPoll = true;
     }
 

@@ -132,7 +132,6 @@ nsight-vkdcube-capture frame='10' count='1' capture_dir=nsight_capture_dir: prep
       --env=VK_ADD_LAYER_PATH={{ dev_layer_dir }} \
       --env=VK_INSTANCE_LAYERS={{ dev_layer_name }} \
       --env=ENABLE_VKINTOX=1 \
-      --env=VKINTOX_USE_LD_AUDIT=0 \
       --env=GDK_PIXBUF_MODULEDIR=/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders \
       --env=GDK_PIXBUF_MODULE_FILE=/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache \
       --env=XDG_DATA_DIRS=/usr/local/share:/usr/share \
@@ -153,7 +152,6 @@ nsight-vkdcube-capture-hotkey count='1' capture_dir=nsight_capture_dir: prepare-
       --env=VK_ADD_LAYER_PATH={{ dev_layer_dir }} \
       --env=VK_INSTANCE_LAYERS={{ dev_layer_name }} \
       --env=ENABLE_VKINTOX=1 \
-      --env=VKINTOX_USE_LD_AUDIT=0 \
       --env=GDK_PIXBUF_MODULEDIR=/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders \
       --env=GDK_PIXBUF_MODULE_FILE=/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache \
       --env=XDG_DATA_DIRS=/usr/local/share:/usr/share \

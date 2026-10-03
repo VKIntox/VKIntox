@@ -7,31 +7,47 @@
 #include <X11/Xlib.h>
 
 #include <atomic>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace VKIntox
 {
     static std::atomic<bool> blockingEnabled{false};
-    // Atomic: written by the overlay thread (setInputBlocked), read by the game
-    // thread (isInputBlocked via Wayland interpose wrapper callbacks).
     static std::atomic<bool> blocked{false};
-    static bool x11Grabbed = false;
 
-    static void warnUnsupportedInputOnce(const char* message)
+    static std::mutex rectMutex;
+    static std::vector<InputRect> inputRects;
+
+    // updated every frame by the overlay, so hitboxes apply without the game
+    // having to tell us anything.
+    static std::atomic<float> pointerX{-100000.0f};
+    static std::atomic<float> pointerY{-100000.0f};
+
+    static bool x11Grabbed = false;
+    // mirrors the wayland keyboard state so focus only flips on a crossing.
+    static bool keyboardWithheld = false;
+
+    static bool pointInRects(float x, float y)
     {
-        static bool warned = false;
-        if (!warned && !isWayland() && !isX11())
-        {
-            Logger::warn(message);
-            warned = true;
-        }
+        std::lock_guard<std::mutex> lock(rectMutex);
+        for (const InputRect& r : inputRects)
+            if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+                return true;
+        return false;
     }
 
-    // X11 has no event-consumption mode like the Wayland interpose, so blocking
-    // is a server-side grab: while held, key/button events route to us and the
-    // game sees none. Raw XInput2 events are unaffected and still feed our own
-    // text/wheel polling.
-    static void setX11Grab(bool grab)
+    void setInputRects(const InputRect* rects, int count)
+    {
+        std::lock_guard<std::mutex> lock(rectMutex);
+        inputRects.assign(rects, rects + (count > 0 ? count : 0));
+    }
+
+    // X11: the layer opens its own Display connection, so it is a distinct X
+    // client from the game. A server-side grab on that connection takes pointer
+    // and key events away from the game's connection entirely. Held only while
+    // the pointer sits over an overlay hitbox, so it stays directional.
+    static void setX11GrabState(bool grab)
     {
         Display* display = x11Display();
         if (!display || grab == x11Grabbed)
@@ -62,71 +78,77 @@ namespace VKIntox
                          + " pointer=" + std::to_string(pointerStatus));
     }
 
+    void setInputBlocked(bool onScreen)
+    {
+        blocked.store(onScreen, std::memory_order_release);
+
+        if (isX11())
+        {
+            const bool enabled = blockingEnabled.load(std::memory_order_acquire);
+            const bool inside = enabled && onScreen
+                && pointInRects(pointerX.load(std::memory_order_acquire), pointerY.load(std::memory_order_acquire));
+            setX11GrabState(inside);
+            return;
+        }
+
+        if (isWayland() && !onScreen && keyboardWithheld)
+        {
+            // the overlay went away while it held the keyboard: hand it back.
+            keyboardWithheld = false;
+            notifyGameKeyboardFocus(true);
+        }
+    }
+
+    bool isInputBlockedAt(float x, float y)
+    {
+        return blocked.load(std::memory_order_acquire) && pointInRects(x, y);
+    }
+
+    bool isInputBlocked()
+    {
+        return blocked.load(std::memory_order_acquire);
+    }
+
+    void updatePointerPosition(float x, float y)
+    {
+        pointerX.store(x, std::memory_order_release);
+        pointerY.store(y, std::memory_order_release);
+
+        const bool onScreen = blocked.load(std::memory_order_acquire);
+        const bool inside = onScreen && pointInRects(x, y);
+
+        if (isX11())
+        {
+            setX11GrabState(blockingEnabled.load(std::memory_order_acquire) && inside);
+            return;
+        }
+
+        if (isWayland() && inside != keyboardWithheld)
+        {
+            // withhold keys only while the cursor is over the overlay, so the
+            // rest of the game keeps playing when the pointer is elsewhere.
+            keyboardWithheld = inside;
+            notifyGameKeyboardFocus(!inside);
+        }
+    }
+
     void initInputBlocker(bool enabled)
     {
         blockingEnabled = enabled;
 
         if (isWayland())
         {
-            // Wayland doesn't support global input grabs.
-            // Input events are delivered to our private event queue
-            // and consumed by the overlay when visible.
-            Logger::debug(std::string("Input blocking ") + (enabled ? "enabled (Wayland: event consumption mode)" : "disabled"));
+            Logger::debug(std::string("Input blocking ") + (enabled ? "enabled (Wayland: hitbox)" : "disabled"));
             return;
         }
 
         if (isX11())
         {
-            Logger::debug(std::string("Input blocking ") + (enabled ? "enabled (X11: active grab)" : "disabled"));
+            Logger::debug(std::string("Input blocking ") + (enabled ? "enabled (X11: hitbox grab)" : "disabled"));
             return;
         }
 
         blocked.store(false, std::memory_order_release);
-        warnUnsupportedInputOnce("unsupported Vulkan surface: input blocking disabled; pass-through only");
         Logger::debug(std::string("Input blocking ") + (enabled ? "disabled for unsupported surface" : "disabled"));
-    }
-
-    void setInputBlocked(bool shouldBlock)
-    {
-        if (!blockingEnabled.load(std::memory_order_acquire))
-            return;
-
-        if (isX11())
-        {
-            if (shouldBlock == blocked.load(std::memory_order_acquire))
-                return;
-            blocked.store(shouldBlock, std::memory_order_release);
-            setX11Grab(shouldBlock);
-            return;
-        }
-
-        if (!isWayland())
-        {
-            blocked.store(false, std::memory_order_release);
-            return;
-        }
-
-        if (shouldBlock == blocked.load(std::memory_order_acquire))
-            return;
-
-        blocked.store(shouldBlock, std::memory_order_release);
-
-        // On Wayland, interposed wl_proxy_add_listener wrapper callbacks
-        // check isInputBlocked() and suppress events to the game.
-        // NOTE: This does NOT work for Wine Wayland games — Wine loads
-        // winewayland.so via dlopen(RTLD_LOCAL), so libwayland-client
-        // resolves in Wine's local scope, bypassing our LD_PRELOAD
-        // interposition entirely. No workaround exists without LD_AUDIT
-        // or a wrapper libwayland-client.so.
-        Logger::debug(std::string("Wayland input blocking: ") + (shouldBlock ? "suppressing game events" : "forwarding game events"));
-        // Send synthetic leave/enter to game keyboards so held keys
-        // are released when overlay opens (prevents stuck movement/actions).
-        // Only works when wl_proxy_add_listener interposition is active.
-        notifyGameKeyboardFocus(!shouldBlock);
-    }
-
-    bool isInputBlocked()
-    {
-        return blocked.load(std::memory_order_acquire);
     }
 } // namespace VKIntox

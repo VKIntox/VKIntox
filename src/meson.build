@@ -273,24 +273,10 @@ vk_handle_tests = executable('vkintox-vk-handle-tests',
     include_directories : [core_inc, render_inc, source_inc])
 test('vk handle ordering', vk_handle_tests)
 
-# LD_AUDIT library for Wine Wayland input interposition.
-# Redirects wl_proxy_add_listener bindings from dlopen(RTLD_LOCAL) scopes
-# (e.g. Wine's winewayland.so) to our wrapper in libvkintox.so.
-dl_dep = cpp.find_library('dl')
-shared_library('vkintox-audit',
-    'input/wayland_audit.c',
-    dependencies: [dl_dep],
-    install : true,
-    install_dir : lib_dir)
-
-vkintox_run_conf = configuration_data()
-vkintox_run_conf.set_quoted('VKINTOX_LIB', join_paths(get_option('prefix'), lib_dir, 'libvkintox.so'))
-vkintox_run_conf.set_quoted('VKINTOX_AUDIT_LIB', join_paths(get_option('prefix'), lib_dir, 'libvkintox-audit.so'))
-
 vkintox_run = configure_file(
     input: '../scripts/vkintox-run.in',
     output: 'vkintox-run',
-    configuration: vkintox_run_conf,
+    copy: true,
 )
 
 install_data(

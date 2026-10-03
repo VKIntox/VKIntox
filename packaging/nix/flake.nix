@@ -61,8 +61,7 @@
             ];
 
             postInstall = ''
-              # vkintox-run wrapper: sets ENABLE_VKINTOX and LD_AUDIT for Wine
-              # Wayland input interposition (dlopen RTLD_LOCAL bypass).
+              # vkintox-run wrapper: sets ENABLE_VKINTOX.
               mkdir -p "$out/bin"
               substitute ${./../../scripts/vkintox-run.sh} "$out/bin/vkintox-run" \
                 --subst-var out

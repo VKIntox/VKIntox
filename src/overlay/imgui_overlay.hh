@@ -15,6 +15,7 @@
 #include "keyboard_input.hh"
 #include "effects/params/effect_param.hh"
 #include "config_serializer.hh"
+#include "input_blocker.hh"
 #include "settings_manager.hh"
 #include "logger.hh"
 
@@ -203,6 +204,10 @@ namespace VKIntox
         void gatherDepthInfo();     // Snapshot LogicalDevice depth state under globalLock
         void applyDepthPinRequests();  // Flush UI depth-pin/clear requests to LogicalDevice
         void renderToasts();       // Persistent top-right notifications
+
+        // Overlay hitboxes for this frame, in surface pixels. published to the
+        // input blocker so only pointer events over the overlay are withheld.
+        std::vector<InputRect> frameInputRects;
 
         LogicalDevice* logicalDevice;
         OverlayPersistentState* pPersistentState;

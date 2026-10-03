@@ -553,6 +553,8 @@ namespace VKIntox
 
             if (open)
             {
+                frameInputRects.push_back(InputRect{pos.x, pos.y, width, rowHeight});
+
                 // accent bar down the leading edge.
                 const ImVec2 content_min = ImGui::GetCursorScreenPos();
                 ImGui::InvisibleButton("##toastbg", ImVec2(0.0f, 0.0f));
@@ -1157,10 +1159,19 @@ namespace VKIntox
         // toast notifications — fatal errors must stay visible to the user.
         const bool hasToasts = hasPendingToasts();
         if (!backendInitialized || (!visible && !hasToasts))
+        {
+            // drop last frame's hitboxes, or they keep swallowing input.
+            frameInputRects.clear();
+            setInputRects(nullptr, 0);
+            setInputBlocked(false);
+            setWaylandInputSurfaceRect(0.0f, 0.0f, 0.0f, 0.0f);
             return VK_NULL_HANDLE;
+        }
 
-        const bool blockOverlayInput = visible && settingsManager.getOverlayBlockInput();
-        setInputBlocked(blockOverlayInput);
+        // hitboxes are rebuilt below; the gate is only on while the overlay (or
+        // a toast) is actually on screen.
+        frameInputRects.clear();
+        setInputBlocked((visible || hasToasts) && settingsManager.getOverlayBlockInput());
 
         // Store current resolution for VRAM estimates in settings
         currentWidth = width;
@@ -1277,6 +1288,14 @@ namespace VKIntox
         io.MouseWheel = mouse.scrollDelta;
         io.MouseDrawCursor = true;
 
+        auto publishOverlayInput = [&]() {
+            if (settingsManager.getOverlayBlockInput())
+                setInputRects(frameInputRects.data(), static_cast<int>(frameInputRects.size()));
+            else
+                setInputRects(nullptr, 0);
+            updatePointerPosition(static_cast<float>(mouse.x), static_cast<float>(mouse.y));
+        };
+
         // Keyboard input for text fields
         // Keys are one-shot events, so we send press and release in same frame
         KeyboardState keyboard = getKeyboardState();
@@ -1302,6 +1321,9 @@ namespace VKIntox
         // window — toasts are standalone floating windows.
         if (!visible)
         {
+            // main window is gone; only toasts remain, so free the pointer.
+            setWaylandInputSurfaceRect(0.0f, 0.0f, 0.0f, 0.0f);
+            publishOverlayInput();
             ImGui::Render();
 
             VkRenderPassBeginInfo rpBegin = {};
@@ -1463,6 +1485,8 @@ namespace VKIntox
         if (winPos.y > screenMax.y - keep)              { winPos.y = screenMax.y - keep; clamped = true; }
         if (clamped)
             ImGui::SetWindowPos(winPos);
+        frameInputRects.push_back(InputRect{winPos.x, winPos.y, winSize.x, winSize.y});
+        setWaylandInputSurfaceRect(winPos.x, winPos.y, winSize.x, winSize.y);
 
         // Process shader test (one per frame) regardless of active tab
         processShaderTest();
@@ -1541,6 +1565,7 @@ namespace VKIntox
             (!activeProfilePath.empty() || !activeShaderProfilePath.empty()))
             autoSaveProfile();
 
+        publishOverlayInput();
         ImGui::Render();
 
         // Begin render pass
