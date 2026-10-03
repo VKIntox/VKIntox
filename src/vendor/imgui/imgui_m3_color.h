@@ -1,13 +1,9 @@
-//-----------------------------------------------------------------------------
-// Material 3 color science, self-contained.
+// Material 3 colour science, self-contained.
 //
-// A port of Google's material-color-utilities: CAM16 colour appearance model,
-// the HCT solver, tonal palettes and core palettes. It has no ImGui dependency
-// on purpose, so the palette maths can be unit tested without a context.
-//
-// Everything here operates on packed ARGB (`0xAARRGGBB`) exactly like the
-// upstream library, so hexes match the official Material Theme Builder output.
-//-----------------------------------------------------------------------------
+// a port of Google's material-color-utilities: CAM16, the HCT solver, tonal and
+// core palettes. no ImGui dependency, so the maths unit-tests without a context.
+// operates on packed ARGB (`0xAARRGGBB`) like upstream, so hexes match the
+// official Material Theme Builder output.
 
 #ifndef IMGUI_M3_COLOR_H_INCLUDED
 #define IMGUI_M3_COLOR_H_INCLUDED
@@ -102,8 +98,7 @@ namespace ImGuiM3Palette
         return lstarFromY(0.2126 * r + 0.7152 * g + 0.0722 * b);
     }
 
-    // CAM16 default viewing conditions, computed the way material-color-utilities
-    // does for sRGB / D65 / average surround.
+    // CAM16 default viewing conditions for sRGB / D65 / average surround.
     struct ViewingConditions
     {
         double n, aw, nbb, ncb, c, nc, rgbD[3], fl, fLRoot, z;
@@ -233,8 +228,7 @@ namespace ImGuiM3Palette
         return signum(adapted) * std::pow(base, 1.0 / 0.42);
     }
 
-    // Newton solve for an in-gamut sRGB colour at a given hue / chroma / tone.
-    // Returns 0 when the requested chroma falls outside the sRGB gamut.
+    // Newton solve for an in-gamut sRGB colour; 0 when chroma falls outside it.
     inline uint32_t FindResultByJ(double hueRadians, double chroma, double y)
     {
         const ViewingConditions& vc = DefaultViewingConditions();
@@ -284,11 +278,9 @@ namespace ImGuiM3Palette
         return 0;
     }
 
-    // Solves for hue / chroma / L*. Upstream falls back to a bisection against a
-    // 255-entry table of critical planes when the requested chroma is out of
-    // gamut; we do the same job with a binary search on chroma, which lands on
-    // the same answer (highest in-gamut chroma at the requested hue and tone)
-    // without a magic table.
+    // Solves hue / chroma / L*. upstream bisects a 255-entry critical-plane table
+    // when chroma is out of gamut; a binary search on chroma reaches the same answer
+    // without the table.
     inline uint32_t SolveToInt(double hue, double chroma, double lstar)
     {
         if (chroma < 0.0001 || lstar < 0.0001 || lstar > 99.9999)
@@ -325,8 +317,7 @@ namespace ImGuiM3Palette
     inline double HueOf(uint32_t argb)    { return Cam16::FromInt(argb).hue; }
     inline double ToneOf(uint32_t argb)   { return lstarFromArgb(argb); }
 
-    // Reduces a requested chroma to one the palette can actually reach, by
-    // finding the tone at which the requested chroma is still satisfiable.
+    // Clamps a requested chroma to what this hue can actually reach.
     inline double ResolvePaletteChroma(double hue, double requestedChroma)
     {
         const double maxChromaValue = 200.0;
@@ -374,8 +365,7 @@ namespace ImGuiM3Palette
         return ChromaOf(SolveToInt(hue, requestedChroma, (double)lowerTone));
     }
 
-    // One hue, 101 tones. Tones are resolved lazily-ish (eagerly, but cheap: the
-    // solve is closed-form per tone) so `tone()` is a lookup.
+    // One hue, 101 tones. the constructor solves every tone so `tone()` is a lookup.
     struct TonalPalette
     {
         double   hue = 0.0;
@@ -386,16 +376,10 @@ namespace ImGuiM3Palette
 
         TonalPalette(double hue_, double chroma_)
         {
-            // Note we keep the *requested* chroma, not the key color's chroma.
-            // upstream material-color-utilities does the same: KeyColor only
-            // picks the tone at which the palette is realised, the palette
-            // itself keeps the requested chroma for every tone. Clamping here
-            // instead shifts every hex in the palette.
+            // keeps the *requested* chroma, not the key color's: upstream does the
+            // same, and clamping here would shift every hex in the palette.
             hue = sanitizeDegrees(hue_);
             chroma = chroma_;
-            // The key color is still resolved: it is what upstream stores as the
-            // palette's key color, and skipping it would change nothing else, so
-            // we only compute it when asked for.
             for (int i = 0; i <= 100; i++)
                 tones[i] = SolveToInt(hue, chroma, (double)i);
         }

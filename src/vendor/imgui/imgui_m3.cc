@@ -1,11 +1,8 @@
-//-----------------------------------------------------------------------------
 // Material 3 Expressive theming — implementation.
 //
 // scheme generation follows material-color-utilities: seed → HCT, variant picks
 // each palette's chroma/hue, roles read off a palette at a tone. the role→tone
-// table is transcribed from material-web `_md-sys-color*.scss` (v34.0.21), so
-// the hexes match the Theme Builder.
-//-----------------------------------------------------------------------------
+// table is transcribed from material-web `_md-sys-color*.scss` (v34.0.21).
 
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS   // ImVec2/ImVec4 courtesy operators, as the other .cc files do
@@ -29,9 +26,7 @@
 
 using namespace ImGuiM3Palette;
 
-//-----------------------------------------------------------------------------
-// Role names. Kebab-case, matching the `.colors` file and Matugen's scheme keys.
-//-----------------------------------------------------------------------------
+// Role names, kebab-case to match the `.colors` file and Matugen's scheme keys.
 
 static const char* g_role_names[ImGuiM3Role_COUNT] = {
     "primary",
@@ -142,9 +137,7 @@ static const ImGuiM3Role g_on_role_of[ImGuiM3Role_COUNT] = {
 };
 
 
-//-----------------------------------------------------------------------------
 // Palette indices and the role→tone table.
-//-----------------------------------------------------------------------------
 
 enum PaletteIdx
 {
@@ -279,9 +272,7 @@ ImGuiM3Contrast ImGuiM3ContrastFromName(const char* name)
     return ImGuiM3Contrast_COUNT;
 }
 
-//-----------------------------------------------------------------------------
 // Colour helpers.
-//-----------------------------------------------------------------------------
 
 static ImVec4 Vec4FromArgb(uint32_t argb)
 {
@@ -289,9 +280,7 @@ static ImVec4 Vec4FromArgb(uint32_t argb)
                   (float)alphaFromArgb(argb) / 255.0f);
 }
 
-// packs without imgui's global style alpha. theme colours must survive
-// g.Style.Alpha, which is a runtime knob (toasts, dimming) that GetColorU32()
-// already applies.
+// packs without imgui's global style alpha, which GetColorU32() would apply.
 static ImU32 PackU32(const ImVec4& c)
 {
     const ImU32 r = (ImU32)clampInt(0, 255, (int)(ImSaturate(c.x) * 255.0f + 0.5f));
@@ -313,11 +302,8 @@ static ImVec4 WithAlpha(const ImVec4& c, float a)
     return ImVec4(c.x, c.y, c.z, a);
 }
 
-//-----------------------------------------------------------------------------
-// The variant → palette rules. Transcribed from
-// DynamicSchemePalettesDelegateImpl2021 in material-color-utilities, which is the
-// same rule set Matugen applies (Aiving/material-colors).
-//-----------------------------------------------------------------------------
+// Variant → palette rules, transcribed from material-color-utilities' 2021
+// delegate, the same set Matugen applies (Aiving/material-colors).
 
 static double RotatedHue(double source_hue, const double breakpoints[], const double rotations[], int count)
 {
@@ -413,9 +399,7 @@ static void BuildPalettes(uint32_t source_argb, ImGuiM3Variant variant, bool dar
     out.palettes[Pal_Error] = TonalPalette(25.0, 84.0);
 }
 
-//-----------------------------------------------------------------------------
 // Theme state.
-//-----------------------------------------------------------------------------
 
 struct ThemeState
 {
@@ -425,12 +409,11 @@ struct ThemeState
     ImGuiM3Contrast            contrast = ImGuiM3Contrast_Standard;
     bool                       dark = true;
     ImVec4                     colors[ImGuiM3Role_COUNT];
-    // per-role overrides from the .colors file. role_flags has a bit per role:
-    // set means "came from the file, don't derive it".
+    // per-role overrides from the .colors file; role_flags marks which are pinned.
     uint64_t                   role_flags[2] = {0, 0};
     ImVec4                     overrides[ImGuiM3Role_COUNT];
     ImGuiM3Metrics             metrics;
-    // Non-color tokens from the [expressive] section, plus their own dirty mask.
+    // non-color tokens from [expressive], with their dirty flags.
     bool                       density_dirty = false;
     bool                       shape_scale_dirty = false;
     std::string                file_path;
@@ -448,12 +431,10 @@ struct ThemeState
 
 static ThemeState g_theme;
 
-// Material Symbols face, loaded once during overlay construction. Declared here
-// so the shutdown hook can clear it alongside the rest of the theme state.
+// Material Symbols face, cleared by the shutdown hook alongside the theme.
 static ImFont* g_icon_font = nullptr;
 
-// 2025 reference palette for #6750A4, shipped as the preset so the first run is
-// the real baseline and not a re-derived approximation.
+// 2025 reference palette for #6750A4, so the first run is the real baseline.
 struct PresetHexes { const char* role; uint32_t light; uint32_t dark; };
 
 static const PresetHexes g_baseline_preset[ImGuiM3Role_COUNT] = {
@@ -528,8 +509,7 @@ static void ResolveTheme()
     if (!g_theme.initialised)
         return;
 
-    // shipped preset: exact 2025 baseline hexes. other sources get derived, and
-    // roles in the file win over both.
+    // exact 2025 baseline hexes for the preset; other sources derive, file roles win.
     if (g_theme.source == 0xFF6750A4 && g_theme.variant == ImGuiM3Variant_TonalSpot && g_theme.contrast == ImGuiM3Contrast_Standard)
     {
         for (int i = 0; i < ImGuiM3Role_COUNT; i++)
@@ -552,27 +532,24 @@ static void ResolveTheme()
         }
     }
 
-    // Explicit file overrides win.
+    // file roles win over the derivation.
     for (int i = 0; i < ImGuiM3Role_COUNT; i++)
         if (RoleOverridden((ImGuiM3Role)i))
             g_theme.colors[i] = g_theme.overrides[i];
 
-    // publish source as editable RGB so the editor can't drift from the palette.
+    // keep source_rgba in lock-step with the seed so the picker can't drift.
     g_theme.source_rgba[0] = (float)redFromArgb(g_theme.source) / 255.0f;
     g_theme.source_rgba[1] = (float)greenFromArgb(g_theme.source) / 255.0f;
     g_theme.source_rgba[2] = (float)blueFromArgb(g_theme.source) / 255.0f;
     g_theme.source_rgba[3] = 1.0f;
 }
 
-//-----------------------------------------------------------------------------
-// Non-color token parsing. Every entry maps a `.colors` key to a metrics field.
-//-----------------------------------------------------------------------------
+// Non-color token parsing: every entry maps a `.colors` key to a metrics field.
 
 static void ApplyMetricToken(const char* key, const char* value, ImGuiM3Metrics& m, std::string& err)
 {
-    // strtod tells a real zero from an unparseable one by where it stops; the
-    // old atof==0 heuristic rejected "0.000000", which is exactly how the
-    // exporter writes corner_none, so fresh files failed on their own output
+    // strtod tells a real zero from an unparseable one by where it stops, so a
+    // written "0.000000" parses instead of being rejected as no number.
     char* end = nullptr;
     const double parsed = strtod(value, &end);
     while (*end == ' ' || *end == '\t')
@@ -733,9 +710,8 @@ static void LoadThemeFile(const std::string& path)
     while (std::getline(file, line))
     {
         line_no++;
-        // '#' doubles as the colour prefix, so context decides: a leading '#'
-        // is a whole-line comment, one before '=' is a trailing comment, and
-        // one after '=' is a value. the old test ate every colour value.
+        // '#' is both colour prefix and comment marker, so context decides: leading
+        // is a comment, before '=' trails a comment, after '=' is a value.
         const size_t hash = line.find('#');
         const size_t first_nonspace = line.find_first_not_of(" \t");
         const size_t equals_before_hash = line.find('=');
@@ -787,8 +763,7 @@ static void LoadThemeFile(const std::string& path)
         }
         else if (key == "generated")
         {
-            // kept for file compatibility; generation is now inferred per role,
-            // so this no longer suppresses overrides.
+            // accepted for file compatibility; it no longer suppresses role overrides.
             applied++;
         }
         else if (key == "contrast")
@@ -822,8 +797,7 @@ static void LoadThemeFile(const std::string& path)
         }
         else if (key == "density" || key == "shape_scale" || key == "shape-scale")
         {
-            // Allow these two at top level too, since they are the ones most
-            // likely to be poked at by hand.
+            // also accepted at top level, since these are the ones poked by hand.
             std::string metric_err;
             ApplyMetricToken(key.c_str(), value.c_str(), g_theme.metrics, metric_err);
             if (!metric_err.empty())
@@ -859,10 +833,9 @@ static void LoadThemeFile(const std::string& path)
         }
     }
 
-    // derive from source/variant/contrast, then reconcile the file's role lines:
-    // a line equal to the derivation stays derived, a differing one is pinned.
-    // makes write→reload idempotent without dropping hand edits, which the old
-    // `generated = true` check silently discarded.
+    // reconcile the file's role lines against the derivation: an equal line stays
+    // derived, a differing one is pinned. keeps write→reload idempotent without
+    // dropping hand edits.
     ResolveTheme();
     for (int i = 0; i < ImGuiM3Role_COUNT; i++)
     {
@@ -884,9 +857,7 @@ static void LoadThemeFile(const std::string& path)
     ResolveTheme();
 }
 
-//-----------------------------------------------------------------------------
 // Public theme accessors.
-//-----------------------------------------------------------------------------
 
 const ImVec4& ImGuiM3Color(ImGuiM3Role role)
 {
@@ -932,8 +903,8 @@ ImVec4 ImGuiM3Elevate(ImGuiM3Role role, int level)
     const ImVec4 base = ImGuiM3Color(role);
     if (level == 0)
         return base;
-    // 2025 dropped per-level tint opacities, but the legacy blend is still a
-    // fine way to nudge a role upward. kept for callers.
+    // 2025 dropped tint-per-level, but the legacy blend still nudges a role. kept
+    // for callers.
     return Over(base, WithAlpha(ImGuiM3Color(ImGuiM3Role_SurfaceTint), g_theme.metrics.elevation_tint[level]));
 }
 
@@ -951,7 +922,7 @@ ImGuiM3Contrast ImGuiM3GetContrast() { return g_theme.contrast; }
 
 ImGuiM3Role ImGuiM3SurfaceContainerForElevation(ImGuiM3Role role, int elevation)
 {
-    // Map a surface role onto the container scale that matches its elevation.
+    // maps a surface role onto the container scale for its elevation.
     const ImGuiM3Role containers[5] = {
         ImGuiM3Role_SurfaceContainerLowest, ImGuiM3Role_SurfaceContainerLow, ImGuiM3Role_SurfaceContainer,
         ImGuiM3Role_SurfaceContainerHigh, ImGuiM3Role_SurfaceContainerHighest};
@@ -982,9 +953,7 @@ const char* ImGuiM3GetError()
     return g_theme.last_error.empty() ? nullptr : g_theme.last_error.c_str();
 }
 
-//-----------------------------------------------------------------------------
 // Writing the file out.
-//-----------------------------------------------------------------------------
 
 static void StatFile(const std::string& path, uint64_t* mtime_ns, uint64_t* size, bool* exists);
 
@@ -1017,8 +986,7 @@ bool ImGuiM3WriteThemeFile(const char* path)
     out += "generated = true\n";
     out += "source   = ";
     {
-        // `source` is 0xAARRGGBB (argbFromRgb), not IM_COL32 order, so it has
-        // to be written byte-by-byte. WriteU32Color() swapped red and blue.
+        // source is 0xAARRGGBB, not IM_COL32 order, so write it byte-by-byte.
         char sbuf[16];
         snprintf(sbuf, sizeof(sbuf), "#%02x%02x%02x",
                  (unsigned)redFromArgb(g_theme.source), (unsigned)greenFromArgb(g_theme.source),
@@ -1114,9 +1082,8 @@ bool ImGuiM3WriteThemeFile(const char* path)
         return false;
     }
 
-    // adopt the new file's identity so the 4Hz poll doesn't read our own write
-    // as an external edit and reload a frame later. that was the "theme flips
-    // back on its own" behaviour.
+    // adopt the new file's identity so the poll doesn't read our own write as an
+    // external edit and reload it.
     uint64_t mtime = 0, size = 0;
     bool exists = false;
     StatFile(path, &mtime, &size, &exists);
@@ -1126,9 +1093,7 @@ bool ImGuiM3WriteThemeFile(const char* path)
     return true;
 }
 
-//-----------------------------------------------------------------------------
 // Theme file location + live reload.
-//-----------------------------------------------------------------------------
 
 const char* ImGuiM3DefaultThemeFilePath()
 {
@@ -1204,8 +1169,7 @@ bool ImGuiM3SetThemeFile(const char* path)
     }
     else
     {
-        // ship the preset so there's something to edit. fresh installs land
-        // here too, so the file always exists.
+        // ship the preset when the file is absent, so there is always something to edit.
         ImGuiM3WriteThemeFile(g_theme.file_path.c_str());
         StatFile(g_theme.file_path, &mtime, &size, &exists);
         g_theme.file_existed = exists;
@@ -1232,10 +1196,7 @@ void ImGuiM3Shutdown()
     g_icon_font = nullptr;
 }
 
-//-----------------------------------------------------------------------------
-// Style application. all 63 ImGuiCol_ slots filled from roles, so nothing is
-// left on imgui's purple defaults.
-//-----------------------------------------------------------------------------
+// fills every ImGuiCol_ slot from roles, leaving nothing on imgui's defaults.
 
 void ImGuiM3ApplyToStyle(float ui_scale)
 {
@@ -1245,8 +1206,7 @@ void ImGuiM3ApplyToStyle(float ui_scale)
         ResolveTheme();
     }
 
-    // style needs a context; token resolution doesn't, which is what makes the
-    // theme testable headless.
+    // style needs a context; token resolution doesn't, which keeps this testable headless.
     if (ImGui::GetCurrentContext() == nullptr)
         return;
 
@@ -1400,8 +1360,8 @@ void ImGuiM3ApplyToStyle(float ui_scale)
     style.FrameBorderSize      = 0.0f;
     style.TabBorderSize        = 0.0f;
 
-    // Sizing. Frame height is the M3 40dp button height, which is also the
-    // default row height for sliders, combos, checkboxes and text fields.
+    // frame height is the M3 40dp button height, also the default row height for
+    // sliders, combos, checkboxes and text fields.
     const float frame_height = m.button_height_default * d;
     const float font_size = style.FontSizeBase > 0.0f ? style.FontSizeBase : 16.0f;
     style.FramePadding        = ImVec2(m.button_padding_x * d, ImMax(4.0f, (frame_height - font_size) * 0.5f));
@@ -1419,10 +1379,8 @@ void ImGuiM3ApplyToStyle(float ui_scale)
     style.SelectableTextAlign = ImVec2(0.0f, 0.5f);
     style.Colors[ImGuiCol_NavCursor].w = 1.0f;
 
-    // A handful of roles are pulled in as locals for readability even though
-    // only some are referenced directly; the rest are used by the M3 widget
-    // painting in imgui_m3.cc. Silence the unused warnings rather than delete
-    // the names, since they document the palette.
+    // some roles are locals only to document the palette; the rest are unused, so
+    // silence the warnings rather than delete the names.
     (void)secondary;
     (void)primary_cont;
     (void)on_primary_cont;
@@ -1437,9 +1395,7 @@ void ImGuiM3ApplyToStyle(float ui_scale)
     (void)hover_on_surface_var;
 }
 
-//-----------------------------------------------------------------------------
 // Springs.
-//-----------------------------------------------------------------------------
 
 struct SpringEntry
 {
@@ -1453,8 +1409,7 @@ static double g_spring_clock = 0.0;
 
 void ImGuiM3ClearSprings()
 {
-    // Springs are cheap but a long session with thousands of distinct ids would
-    // grow without bound, so anything untouched for a while is dropped.
+    // drop springs untouched for a while so a long session can't grow the map forever.
     for (auto it = g_springs.begin(); it != g_springs.end();)
     {
         if (g_spring_clock - it->second.last_seen > 30.0)
@@ -1475,13 +1430,8 @@ static float SpringStep(ImGuiID id, float target, float damping_ratio, float sti
 
     if (!entry.initialized)
     {
-        // First ever call for this id: adopt the current target without
-        // animating, so a widget that appears already pressed/selected does not
-        // fly in. The old test keyed off `value == 0 && target != 0`, which is
-        // also true for *every button press* (rest is 0, press is 1) — so the
-        // press snapped instantly and only the release ever animated. An
-        // explicit flag keeps the "don't animate in" rule and lets the press
-        // spring properly.
+        // first call for this id: adopt the target without animating, so a widget
+        // that starts already pressed does not fly in.
         entry.initialized = true;
         entry.spring.value = target;
         entry.spring.velocity = 0.0f;
@@ -1494,8 +1444,7 @@ static float SpringStep(ImGuiID id, float target, float damping_ratio, float sti
     entry.spring.velocity += acceleration * dt;
     entry.spring.value += entry.spring.velocity * dt;
 
-    // Settle: below a thousandth of a pixel and effectively stopped, so we can
-    // stop touching the map.
+    // settle below a thousandth of a pixel and stop touching the entry.
     if (ImAbs(displacement) < 0.001f && ImAbs(entry.spring.velocity) < 0.001f)
     {
         entry.spring.value = target;
@@ -1546,9 +1495,7 @@ float ImGuiM3SpringStepEffectsSlow(ImGuiID id, float target)
     return SpringStep(id, target, m.spring_effects_slow_damping, m.spring_effects_slow_stiffness);
 }
 
-//-----------------------------------------------------------------------------
 // Named font weights.
-//-----------------------------------------------------------------------------
 
 static ImFont* g_font_regular = nullptr;
 static ImFont* g_font_medium = nullptr;
@@ -1567,16 +1514,13 @@ ImFont* ImGuiM3FontMedium()    { return g_font_medium ? g_font_medium : g_font_r
 ImFont* ImGuiM3FontBold()      { return g_font_bold ? g_font_bold : g_font_regular; }
 ImFont* ImGuiM3FontExtraBold() { return g_font_extra_bold ? g_font_extra_bold : g_font_regular; }
 
-//-----------------------------------------------------------------------------
 // Material Symbols icon face.
-//-----------------------------------------------------------------------------
 
 bool ImGuiM3LoadIconFont(const char* path, float size_px)
 {
     if (!path || !ImGui::GetCurrentContext())
         return false;
-    // The subset lives entirely in the Private Use Area; one range is enough and
-    // missing codepoints are skipped while the atlas is built.
+    // the subset lives in the Private Use Area, so one range covers it.
     static const ImWchar icon_ranges[] = {0xE000, 0xF8FF, 0};
     ImFontConfig cfg;
     cfg.PixelSnapH = true;
@@ -1604,9 +1548,7 @@ bool ImGuiM3MergeIconFont(const char* path, float size_px)
     return atlas->AddFontFromFileTTF(path, size_px, &cfg, icon_ranges) != nullptr;
 }
 
-//-----------------------------------------------------------------------------
 // Easing curves.
-//-----------------------------------------------------------------------------
 
 static float CubicBezierEase(float t, float x1, float y1, float x2, float y2)
 {
@@ -1618,8 +1560,8 @@ static float CubicBezierEase(float t, float x1, float y1, float x2, float y2)
 
     auto curve = [](float a, float b, float u) { float k = 1.0f - u; return 3.0f * k * k * u * a + 3.0f * k * u * u * b + u * u * u; };
 
-    // Solve curve(t, x1, x2) == t for t, then read y. Bisection is slower than
-    // Newton but monotone and cannot diverge on these curves.
+    // solve curve(t, x1, x2) == t, then read y. bisection is slower than Newton
+    // but monotone and cannot diverge on these curves.
     float lo = 0.0f, hi = 1.0f;
     for (int i = 0; i < 20; i++)
     {
@@ -1645,9 +1587,7 @@ float ImGuiM3EaseExpressiveFastEffects(float t)    { return CubicBezierEase(t, 0
 float ImGuiM3EaseExpressiveDefaultEffects(float t) { return CubicBezierEase(t, 0.34f, 0.80f, 0.34f, 1.00f); }
 float ImGuiM3EaseExpressiveSlowEffects(float t)    { return CubicBezierEase(t, 0.34f, 0.88f, 0.34f, 1.00f); }
 
-//-----------------------------------------------------------------------------
 // Shape helpers.
-//-----------------------------------------------------------------------------
 
 float ImGuiM3Radius(ImGuiM3Shape shape)
 {
@@ -1666,8 +1606,8 @@ float ImGuiM3Radius(ImGuiM3Shape shape)
     case ImGuiM3Shape_ExtraExtraLarge:     base = m.corner_xxl; break;
     case ImGuiM3Shape_Full:
     {
-        // `corner-full` is a real token now rather than "50% of the size", so it
-        // is expressed as a large radius that callers clamp per-widget.
+        // corner-full is a token, not "50% of size", so return a large radius
+        // that callers clamp per-widget.
         base = 9999.0f;
         break;
     }
@@ -1684,8 +1624,7 @@ float ImGuiM3PillRadius(ImVec2 size, float radius)
 ImGuiM3ShapeRounding ImGuiM3MorphedRounding(ImVec2 size, float radius, float pressed_radius, bool pressed, ImGuiID id)
 {
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-    // Corner morphing runs on the expressive fast spatial spring: every morphing
-    // corner in the spec is driven by it.
+    // corner morphs run on the default spatial spring.
     const float t = ImGuiM3SpringStepSpatialDefault(id, pressed ? 1.0f : 0.0f);
     float r = radius + (pressed_radius - radius) * t;
     if (radius > 1000.0f)
@@ -1698,8 +1637,7 @@ ImGuiM3ShapeRounding ImGuiM3MorphedRounding(ImVec2 size, float radius, float pre
 
 float ImGuiM3ConnectedInnerRadius()
 {
-    // md.comp.button-group.connected.inner-corner, size S: 8dp. The outer corners
-    // are `corner-full`, so the two ends of the group read as pills.
+    // md.comp.button-group.connected inner-corner at size S: 8dp.
     return ImGuiM3Radius(ImGuiM3Shape_Small);
 }
 
@@ -1729,17 +1667,11 @@ ImGuiM3ShapeRounding ImGuiM3ConnectedSegmentRounding(ImVec2 size, int index, int
     return r;
 }
 
-//-----------------------------------------------------------------------------
 // Drawing helpers.
-//-----------------------------------------------------------------------------
 
-// Builds a rounded-rect path honouring per-corner radii. ImDrawList only
-// rounds all corners uniformly, but M3's shape tokens are per-corner
-// (corner-extra-small-top, corner-large-start, connected button groups), so the
-// path is assembled from four arcs. The sweep runs clockwise from the top-right
-// corner: -90°..0°, 0°..90°, 90°..180°, 180°..270°. It deliberately does not
-// repeat the start point at the end: a zero-length closing segment makes the
-// anti-aliased stroke render as a dotted line with spikes.
+// builds a per-corner rounded-rect path, since ImDrawList only rounds uniformly.
+// the sweep runs clockwise from the top-right; the start point is not repeated so
+// a zero-length closing segment does not stroke as a spiked dotted line.
 static void AddRoundedRectPath(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding)
 {
     const float w = bb.GetWidth();
@@ -1762,9 +1694,8 @@ static void AddRoundedRectPath(ImDrawList* draw_list, const ImRect& bb, ImGuiM3S
     else           draw_list->PathLineTo(ImVec2(bb.Min.x, bb.Min.y));
 }
 
-// Removes consecutive duplicate vertices. A pill's two cap arcs meet at a single
-// point (e.g. the left-mid edge), and a zero-length segment there makes the
-// stroked outline render with a flat notch. Fills and strokes both call this.
+// drops consecutive duplicate vertices: where a pill's cap arcs meet, a
+// zero-length segment would stroke as a flat notch.
 static void DedupeDrawPath(ImDrawList* draw_list)
 {
     ImVector<ImVec2>& path = draw_list->_Path;
@@ -1787,11 +1718,8 @@ void ImGuiM3PathRoundedRect(ImDrawList* draw_list, const ImRect& bb, ImGuiM3Shap
     if (col == 0 || bb.GetWidth() <= 0.0f || bb.GetHeight() <= 0.0f)
         return;
 
-    // Uniform rounding (the overwhelmingly common case) goes through ImGui's own
-    // anti-aliased AddRectFilled. Everything else uses the exact per-corner path
-    // that ImGuiM3DrawContainer strokes, so a shape's fill and outline always
-    // coincide. (Composing a rect + cap circle looked close but drifted from the
-    // stroked path, which let the fill escape the outline.)
+    // uniform rounding uses ImGui's own anti-aliased AddRectFilled; the rest use
+    // the exact per-corner path so a shape's fill and its outline coincide.
     if (rounding.tl == rounding.tr && rounding.tr == rounding.br && rounding.br == rounding.bl)
     {
         const float radius = ImMin(rounding.tl, ImMin(bb.GetWidth(), bb.GetHeight()) * 0.5f);
@@ -1836,10 +1764,8 @@ void ImGuiM3DrawStateLayer(ImDrawList* draw_list, const ImRect& bb, ImGuiM3Shape
     const ImU32 col = ImGuiM3StateLayerU32(role, state);
     if (col == 0)
         return;
-    // The state layer inherits the container's shape, so a rounded button gets a
-    // rounded layer rather than a rectangle punched into it. No extra clip rect:
-    // clipping to the bounding box sheared the anti-aliased fringe off the
-    // curved edges, which read as a jagged/dotted border.
+    // inherits the container's shape, and clips to it rather than the bounding
+    // box: a box clip shears the anti-aliased fringe off the curved edges.
     ImGuiM3PathRoundedRect(draw_list, bb, rounding, col);
 }
 
@@ -1848,9 +1774,8 @@ void ImGuiM3DrawIcon(ImDrawList* draw_list, const char* glyph, const ImRect& bb,
     ImFont* icon = ImGuiM3IconFont();
     if (!icon || !glyph || px <= 0.0f)
         return;
-    // Centre the glyph's *ink* on both axes rather than its advance/line box.
-    // Material Symbols carry asymmetric side bearings, so centring the advance
-    // width pushes the drawn mark off to one side of the container.
+    // centre the glyph's *ink*, not its advance box: Material Symbols have
+    // asymmetric side bearings, so advance-centring pushes the mark off to one side.
     ImVec2 ink_center;
     if (!ImGuiM3IconInkCenterXY(icon, px, glyph, ink_center))
     {
@@ -1867,9 +1792,8 @@ bool ImGuiM3IconInkCenterXY(ImFont* font, float px, const char* text, ImVec2& ou
 {
     if (!font || !text || px <= 0.0f)
         return false;
-    // Only valid for a lone glyph: a mixed icon+label run shares a baseline with
-    // its text instead of being ink-centred, so bail on anything after the first
-    // codepoint.
+    // lone glyphs only; a mixed icon+label run shares a baseline, so bail on extra
+    // codepoints.
     unsigned int cp = 0;
     const int consumed = ImTextCharFromUtf8(&cp, text, text + strlen(text));
     if (consumed <= 0 || (size_t)consumed != strlen(text))
@@ -1904,13 +1828,11 @@ void ImGuiM3DrawElevation(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeR
     const ImU32 shadow = PackU32(WithAlpha(ImGuiM3Color(ImGuiM3Role_Shadow), m.key_shadow_opacity));
     const ImU32 ambient = PackU32(WithAlpha(ImGuiM3Color(ImGuiM3Role_Shadow), m.ambient_shadow_opacity));
 
-    // ImGui has no blur, so the two-layer shadow collapses into one offset rect
-    // per layer, drawn behind the container. Callers draw the container after.
+    // no blur in ImGui, so each shadow layer becomes one offset rect behind the
+    // container.
     for (int pass = 0; pass < 2; pass++)
     {
-        // The token arrays are indexed by elevation level, not by render pass.
-        // The previous `level * 2 + pass` read past all arrays at level 3+, which
-        // could feed arbitrary geometry into the draw list.
+        // arrays are indexed by elevation level, not by render pass.
         const int idx = level;
         const float spread = pass == 0 ? 0.0f : m.ambient_shadow_spread[idx] * 0.5f;
         const float dy = pass == 0 ? m.key_shadow_y[idx] : m.ambient_shadow_y[idx];
@@ -1930,9 +1852,7 @@ void ImGuiM3DrawScrim(ImDrawList* draw_list, const ImRect& bb)
     draw_list->AddRectFilled(bb.Min, bb.Max, PackU32(WithAlpha(ImGuiM3Color(ImGuiM3Role_Scrim), m.scrim_opacity)));
 }
 
-//-----------------------------------------------------------------------------
 // Frame hook.
-//-----------------------------------------------------------------------------
 
 void ImGuiM3NewFrame()
 {
@@ -1955,8 +1875,7 @@ void ImGuiM3NewFrame()
     {
         if (g_theme.file_existed)
         {
-            // The file went away; fall back to the shipped preset but keep the
-            // path so it is recreated on the next successful write.
+            // file removed: fall back to the preset but keep the path for the next write.
             g_theme.file_existed = false;
             g_theme.role_flags[0] = 0;
             g_theme.role_flags[1] = 0;
@@ -1984,13 +1903,11 @@ void ImGuiM3NewFrame()
     }
 }
 
-//-----------------------------------------------------------------------------
 // M3 widgets.
-//-----------------------------------------------------------------------------
 
 namespace
 {
-    // Shared container description for the five button flavours.
+    // container, label, state-layer roles and elevation per button variant.
     struct ButtonPaint
     {
         ImGuiM3Role container_role;
@@ -2042,11 +1959,8 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     const bool pressed = ButtonBehavior(bb, id, &hovered, &held);
     RenderNavCursor(bb, id);
 
-    // Expressive shape morph: resting is `corner-full`, pressed is `corner-small`.
-    // The motion spec puts small components on the *fast* spring, but a fast
-    // corner morph on a button reads as a snap rather than motion. The default
-    // spatial spring (~500ms, damping 0.8) is the spec's "most motion" speed and
-    // lands as short-but-deliberate, so buttons morph on it instead.
+    // corners morph corner-full→corner-small on the default spatial spring; the
+    // spec's fast spring reads as a snap on a button.
     const float rest_radius = ImGuiM3Radius(ImGuiM3Shape_Full);
     const float press_radius = ImGuiM3Radius(ImGuiM3Shape_Small);
     const float morph = ImGuiM3SpringStepSpatialSlow(id ^ 0x42544F, (held && hovered) ? 1.0f : 0.0f);
@@ -2072,9 +1986,8 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     if (medium)
         PushFont(medium, GetFontSize());
     const ImVec2 weighted_label_size = medium ? CalcTextSize(label, NULL, true) : label_size;
-    // An icon-only button (`M3IconButton`) passes a lone Material Symbol as its
-    // label; centre that glyph's ink rather than its line box so it sits true in
-    // the square. Text labels keep the normal centred/clipped layout.
+    // a lone icon glyph is ink-centred in the square; text labels use the normal
+    // centred/clipped layout.
     ImVec2 ink_center;
     if (ImGuiM3IconInkCenterXY(GetFont(), GetFontSize(), label, ink_center))
         RenderText(ImVec2(bb.GetCenter().x - ink_center.x, bb.GetCenter().y - ink_center.y), label);
@@ -2127,7 +2040,7 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
     bool hovered, held;
     bool pressed = ButtonBehavior(total_bb, id, &hovered, &held);
 
-    // Selected track is primary + a check glyph; unselected is surface-container-highest.
+    // selected track is primary with a check; unselected is surface-container-highest.
     const bool on = *v;
     const ImVec4 track_on_color = ImGuiM3Color(ImGuiM3Role_Primary);
     const ImVec4 track_off_color = ImGuiM3Color(ImGuiM3Role_SurfaceContainerHighest);
@@ -2164,7 +2077,7 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
                                       window->DrawList->_CalcCircleAutoSegmentCount(handle_r));
     window->DrawList->AddCircleFilled(handle_center, handle_r, handle_col, window->DrawList->_CalcCircleAutoSegmentCount(handle_r));
 
-    // Selected indicator: M3 draws a check inside the handle when selected.
+    // when selected, M3 draws a check inside the handle.
     if (on)
     {
         static const char kCheckGlyph[] = "\xEE\x97\x8A";
@@ -2238,9 +2151,7 @@ bool ImGui::M3Fab(const char* glyph, const char* tooltip, bool large)
 
     const ImVec2 text_size = CalcTextSize(glyph, NULL, true);
     PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnPrimaryContainer));
-    // Centre the glyph's ink in the circle rather than its line box; Material
-    // Symbols sit off-centre inside their advance/em box so geometric centring
-    // reads as a nudge. Falls back to normal centred layout for non-icon glyphs.
+    // ink-centre the glyph; non-icon glyphs fall back to normal centred layout.
     ImVec2 ink_center;
     if (ImGuiM3IconInkCenterXY(GetFont(), GetFontSize(), glyph, ink_center))
         RenderText(ImVec2(bb.GetCenter().x - ink_center.x, bb.GetCenter().y - ink_center.y), glyph);
@@ -2263,9 +2174,7 @@ void ImGui::M3Icon(const char* glyph, ImVec2 size_arg)
     Dummy(ImVec2(s, s));
     if (ImFont* icon = ImGuiM3IconFont())
     {
-        // Real icon face: justify the glyph's *ink* inside the s×s box. Centring
-        // the advance/line box leaves Material Symbols visibly off-centre because
-        // their side bearings are asymmetric.
+        // ink-centre the glyph in the s×s box; Material Symbols have asymmetric bearings.
         PushFont(icon, s);
         ImVec2 ink_center;
         const ImVec2 text_size = CalcTextSize(glyph, NULL, true);
@@ -2278,7 +2187,7 @@ void ImGui::M3Icon(const char* glyph, ImVec2 size_arg)
     }
     else
     {
-        // Fallback when the icon face is missing: scale whatever glyph we have.
+        // icon face missing: scale whatever glyph is available.
         const ImVec2 text_size = CalcTextSize(glyph, NULL, true);
         const float font_size = ImClamp(GetFontSize() * s / ImMax(text_size.y, 1.0f), 6.0f, 128.0f);
         PushFont(NULL, font_size);
@@ -2292,8 +2201,7 @@ void ImGui::M3Icon(const char* glyph, ImVec2 size_arg)
 void ImGui::M3SectionHeader(const char* label, const char* icon)
 {
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-    // The M3 "emphasized" title-small: same size, bolder weight, which in a
-    // bitmap-less build is expressed by using the primary colour at full weight.
+    // M3 "emphasized" title-small: bold face plus primary colour.
     PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_Primary));
     ImFont* bold = ImGuiM3FontBold();
     if (bold)
@@ -2369,8 +2277,8 @@ void ImGui::M3ListItem(const char* label, bool selected, bool* p_selected)
         bool hovered, held;
         pressed = ButtonBehavior(bb, id, &hovered, &held);
 
-        // Selected list items use secondary-container and morph to a larger
-        // radius; hovered ones use a plain state layer.
+        // selected items use secondary-container and a larger radius; hovered use a
+        // state layer.
         const float rest_radius = selected ? ImGuiM3Radius(ImGuiM3Shape_Large) : ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
         const float press_radius = ImGuiM3Radius(ImGuiM3Shape_Large);
         const ImGuiM3ShapeRounding rounding = ImGuiM3MorphedRounding(bb.GetSize(), rest_radius, press_radius, hovered && held, id);
@@ -2459,9 +2367,7 @@ void ImGui::M3StatusChip(const char* label, ImGuiM3Role role)
     }
 }
 
-//-----------------------------------------------------------------------------
 // Connected button group.
-//-----------------------------------------------------------------------------
 
 bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons)
 {
@@ -2470,8 +2376,7 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
         return false;
 
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-    // Size S: 40dp tall, 16dp inline padding, 2dp connected padding between
-    // segments, full outer corners and 8dp inner corners (md.comp.button-group).
+    // size S: 40dp tall, 16dp inline padding, 2dp between segments (md.comp.button-group).
     const float h = m.button_height_default * m.density;
     const float gap = 2.0f * m.density;
     const float pad_x = 16.0f * m.density;
@@ -2485,9 +2390,7 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     ImFont* medium = ImGuiM3FontMedium();
     ImFont* bold = ImGuiM3FontBold();
 
-    // Icons are shown whenever the face is available; if the row is too narrow
-    // the whole thing scales down together rather than dropping the icons, so
-    // the nav keeps its visual cues.
+    // if the row is too narrow the whole thing scales down rather than dropping icons.
     const bool use_icons = (icons != NULL) && (icon_font != NULL);
 
     ImVector<float> widths;
@@ -2513,9 +2416,8 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
             widths[i] *= scale;
     }
 
-    // Keep the icon proportional to the (possibly scaled) segment width so it
-    // never spills past a shrunken segment, but quantize it so the dynamic font
-    // atlas only ever bakes a couple of icon sizes.
+    // scale the icon with the (possibly shrunken) segment, quantized so the dynamic
+    // font atlas only bakes a couple of sizes.
     const float fit = (total <= avail) ? 1.0f : avail / total;
     const float icon_fit = ImMax(0.5f, ImFloor(fit * 4.0f + 0.5f) / 4.0f);
     const float icon_px_draw = icon_px * icon_fit;
@@ -2542,9 +2444,7 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
             const bool is_selected = (i == *selected);
             const ImGuiM3ShapeRounding rounding = ImGuiM3ConnectedSegmentRounding(bb.GetSize(), i, count);
 
-            // Selected segments swap to the secondary container; the rest stay
-            // transparent and rely on the 1dp outline, which is the connected
-            // group's "outlined" default.
+            // selected segments use secondary-container; the rest rely on the 1dp outline.
             if (is_selected)
                 ImGuiM3PathRoundedRect(window->DrawList, bb, rounding, ImGuiM3ColorU32(ImGuiM3Role_SecondaryContainer));
 
@@ -2557,8 +2457,7 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
 
             RenderNavCursor(bb, seg_id);
 
-            // Weight carries the selected state as much as colour does: the
-            // selected segment is bold, the rest medium (M3 label-large).
+            // weight carries the selected state: selected is bold, the rest medium.
             ImFont* font = is_selected ? bold : medium;
             const ImU32 label_col = ImGuiM3ColorU32(is_selected ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_OnSurfaceVariant);
             const ImU32 icon_col = label_col;
@@ -2623,23 +2522,19 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     return changed;
 }
 
-//-----------------------------------------------------------------------------
 // Theme editor.
-//-----------------------------------------------------------------------------
 
 void ImGui::M3ThemeEditor()
 {
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
 
-    // --- Source + generation knobs -----------------------------------------
+    // source + generation knobs
     M3SectionHeader("Source");
 
     ImGuiColorEditFlags flags = ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_DisplayHex | ImGuiColorEditFlags_AlphaPreviewHalf;
 
-    // source_rgba is kept in lock-step with `source` by ResolveTheme, so this
-    // picker both shows the real seed and commits an edit (the old call passed a
-    // 3-float array to ColorEdit4 and dropped the return value, so it read past
-    // the array and did nothing).
+    // source_rgba is kept in lock-step with the seed by ResolveTheme, so the picker
+    // shows the real value and commits edits.
     if (ImGui::ColorEdit4("##source", g_theme.source_rgba, flags))
     {
         g_theme.source = argbFromRgb((int)(ImSaturate(g_theme.source_rgba[0]) * 255.0f + 0.5f),
@@ -2679,7 +2574,7 @@ void ImGui::M3ThemeEditor()
         ImGuiM3WriteThemeFile(ImGuiM3GetThemeFile());
     }
 
-    // --- Live reload status -------------------------------------------------
+    // live reload status
     M3SectionHeader("Theme file");
     ImGui::TextDisabled("%s", ImGuiM3GetThemeFile() ? ImGuiM3GetThemeFile() : "(no file — in-memory only)");
     if (ImGui::Button("Write preset to file"))
@@ -2700,7 +2595,7 @@ void ImGui::M3ThemeEditor()
     if (const char* err = ImGuiM3GetError())
         ImGui::TextColored(ImGuiM3Color(ImGuiM3Role_Error), "%s", err);
 
-    // --- Color roles -------------------------------------------------------
+    // colour roles
     M3SectionHeader("Color roles");
     if (ImGui::SmallButton("Reset overrides"))
     {
@@ -2734,7 +2629,7 @@ void ImGui::M3ThemeEditor()
     }
     ImGui::Columns(1);
 
-    // --- Shape / metric tokens --------------------------------------------
+    // shape and metric tokens
     M3SectionHeader("Shape and metrics");
     ImGui::SliderFloat("Density", &g_theme.metrics.density, 0.5f, 2.0f, "%.2fx");
     ImGui::SliderFloat("Shape scale", &g_theme.metrics.shape_scale, 0.0f, 2.0f, "%.2f");
@@ -2744,7 +2639,7 @@ void ImGui::M3ThemeEditor()
     ImGui::TextDisabled("button %.0f  icon button %.0f  fab %.0f  list item %.0f  tab %.0f",
                         m.button_height_default, m.icon_button_size, m.fab_size, m.list_item_height_1, m.tab_height);
 
-    // --- Component showcase ------------------------------------------------
+    // component showcase
     M3SectionHeader("Components");
     if (ImGui::Button("Filled", ImVec2(0, 0))) {}
     ImGui::SameLine();

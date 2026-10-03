@@ -1,29 +1,20 @@
 // Material 3 Expressive theming for Dear ImGui.
 //
-// lives in the vendored tree on purpose: the theme draws widgets, so it has to
-// sit next to imgui_widgets.cc rather than restyle ImGuiCol_* from outside.
-//
-// covers the full M3 role set plus shape/state/motion tokens, a TonalPalette +
-// HCT solver like Matugen's, and a `.colors` file with live reload:
-//
-//     variant  = dark
-//     source   = #6750A4
-//
-// anything set explicitly wins; the rest derives from `source`.
+// lives in the vendored tree because it draws its own widgets and must sit next
+// to imgui_widgets.cc rather than restyle ImGuiCol_* from outside. covers the
+// full role set, shape/state/motion tokens, an HCT solver, and a live-reload
+// `.colors` file where explicit values win and the rest derives from `source`.
 
 #ifndef IMGUI_M3_H_INCLUDED
 #define IMGUI_M3_H_INCLUDED
 
 #include "imgui.h"
 
-// ImRect is declared in imgui_internal.h, which includes this header, so all we
-// can do here is forward declare it. Every use below is a const reference.
+// ImRect comes from imgui_internal.h, which includes this header, so forward
+// declare it here; every use is a const reference.
 struct ImRect;
 
-//-----------------------------------------------------------------------------
-// Color roles. The complete M3 role set as of the 2025 Expressive revision, in
-// spec order.
-//-----------------------------------------------------------------------------
+// The complete M3 role set as of the 2025 Expressive revision, in spec order.
 
 enum ImGuiM3Role_
 {
@@ -90,8 +81,7 @@ enum ImGuiM3Role_
 
 typedef ImGuiM3Role_ ImGuiM3Role;
 
-// Scheme variants. EXPRESSIVE is the M3 Expressive default; the rest mirror
-// Matugen's `--type` values so a Matugen config maps straight across.
+// Scheme variants. mirrors Matugen's `--type` values so its config maps across.
 enum ImGuiM3Variant_
 {
     ImGuiM3Variant_TonalSpot = 0,
@@ -106,7 +96,7 @@ enum ImGuiM3Variant_
 
 typedef ImGuiM3Variant_ ImGuiM3Variant;
 
-// Contrast levels, added May 2025. STANDARD / MEDIUM / HIGH.
+// Contrast levels from the May 2025 revision.
 enum ImGuiM3Contrast_
 {
     ImGuiM3Contrast_Standard = 0,
@@ -117,10 +107,7 @@ enum ImGuiM3Contrast_
 
 typedef ImGuiM3Contrast_ ImGuiM3Contrast;
 
-//-----------------------------------------------------------------------------
-// Shape scale. Radii are dp and get scaled by the density factor. Expressive
-// added three steps on top of the classic six.
-//-----------------------------------------------------------------------------
+// Shape scale, in dp. Expressive added three steps on top of the classic six.
 
 enum ImGuiM3Shape_
 {
@@ -139,11 +126,8 @@ enum ImGuiM3Shape_
 
 typedef ImGuiM3Shape_ ImGuiM3Shape;
 
-//-----------------------------------------------------------------------------
-// Interaction states. Opacities are the M3 state layer table: hover 8%, focus
-// 10%, press 10%, drag 16%. There is no "selected" state layer — selection is a
-// container colour swap — but we keep the slot so callers can ask for it.
-//-----------------------------------------------------------------------------
+// Interaction states. The spec has no "selected" layer (selection is a container
+// swap), but the slot stays so callers can ask for it.
 
 enum ImGuiM3State_
 {
@@ -159,10 +143,8 @@ enum ImGuiM3State_
 
 typedef ImGuiM3State_ ImGuiM3State;
 
-//-----------------------------------------------------------------------------
-// Non-color tokens. These live in the `.colors` file under an `[expressive]`
-// section so the file stays a single flat token sheet.
-//-----------------------------------------------------------------------------
+// Non-color tokens, written to the `.colors` file under `[expressive]` so the
+// file stays one flat sheet.
 
 struct ImGuiM3Metrics
 {
@@ -290,9 +272,8 @@ struct ImGuiM3Metrics
     float       focus_indicator_inner_offset = -3.0f;
     float       scrim_opacity = 0.32f;
 
-    // Elevation. Shadow geometry per level 0-5; surface tint is deprecated in the
-    // 2025 spec in favour of the surface container roles, so we only track the
-    // tint opacities for legacy call sites.
+    // Elevation shadow geometry per level 0-5. Surface tint is deprecated in the
+    // 2025 spec, so the tint opacities only remain for legacy callers.
     float       elevation_dips[6]     = {0.0f, 1.0f, 3.0f, 6.0f, 8.0f, 12.0f};
     float       key_shadow_y[6]       = {0.0f, 1.0f, 1.0f, 1.0f, 2.0f, 4.0f};
     float       key_shadow_blur[6]    = {0.0f, 2.0f, 2.0f, 3.0f, 3.0f, 4.0f};
@@ -336,9 +317,7 @@ struct ImGuiM3Metrics
     float       duration_extra_long4 = 1000.0f;
 };
 
-//-----------------------------------------------------------------------------
 // Button flavours.
-//-----------------------------------------------------------------------------
 
 enum ImGuiM3ButtonVariant_
 {
@@ -355,9 +334,7 @@ enum ImGuiM3ButtonVariant_
 
 typedef ImGuiM3ButtonVariant_ ImGuiM3ButtonVariant;
 
-//-----------------------------------------------------------------------------
-// Role names. Also used for the `.colors` file keys and for the colour picker UI.
-//-----------------------------------------------------------------------------
+// role names double as `.colors` file keys and picker labels.
 
 IMGUI_API const char* ImGuiM3RoleName(ImGuiM3Role role);
 IMGUI_API ImGuiM3Role ImGuiM3RoleFromName(const char* name);   // ImGuiM3Role_COUNT when unknown.
@@ -366,13 +343,8 @@ IMGUI_API ImGuiM3Variant ImGuiM3VariantFromName(const char* name);
 IMGUI_API const char* ImGuiM3ContrastName(ImGuiM3Contrast contrast);
 IMGUI_API ImGuiM3Contrast ImGuiM3ContrastFromName(const char* name);
 
-//-----------------------------------------------------------------------------
-// Theme lifetime.
-//-----------------------------------------------------------------------------
-
-// Points the theme at a `.colors` file. Loads it if it exists; writes a fully
-// populated preset file if it does not. Pass NULL to go back to the compiled-in
-// preset with no file involved.
+// Points the theme at a `.colors` file. Loads it if it exists, otherwise writes
+// a populated preset. NULL falls back to the compiled-in preset with no file.
 IMGUI_API bool        ImGuiM3SetThemeFile(const char* path);
 IMGUI_API const char* ImGuiM3GetThemeFile();
 
@@ -390,22 +362,18 @@ IMGUI_API ImU32               ImGuiM3StateLayerU32(ImGuiM3Role role, ImGuiM3Stat
 IMGUI_API ImVec4              ImGuiM3Elevate(ImGuiM3Role role, int level);
 IMGUI_API const ImGuiM3Metrics& ImGuiM3GetMetrics();
 
-// Named faces from the loaded Google Sans family, or NULL when the family was
-// not found. Index 0 is always the regular face, so body text needs no lookup.
-// M3 expressive leans on weight to signal emphasis (selected nav, titles),
-// which a single face cannot express.
+// Named Google Sans faces, or NULL when the family was missing. Expressive leans
+// on weight for emphasis, which a single face cannot express.
 IMGUI_API ImFont*             ImGuiM3FontMedium();
 IMGUI_API ImFont*             ImGuiM3FontBold();
 IMGUI_API ImFont*             ImGuiM3FontExtraBold();
-// Registers the named text faces by pointer. MergeMode font entries make
-// ImGui's font indices unstable, so the overlay hands over the actual faces.
+// Font indices are unstable with MergeMode entries, so faces arrive by pointer.
 IMGUI_API void                ImGuiM3SetTextFonts(ImFont* regular, ImFont* medium, ImFont* bold, ImFont* extra_bold);
 
-// Loads a Material Symbols subset as its own atlas face so icons can be drawn
-// at any size. Call once before the atlas is built (overlay construction).
+// Adds the Material Symbols subset as its own atlas face; call before the atlas
+// is built.
 IMGUI_API bool                ImGuiM3LoadIconFont(const char* path, float size_px);
-// Merges the icon subset into the face most recently added, so icon codepoints
-// render inline in text labels at the text size.
+// Merges the icon subset into the last-added face for inline icon glyphs.
 IMGUI_API bool                ImGuiM3MergeIconFont(const char* path, float size_px);
 IMGUI_API ImFont*             ImGuiM3IconFont();
 IMGUI_API bool                ImGuiM3IsDark();
@@ -413,45 +381,38 @@ IMGUI_API ImU32               ImGuiM3SourceColor();
 IMGUI_API ImGuiM3Variant      ImGuiM3GetVariant();
 IMGUI_API ImGuiM3Contrast     ImGuiM3GetContrast();
 
-// Writes the resolved theme as a `.colors` file, every token on its own line.
-// Returns false and leaves the file untouched on any write failure.
+// Writes every resolved token to a `.colors` file; on any failure returns false
+// and leaves the file untouched.
 IMGUI_API bool        ImGuiM3WriteThemeFile(const char* path);
 
-// Re-derives every token from source / variant / contrast / explicit overrides and
-// pushes the result into ImGuiStyle.
+// re-derives every token and pushes the result into ImGuiStyle.
 IMGUI_API void        ImGuiM3ApplyToStyle(float ui_scale);
 
 // True on the frame the theme file changed and was re-read.
 IMGUI_API bool        ImGuiM3ConsumeReloadedFlag();
-// Human-readable note about the last reload ("reloaded 44 tokens from ..."), or
-// NULL. Also consumes the flag.
+// note about the last reload, or NULL. consumes the flag.
 IMGUI_API const char* ImGuiM3ConsumeReloadMessage();
 // Last parse error, or NULL.
 IMGUI_API const char* ImGuiM3GetError();
 
-//-----------------------------------------------------------------------------
-// Shape + motion helpers used by the M3 widget drawing in imgui_widgets.cc.
-//-----------------------------------------------------------------------------
+// Shape + motion helpers for the M3 widget drawing.
 
-// Per-corner radii. M3 Expressive shapes morph per corner and defines
-// asymmetric tokens (corner-extra-small-top, corner-large-start, ...), which a
-// single ImGuiStyle rounding value cannot express.
+// Per-corner radii; a single ImGuiStyle rounding cannot express M3's asymmetric
+// tokens (corner-extra-small-top, corner-large-start, ...).
 struct ImGuiM3ShapeRounding
 {
     float tl, tr, br, bl;
 };
 
-// A spring. M3 Expressive's signature move is that a container's corners morph
-// when it is pressed; this drives that.
+// Spring state for a corner morph.
 struct ImGuiM3Spring
 {
     float value = 0.0f;
     float velocity = 0.0f;
 };
 
-// Integrates the spring for `id` toward `target` and returns its new value.
-// Springs are keyed by ImGuiID so two buttons never share animation state.
-// `damping` is the M3 damping *ratio*, `stiffness` is rad/s.
+// Integrates `id`'s spring toward `target` and returns the new value. `damping`
+// is the M3 damping ratio, `stiffness` in rad/s.
 IMGUI_API float ImGuiM3SpringStep(ImGuiID id, float target, float damping_ratio, float stiffness);
 
 // M3 Expressive spatial/effects spring presets.
@@ -483,27 +444,22 @@ IMGUI_API float ImGuiM3EaseExpressiveSlowEffects(float t);    // 0.34, 0.88, 0.3
 IMGUI_API float ImGuiM3Radius(ImGuiM3Shape shape);
 // Fully-rounded helper: min(half the shorter side, radius).
 IMGUI_API float ImGuiM3PillRadius(ImVec2 size, float radius);
-// The M3 Expressive morph: pressed corners pull in toward a smaller radius,
-// animated by a spring. `pressed_radius` is the resting radius of that state.
+// Spring-animated morph from `radius` toward `pressed_radius` while pressed.
 IMGUI_API ImGuiM3ShapeRounding ImGuiM3MorphedRounding(ImVec2 size, float radius, float pressed_radius, bool pressed, ImGuiID id);
 
-// Connected button group geometry (the expressive replacement for the
-// segmented button). The group's outer corners are `corner-full` so the ends
-// read as pills, while the inner corners stay modest — 8dp at size S, per
-// md.comp.button-group.connected. `index` is 0-based, `count` the segment count.
+// Connected button group geometry: pill outer corners, 8dp inner at size S;
+// `index` is 0-based, `count` the segment count.
 IMGUI_API float ImGuiM3ConnectedInnerRadius();
 IMGUI_API ImGuiM3ShapeRounding ImGuiM3ConnectedSegmentRounding(ImVec2 size, int index, int count);
 
 // Draws an M3 state layer over a rect: `role` at `state`'s opacity.
 IMGUI_API void ImGuiM3DrawStateLayer(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, ImGuiM3Role role, ImGuiM3State state);
-// centres a Material Symbols glyph on its ink box, not the taller text line
-// box. standalone icons only; icon+label runs share a baseline instead.
+// centres a lone Material Symbols glyph on its ink box, not the text line box.
 IMGUI_API void ImGuiM3DrawIcon(ImDrawList* draw_list, const char* glyph, const ImRect& bb, float px, ImU32 col);
-// ink-box centre on both axes, as offsets from the text layout position. false
-// when the glyph won't resolve, so the caller can fall back.
+// ink-box centre as offsets from the layout position; false when the glyph will
+// not resolve, so the caller can fall back.
 IMGUI_API bool ImGuiM3IconInkCenterXY(ImFont* font, float px, const char* glyph, ImVec2& out_center);
-// y only. glyphs centre at 0.5*size, the line box at 0.6*size, so line-box
-// centring leaves icons too high.
+// y only. ink centres at 0.5*size, the line box at 0.6*size.
 IMGUI_API float ImGuiM3IconInkCenter(ImFont* font, float px, const char* glyph);
 // Fill + optional outline, matching M3's container variants.
 IMGUI_API void ImGuiM3DrawContainer(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, ImU32 fill, ImU32 outline, float outline_width);
@@ -514,19 +470,14 @@ IMGUI_API void ImGuiM3PathRoundedRect(ImDrawList* draw_list, const ImRect& bb, I
 // Translucent backdrop, the M3 scrim at 32%.
 IMGUI_API void ImGuiM3DrawScrim(ImDrawList* draw_list, const ImRect& bb);
 
-// from ImGui::NewFrame(): reload the theme file if it changed, clear the
-// spring table. not public API.
+// hooked from ImGui::NewFrame: reload on change, clear the spring table. not public API.
 IMGUI_API void ImGuiM3NewFrame();
 IMGUI_API void ImGuiM3Shutdown();
 
-// surface-container role that best expresses `elevation` on `role`. 2025 M3
-// dropped tint-per-level in favour of these roles.
+// surface-container role for `elevation`; 2025 M3 replaced tint-per-level with these.
 IMGUI_API ImGuiM3Role ImGuiM3SurfaceContainerForElevation(ImGuiM3Role role, int elevation);
 
-//-----------------------------------------------------------------------------
 // M3 widgets layered on top of core ImGui.
-//-----------------------------------------------------------------------------
-
 namespace ImGui
 {
     IMGUI_API bool M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg = ImVec2(0, 0));
@@ -537,21 +488,18 @@ namespace ImGui
     IMGUI_API void M3Icon(const char* glyph, ImVec2 size_arg = ImVec2(0, 0));
     IMGUI_API void M3SectionHeader(const char* label, const char* icon = NULL);
     IMGUI_API void M3Divider(ImGuiM3Role role = ImGuiM3Role_OutlineVariant);
-    // titled content card: surface-container-low, grows with its contents, optional
-    // section header. groups related controls so tabs read as blocks.
+    // titled content card: surface-container-low, sized to its contents.
     IMGUI_API void M3CardBegin(const char* id, const char* title = NULL, const char* icon = NULL);
     IMGUI_API void M3CardEnd();
     IMGUI_API void M3ListItem(const char* label, bool selected, bool* p_selected = NULL);
     IMGUI_API void M3LinearProgress(float fraction, const ImVec2& size_arg = ImVec2(-1, 0));
     IMGUI_API bool M3Chip(const char* label, bool* p_selected);
     IMGUI_API void M3StatusChip(const char* label, ImGuiM3Role role);
-    // row of segments sharing one shape: full outer corners, modest inner ones,
-    // 2dp connected padding. `icons` is one Material Symbols codepoint per
-    // segment; icons scale with the row rather than dropping out.
+    // segments sharing one shape with 2dp padding; `icons` is one codepoint per
+    // segment.
     IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL);
-    // A full theme editor: variant / contrast / source picker, every color token,
-    // the shape + motion token sheet, and the `.colors` file path with live-reload
-    // status. Meant to live in a settings tab.
+    // full theme editor: generation knobs, every token, and the file path with
+    // reload status.
     IMGUI_API void M3ThemeEditor();
 }
 
