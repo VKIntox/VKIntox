@@ -2,188 +2,16 @@
 #include "config_serializer.hh"
 #include "logger.hh"
 #include "overlay/ui_icons.hh"
+#include "util.hh"
 
 #include <cstdlib>
 #include <filesystem>
 #include <algorithm>
 #include <set>
-#include <chrono>
 #include <string>
 
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/imfilebrowser.h"
-
-#ifdef VKINTOX_HAVE_GIO
-#include <gio/gio.h>
-#include <glib.h>
-
-namespace
-{
-    // XDG Desktop Portal file chooser, driven asynchronously so the game never
-    // blocks. GIO talks to org.freedesktop.portal on the session bus, which is
-    // the sanctioned path inside Flatpak (the sandbox has no direct filesystem
-    // browsing) and works on the desktop too. The ImGui browser stays as the
-    // fallback when the portal is missing or fails.
-    //
-    // We start the request from the render thread, then pump the default GMainContext
-    // non-blockingly once per frame in pollPortalRequest().
-
-    enum class PortalResult { None, Success, Cancelled, Unavailable };
-
-    struct PortalRequest
-    {
-        bool pending = false;
-        bool done = false;
-        PortalResult result = PortalResult::None;
-        std::string path;
-        GDBusConnection* bus = nullptr;
-        guint subscription = 0;
-        std::chrono::steady_clock::time_point deadline;
-    };
-
-    PortalRequest g_portal;
-
-    void onPortalResponse(GDBusConnection*, const gchar*, const gchar*, const gchar*, const gchar*,
-                          GVariant* parameters, gpointer)
-    {
-        guint response = 2;   // 0 = success, 1 = cancelled, 2 = other
-        GVariant* results = nullptr;
-        g_variant_get(parameters, "(u@a{sv})", &response, &results);
-        if (response == 0 && results)
-        {
-            GVariant* uris = g_variant_lookup_value(results, "uris", G_VARIANT_TYPE_STRING_ARRAY);
-            if (uris)
-            {
-                gsize n = 0;
-                const gchar** items = g_variant_get_strv(uris, &n);
-                if (n > 0 && items[0])
-                {
-                    gchar* path = g_filename_from_uri(items[0], nullptr, nullptr);
-                    if (path)
-                    {
-                        g_portal.path = path;
-                        g_free(path);
-                    }
-                }
-                g_free((gpointer)items);
-                g_variant_unref(uris);
-            }
-        }
-        if (results)
-            g_variant_unref(results);
-        g_portal.result = (!g_portal.path.empty()) ? PortalResult::Success : PortalResult::Cancelled;
-        g_portal.done = true;
-    }
-
-    void onPortalCallDone(GObject* source, GAsyncResult* res, gpointer)
-    {
-        GError* error = nullptr;
-        GVariant* reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &error);
-        if (!reply)
-        {
-            if (error)
-                g_error_free(error);
-            g_portal.result = PortalResult::Unavailable;
-            g_portal.done = true;
-        }
-        else
-        {
-            g_variant_unref(reply);
-        }
-    }
-
-    bool startPortalDirectoryRequest(const std::string& title)
-    {
-        if (g_portal.pending)
-            return true;
-
-        g_portal = PortalRequest{};
-        g_portal.pending = true;
-        g_portal.deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
-
-        GError* error = nullptr;
-        GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
-        if (!bus)
-        {
-            if (error)
-                g_error_free(error);
-            g_portal = PortalRequest{};
-            return false;
-        }
-        g_portal.bus = bus;
-
-        // Request path is /org/freedesktop/portal/desktop/request/<sender>/<token>
-        // where <sender> is our unique name without ':' and with '.' -> '_'.
-        const gchar* sender = g_dbus_connection_get_unique_name(bus);
-        std::string sender_token = sender ? (sender + 1) : "0";
-        std::replace(sender_token.begin(), sender_token.end(), '.', '_');
-        const std::string token = "vkintox" + std::to_string(g_random_int());
-        const std::string request_path =
-            "/org/freedesktop/portal/desktop/request/" + sender_token + "/" + token;
-
-        // Subscribe before calling, or a fast response can be missed.
-        g_portal.subscription = g_dbus_connection_signal_subscribe(
-            bus, "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request", "Response",
-            request_path.c_str(), nullptr, G_DBUS_SIGNAL_FLAGS_NONE, onPortalResponse, nullptr, nullptr);
-
-        GVariantBuilder options;
-        g_variant_builder_init(&options, G_VARIANT_TYPE("a{sv}"));
-        g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token.c_str()));
-        g_variant_builder_add(&options, "{sv}", "directory", g_variant_new_boolean(TRUE));
-        g_variant_builder_add(&options, "{sv}", "multiple", g_variant_new_boolean(FALSE));
-        g_variant_builder_add(&options, "{sv}", "modal", g_variant_new_boolean(TRUE));
-
-        // Empty parent_window is valid and required under Flatpak; an X11/Wayland
-        // handle from inside the sandbox would be rejected. Async so we return now.
-        g_dbus_connection_call(
-            bus, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
-            "org.freedesktop.portal.FileChooser", "OpenFile",
-            g_variant_new("(ssa{sv})", "", title.c_str(), &options),
-            G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr, onPortalCallDone, nullptr);
-        return true;
-    }
-
-    // Pumps the portal's callbacks for this frame. Returns true once a result is
-    // ready, writing it to outResult/outPath.
-    bool pollPortalRequest(PortalResult& outResult, std::string& outPath)
-    {
-        if (!g_portal.pending)
-            return false;
-
-        while (g_main_context_iteration(nullptr, FALSE))
-        {
-        }
-
-        if (!g_portal.done && std::chrono::steady_clock::now() > g_portal.deadline)
-        {
-            g_portal.result = PortalResult::Unavailable;
-            g_portal.done = true;
-        }
-        if (!g_portal.done)
-            return false;
-
-        outResult = g_portal.result;
-        outPath = g_portal.path;
-
-        if (g_portal.bus && g_portal.subscription)
-            g_dbus_connection_signal_unsubscribe(g_portal.bus, g_portal.subscription);
-        if (g_portal.bus)
-            g_object_unref(g_portal.bus);
-        g_portal = PortalRequest{};
-        return true;
-    }
-
-    bool portalRequestPending() { return g_portal.pending; }
-}
-#else
-namespace
-{
-    enum class PortalResult { None, Success, Cancelled, Unavailable };
-    bool startPortalDirectoryRequest(const std::string&) { return false; }
-    bool pollPortalRequest(PortalResult&, std::string&) { return false; }
-    bool portalRequestPending() { return false; }
-}
-#endif
 
 namespace VKIntox
 {
@@ -272,11 +100,11 @@ namespace VKIntox
 
         // Harvest any completed portal request (non-blocking), then offer Browse.
         {
-            PortalResult result = PortalResult::None;
+            FileDialogResult result = FileDialogResult::Cancelled;
             std::string picked;
-            if (pollPortalRequest(result, picked))
+            if (pollFileDialog(FileDialogKind::OpenDirectory, result, picked))
             {
-                if (result == PortalResult::Success && !picked.empty())
+                if (result == FileDialogResult::Success && !picked.empty())
                 {
                     if (std::find(shaderMgrParentDirs.begin(), shaderMgrParentDirs.end(), picked) == shaderMgrParentDirs.end())
                     {
@@ -284,7 +112,7 @@ namespace VKIntox
                         saveConfig();
                     }
                 }
-                else if (result == PortalResult::Unavailable)
+                else if (result == FileDialogResult::Unavailable)
                 {
                     // No portal: fall back to the in-overlay browser.
                     dirBrowser.SetTitle("Select Parent Directory");
@@ -300,14 +128,14 @@ namespace VKIntox
         ImGui::TextDisabled("Directories containing shader packs. Each is scanned for Shaders/ and Textures/ subfolders.");
         ImGui::Spacing();
 
-        const bool portalPending = portalRequestPending();
+        const bool portalPending = fileDialogPending();
         ImGui::BeginDisabled(portalPending);
         const std::string browseLabel = std::string(Icon::FolderOpenUtf8) + (portalPending ? "  Opening..." : "  Browse...");
         if (ImGui::Button(browseLabel.c_str()))
         {
             // If the portal cannot even be started (no GIO, no session bus),
             // open the in-overlay browser right away.
-            if (!startPortalDirectoryRequest("Select Parent Directory"))
+            if (!startOpenDirectoryDialog("Select Parent Directory"))
             {
                 dirBrowser.SetTitle("Select Parent Directory");
                 const char* home = std::getenv("HOME");

@@ -18,6 +18,31 @@ namespace VKIntox
     // crash mid-write leaves the previous file intact instead of truncated.
     bool writeAtomically(const std::string& path, const std::string& contents);
 
+    // XDG desktop portal file chooser, wrapped so the D-Bus plumbing lives in
+    // one place. the request runs asynchronously; poll* is pumped once per
+    // frame. start* returns false when no portal can be started (no GIO at
+    // compile time, or no session bus), and the caller falls back to its own
+    // in-process picker.
+    enum class FileDialogResult
+    {
+        Success,
+        Cancelled,
+        Unavailable
+    };
+
+    enum class FileDialogKind
+    {
+        OpenFile,
+        OpenDirectory
+    };
+
+    bool startOpenFileDialog(const std::string& title, const std::vector<std::string>& globFilters);
+    bool startOpenDirectoryDialog(const std::string& title);
+    // only reports a request of the given kind, so a dialog started from
+    // another tab can't be mistaken for this one's result.
+    bool pollFileDialog(FileDialogKind kind, FileDialogResult& outResult, std::string& outPath);
+    bool fileDialogPending();
+
     enum class Color
     {
         defaultColor,
