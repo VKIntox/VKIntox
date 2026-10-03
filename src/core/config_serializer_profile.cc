@@ -247,6 +247,44 @@ namespace VKIntox
         return std::remove(path.c_str()) == 0;
     }
 
+    std::string ConfigSerializer::importShaderProfile(const std::string& sourcePath)
+    {
+        if (sourcePath.empty())
+            return "";
+        std::ifstream source(sourcePath, std::ios::binary);
+        if (!source)
+            return "";
+        const std::string contents{std::istreambuf_iterator<char>(source), std::istreambuf_iterator<char>()};
+        if (source.bad())
+            return "";
+
+        const std::string shaderDir = getBaseConfigDir() + "/configs/shaders";
+        std::error_code ec;
+        std::filesystem::create_directories(shaderDir, ec);
+        if (ec)
+            return "";
+
+        // '@' separates game from profile in the managed naming scheme, so a
+        // global preset carrying one would be invisible to every game.
+        std::string base = std::filesystem::path(sourcePath).stem().string();
+        std::replace(base.begin(), base.end(), '@', '-');
+        std::replace(base.begin(), base.end(), '\\', '-');
+        if (base.empty() || base == "." || base == "..")
+            base = "imported";
+
+        std::string name = base;
+        for (int suffix = 1; ; ++suffix)
+        {
+            std::error_code existsEc;
+            if (!std::filesystem::exists(shaderDir + "/" + name + ".ini", existsEc))
+                break;
+            name = base + "-" + std::to_string(suffix);
+        }
+        if (!writeAtomically(shaderDir + "/" + name + ".ini", contents))
+            return "";
+        return name;
+    }
+
     bool ConfigSerializer::saveShaderProfile(const std::string& path, const std::vector<ConfigParam>& params,
                                              const std::vector<std::string>& effects,
                                              const std::vector<std::string>& disabledEffects,

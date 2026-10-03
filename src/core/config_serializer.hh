@@ -168,6 +168,11 @@ namespace VKIntox
         static bool createShaderProfile(const std::string& gameName, const std::string& profileName,
                                         const std::string& copyFromProfile = "");
         static bool deleteShaderProfile(const std::string& gameName, const std::string& profileName);
+
+        // Copy an external ReShade preset into configs/shaders as a global
+        // (game-agnostic) <name>.ini. never overwrites: an existing name gets a
+        // numeric suffix. returns the imported profile name, or empty on failure.
+        static std::string importShaderProfile(const std::string& sourcePath);
         static bool saveShaderProfile(const std::string& path, const std::vector<ConfigParam>& params,
                                       const std::vector<std::string>& effects = {},
                                       const std::vector<std::string>& disabledEffects = {},
