@@ -1398,7 +1398,6 @@ namespace VKIntox
             return;
 
         OverlayState overlayState;
-        overlayState.effectNames = logicalDevice->imguiOverlay->getActiveEffects();
 
         // No fallback to config - registry is the single source of truth
         // (initialized from config at first swapchain creation)
