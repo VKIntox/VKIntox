@@ -100,8 +100,13 @@ EOF
 # wants to have to redo.
 uninstall_layer() {
     section "removing layer"
-    if flatpak info --user "$LAYER_ID" >/dev/null 2>&1; then
-        run_progress "uninstalling $LAYER_ID" flatpak uninstall --user --noninteractive -y "$LAYER_ID"
+    local installed
+    installed=$(flatpak list --user --runtime --columns=application,branch 2>/dev/null | awk -v id="$LAYER_ID" '$1==id{print id "//" $2}')
+    if [ -n "$installed" ]; then
+        while read -r ref; do
+            [ -n "$ref" ] || continue
+            run_progress "uninstalling $ref" flatpak uninstall --user --noninteractive -y "$ref"
+        done <<<"$installed"
     else
         ok "layer is not installed"
     fi
@@ -389,9 +394,12 @@ if ! flatpak remote-list --user | awk '{print $1}' | grep -qx 'vkintox-local'; t
     run_progress "adding local remote" flatpak remote-add --user --if-not-exists vkintox-local "$BUILD_ROOT/repo" --no-gpg-verify
 fi
 run_progress "updating local remote" flatpak remote-modify --user --url="file://$BUILD_ROOT/repo" --no-gpg-verify vkintox-local
-if flatpak info --user "$LAYER_ID" >/dev/null 2>&1; then
-    run_progress "removing previous layer" flatpak uninstall --user --noninteractive -y "$LAYER_ID"
-fi
+# 25.08 and 26.08 can both be installed; a branch-less ref is ambiguous, so
+# remove every installed branch explicitly before installing the new one.
+while read -r ref; do
+    [ -n "$ref" ] || continue
+    run_progress "removing previous layer" flatpak uninstall --user --noninteractive -y "$ref"
+done < <(flatpak list --user --runtime --columns=application,branch 2>/dev/null | awk -v id="$LAYER_ID" '$1==id{print id "//" $2}')
 run_progress "installing layer" flatpak install --user --noninteractive -y vkintox-local \
     "runtime/$LAYER_ID/x86_64/26.08"
 ok "layer installed"

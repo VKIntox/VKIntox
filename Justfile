@@ -7,6 +7,8 @@ layer_dir := build_dir / "packaging/meson-config"
 dev_layer_dir := "/tmp/vkintox-dev-layer"
 dev_layer_manifest := dev_layer_dir / "VKIntox.json"
 layer_name := "VK_LAYER_VKINTOX_post_processing"
+# keep in sync with `branch` in packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json
+layer_branch := "26.08"
 dev_layer_name := "VK_LAYER_VKINTOX_post_processing_dev"
 default_log := "/tmp/vkintox.log"
 
@@ -25,7 +27,7 @@ flatpak-build:
       {{ flatpak_manifest }}
     flatpak remote-add --user --if-not-exists vkintox-local {{ flatpak_repo_dir }} --no-gpg-verify
     flatpak remote-modify --user --url=file://{{ flatpak_repo_dir }} --no-gpg-verify vkintox-local
-    flatpak install --user --or-update -y vkintox-local org.freedesktop.Platform.VulkanLayer.VKIntox
+    flatpak install --user --or-update -y vkintox-local org.freedesktop.Platform.VulkanLayer.VKIntox//{{ layer_branch }}
 
 nsight_dir := "/opt/nsight-graphics/NVIDIA-Nsight-Graphics-2026.1/host/linux-desktop-nomad-x64"
 nsight_capture_bin := nsight_dir / "ngfx-capture.bin"

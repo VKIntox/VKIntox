@@ -28,6 +28,8 @@ else
 fi
 
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
+# the freedesktop branch this layer is built for; must match the flatpak manifest.
+LAYER_BRANCH="26.08"
 # where `just flatpak-build` leaves the local repo, per the Justfile
 FLATPAK_BUILD_ROOT="build/flatpak-repo"
 # caches the source hash so an unchanged tree can skip a rebuild; uninstall has
@@ -230,7 +232,7 @@ SOURCE_HASH=$(printf '%s' "$SOURCE_HASH" | sha256sum | cut -d' ' -f1)
 if [[ "$MODE" != "system" ]]; then
     section "building layer"
     if [[ ! -f "$LAYER_MARKER" || "$(cat "$LAYER_MARKER")" != "$SOURCE_HASH" ]] || \
-       ! flatpak info --user org.freedesktop.Platform.VulkanLayer.VKIntox >/dev/null 2>&1; then
+       ! flatpak info --user "$LAYER_ID//$LAYER_BRANCH" >/dev/null 2>&1; then
         run_progress "building + installing layer" just flatpak-build
         mkdir -p "$(dirname "$LAYER_MARKER")"
         printf '%s\n' "$SOURCE_HASH" > "$LAYER_MARKER"
