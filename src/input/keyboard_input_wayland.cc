@@ -341,6 +341,29 @@ namespace VKIntox
         return false;
     }
 
+    bool isKeyDownWayland(uint32_t ks)
+    {
+        if (!initWaylandKeyboard())
+            return false;
+
+        dispatchWaylandInputEvents();
+
+        std::lock_guard<std::mutex> lock(keyboardMutex);
+        if (!xkbKeymap || !xkbState)
+            return false;
+
+        // the active keysym reflects shift, so match letters either case
+        const uint32_t wanted = (ks >= 'A' && ks <= 'Z') ? ks + 0x20 : ks;
+        for (uint32_t keycode : pressedKeys)
+        {
+            uint32_t sym = (uint32_t) xkb_state_key_get_one_sym(xkbState, keycode + 8);
+            const uint32_t normalized = (sym >= 'A' && sym <= 'Z') ? sym + 0x20 : sym;
+            if (normalized == wanted)
+                return true;
+        }
+        return false;
+    }
+
     KeyboardState getKeyboardStateWayland()
     {
         KeyboardState state;

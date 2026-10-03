@@ -131,6 +131,13 @@ namespace VKIntox
         return !!(cachedKeymap[keycode >> 3] & (1 << (keycode & 7)));
     }
 
+    bool isKeyDownX11(uint32_t ks)
+    {
+        // the X11 query is already a held-state check; the edge semantics only
+        // exist on the Wayland side
+        return isKeyPressedX11(ks);
+    }
+
     KeyboardState getKeyboardStateX11()
     {
         KeyboardState state;

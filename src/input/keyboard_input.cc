@@ -46,6 +46,17 @@ namespace VKIntox
         return false;
     }
 
+    bool isKeyDown(uint32_t ks)
+    {
+        if (isWayland())
+            return isKeyDownWayland(ks);
+        if (isX11())
+            return isKeyDownX11(ks);
+
+        warnUnsupportedKeyboardOnce("unsupported Vulkan surface: keyboard polling disabled; returning no input");
+        return false;
+    }
+
     KeyboardState getKeyboardState()
     {
         if (isWayland())

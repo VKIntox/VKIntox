@@ -47,10 +47,10 @@ of these are freed after a vkQueueWaitIdle rather than at end of scope. a scope-
 deleter would fire too early. needs an owner-aware handle plus a deferred-destruction
 queue, agreed on before any code is written.
 
-3. KeyUniform is a stub that writes a hardcoded VkFalse with a TODO. any effect using
-source = "key" compiles, shows up in the UI, and silently does nothing forever.
-that is worse than a crash: no error, no warning, just a dead effect. either implement
-real key state tracking or deny keyed effects honestly, like DepthAlpha.fx.
+3. KeyUniform DONE. source = "key" now reads ReShade's keycode and mode
+annotations and queries real held key state; mode "" is held, "press" is the
+down edge, "toggle" flips on each press. Windows virtual-key codes are mapped
+onto XKB keysyms. a keycode with no mapping warns instead of going silent.
 
 3.5 qUINT_mxao.fx sometimes leaves a ghost "MXAO" entry in the UI that can never
 be enabled. FIX FIRST, before tier 2.
@@ -131,5 +131,4 @@ future ideas (not scheduled):
    frame-time graph
    diagnostic bundle export
    per-effect reset to default
-   working key-bound uniforms (KeyUniform is still a stub)
 
