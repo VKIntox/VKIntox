@@ -140,10 +140,24 @@ namespace VKIntox
             Logger::warn("allocateAndWriteImageSamplerDescriptorSets: empty imageViewsVectors");
             return {};
         }
+        if (descriptorPool == VK_NULL_HANDLE)
+        {
+            // createDescriptorPool failed upstream; fail before touching Vulkan
+            Logger::err("allocateAndWriteImageSamplerDescriptorSets: null descriptor pool");
+            return {};
+        }
         if (bindingTypes.size() != imageViewsVectors.size() || samplers.size() != imageViewsVectors.size())
         {
             Logger::err("allocateAndWriteImageSamplerDescriptorSets: binding/sampler/view count mismatch");
             return {};
+        }
+        for (size_t j = 1; j < imageViewsVectors.size(); j++)
+        {
+            if (imageViewsVectors[j].size() != imageViewsVectors[0].size())
+            {
+                Logger::err("allocateAndWriteImageSamplerDescriptorSets: image view vector length mismatch");
+                return {};
+            }
         }
         std::vector<VkDescriptorSet> descriptorSets(imageViewsVectors[0].size());
 
