@@ -49,10 +49,11 @@ namespace VKIntox
     // Without this, dispatchWaylandInputEvents() deduplicates within a frame.
     void beginWaylandInputFrame();
 
-    // Read and dispatch pending Wayland events (non-blocking).
-    // Actively reads from the socket to ensure events like button release
-    // are not stuck in the kernel buffer. Deduplicated per frame — only the
-    // first call after beginWaylandInputFrame() does real work.
-    void dispatchWaylandInputEvents();
+    // Dispatch pending Wayland events for our queue (non-blocking). With
+    // readSocket, it also reads the socket so events the game never reads still
+    // arrive; deduplicated per frame. The effect path passes false: it only
+    // consumes events the game already read, so it can't sit in the game's
+    // socket read path and stall a frame.
+    void dispatchWaylandInputEvents(bool readSocket = true);
 
 } // namespace VKIntox

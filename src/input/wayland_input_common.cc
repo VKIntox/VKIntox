@@ -388,20 +388,30 @@ namespace VKIntox
         dispatchFrameId.fetch_add(1, std::memory_order_release);
     }
 
-    void dispatchWaylandInputEvents()
+    void dispatchWaylandInputEvents(bool readSocket)
     {
-        // Skip if already dispatched this frame
-        uint64_t currentFrame = dispatchFrameId.load(std::memory_order_acquire);
-        if (lastDispatchedFrame.load(std::memory_order_acquire) == currentFrame)
-            return;
-        lastDispatchedFrame.store(currentFrame, std::memory_order_release);
-
         if (!queue)
             return;
 
         wl_display* display = getWaylandDisplay();
         if (!display)
             return;
+
+        // Consumer-only path: deliver whatever the game's own read already
+        // queued for us, and never touch the socket. Used by the effect-facing
+        // key/mouse queries, which run every present and must not entangle with
+        // the game's frame-completion events.
+        if (!readSocket)
+        {
+            wl_display_dispatch_queue_pending(display, queue);
+            return;
+        }
+
+        // Skip if already dispatched this frame
+        uint64_t currentFrame = dispatchFrameId.load(std::memory_order_acquire);
+        if (lastDispatchedFrame.load(std::memory_order_acquire) == currentFrame)
+            return;
+        lastDispatchedFrame.store(currentFrame, std::memory_order_release);
 
         // Drain any already-queued events first. If another thread is mid-read
         // (prepare_read fails with EAGAIN) we must not read or retry in a loop:

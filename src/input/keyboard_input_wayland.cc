@@ -346,7 +346,8 @@ namespace VKIntox
         if (!initWaylandKeyboard())
             return false;
 
-        dispatchWaylandInputEvents();
+        // consumer-only: the game owns the socket read
+        dispatchWaylandInputEvents(false);
 
         std::lock_guard<std::mutex> lock(keyboardMutex);
         if (!xkbKeymap || !xkbState)
