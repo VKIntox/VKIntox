@@ -36,13 +36,15 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 fetches latest binary, config, and shaders automatically.
 
 ```bash
-bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script)
+curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
 ```
+
+works in bash, zsh and fish alike.
 
 for other flatpak apps, append the app id:
 
 ```bash
-bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script) com.target.app
+curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- com.target.app
 ```
 
 > [!IMPORTANT]
@@ -70,9 +72,17 @@ vkintox intercepts vulkan swapchain calls as a layer between game and driver.
 
 | method | command | notes |
 | :--- | :--- | :--- |
-| **sober** | `bash <(curl ...)` | prebuilt binary, recommended |
+| **sober** | `curl ... \| bash` | prebuilt binary, recommended |
 | **flatpak** | `./setup flatpak com.app.id` | requires local compilation |
 | **native** | `./setup system` | uses sudo, system-wide install |
+
+from source (run from the cloned repository, not your home directory):
+
+```bash
+git clone https://github.com/buwryme/VKIntox.git
+cd VKIntox
+./setup sober
+```
 
 enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 

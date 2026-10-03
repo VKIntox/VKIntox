@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # vkintox flatpak installer
-# usage: bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script) [APP_ID]
+# usage: curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash [-s -- APP_ID]
 
 set -euo pipefail
 
@@ -89,8 +89,9 @@ restore_tty() {
 usage() {
     cat <<'EOF'
 usage:
-  bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script) [APP_ID]
-  bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script) uninstall
+  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
+  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- com.target.app
+  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
 EOF
 }
 
@@ -258,7 +259,7 @@ esac
 
 [[ "$APP_ID" != "sober" ]] || APP_ID="org.vinegarhq.Sober"
 
-for cmd in curl jq unzip flatpak python3 sha256sum readelf grep install; do need_cmd "$cmd"; done
+for cmd in curl jq unzip flatpak flatpak-builder python3 sha256sum readelf grep install awk sed sort mktemp find head basename dirname; do need_cmd "$cmd"; done
 
 section "dependencies"
 if ! flatpak remote-list --user 2>/dev/null | grep -q '^flathub'; then
@@ -270,9 +271,21 @@ fi
 
 section "fetching vkintox build"
 API="https://api.github.com/repos/$REPO"
-curl -fsSL -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
-    "$API/releases/tags/flatpak-build" -o "$TMP_DIR/release.json" ||
-    die "the public flatpak-build release is missing; run the manual $WORKFLOW workflow first"
+# a token lifts the unauthenticated GitHub API rate limit, which is what turns
+# this into a 403 on a shared connection. either variable name is accepted.
+AUTH_ARGS=()
+if [[ -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}" ]]; then
+    AUTH_ARGS=(-H "Authorization: Bearer ${GITHUB_TOKEN:-$GH_TOKEN}")
+fi
+HTTP_CODE=$(curl -sSL -w '%{http_code}' -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2022-11-28' "${AUTH_ARGS[@]}" \
+    "$API/releases/tags/flatpak-build" -o "$TMP_DIR/release.json" || true)
+case "$HTTP_CODE" in
+    200) ;;
+    403) die "GitHub API rate limit hit (HTTP 403); set GH_TOKEN or wait and retry" ;;
+    404) die "the public flatpak-build release is missing; run the manual $WORKFLOW workflow first" ;;
+    *)   die "couldn't fetch the flatpak-build release (HTTP ${HTTP_CODE:-no response})" ;;
+esac
 
 # Every published build lands in the one rolling flatpak-build release, with the
 # version and build date encoded in the asset name, so the version list is
@@ -411,7 +424,12 @@ mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$APP_CONFIG/font"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version"
 # fonts aren't on raw.githubusercontent until pushed to the font ref, so a local
 # flatpak build would silently seed nothing. prefer the checkout, else download.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# BASH_SOURCE is unset when the script is piped to bash (curl | bash) or run via
+# bash -c, which is how fish users invoke it; guard so set -u doesn't trip.
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 FONT_SRC=""
 if [[ -f "$SCRIPT_DIR/../assets/font/MaterialSymbolsRounded-subset.ttf" ]]; then
     FONT_SRC="$SCRIPT_DIR/../assets/font"
@@ -436,7 +454,7 @@ version_ge() {
     if [[ "$1" == "$2" ]]; then
         return 0
     fi
-    [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" == "$1" ]]
+    [[ "$(printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort -V | tail -n1)" == "$1" ]]
 }
 if version_ge "$SELECTED_NUMERIC" "0.2.0"; then
     for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded-subset.ttf LICENSE; do

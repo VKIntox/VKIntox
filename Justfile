@@ -22,6 +22,7 @@ flatpak_repo_dir := repo_root / "build/flatpak-repo"
 flatpak-build:
     flatpak-builder \
       --force-clean \
+      --install-deps-from=flathub \
       --repo={{ flatpak_repo_dir }} \
       {{ flatpak_build_dir }} \
       {{ flatpak_manifest }}

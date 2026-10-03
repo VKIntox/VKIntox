@@ -183,6 +183,7 @@ need_cmd sha256sum
 
 if [[ "$MODE" != "system" ]]; then
     need_cmd flatpak
+    need_cmd flatpak-builder
     need_cmd curl
     need_cmd unzip
     ok "tools ready"
@@ -196,6 +197,9 @@ if [[ "$MODE" != "system" ]]; then
 else
     need_cmd meson
     need_cmd ninja
+    need_cmd ccache
+    need_cmd clang
+    need_cmd glslangValidator
     need_cmd sudo
     need_cmd curl
     need_cmd unzip
@@ -218,6 +222,9 @@ if [[ "$MODE" != "system" ]]; then
     run_progress "pulling gnome sdk" flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/51
     flatpak info --user runtime/org.gnome.Sdk/x86_64/51 >/dev/null 2>&1 || die "gnome sdk install failed"
 
+    run_progress "pulling freedesktop runtime" flatpak install -y --user flathub runtime/org.freedesktop.Platform/x86_64/26.08
+    flatpak info --user runtime/org.freedesktop.Platform/x86_64/26.08 >/dev/null 2>&1 || die "freedesktop runtime install failed"
+
     run_progress "pulling freedesktop sdk" flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/26.08
     flatpak info --user runtime/org.freedesktop.Sdk/x86_64/26.08 >/dev/null 2>&1 || die "freedesktop sdk install failed"
 
@@ -225,7 +232,7 @@ if [[ "$MODE" != "system" ]]; then
     flatpak info --user runtime/org.freedesktop.Sdk.Extension.llvm22/x86_64/26.08 >/dev/null 2>&1 || die "llvm 22 sdk extension install failed"
 fi
 
-SOURCE_HASH=$(find src packaging/meson-config -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+SOURCE_HASH=$(find src packaging/meson-config -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
 SOURCE_HASH=$(printf '%s\n' "$SOURCE_HASH" "$(sha256sum VERSION Justfile meson.build meson_options.txt packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json packaging/nix/flake.nix)")
 SOURCE_HASH=$(printf '%s' "$SOURCE_HASH" | sha256sum | cut -d' ' -f1)
 
