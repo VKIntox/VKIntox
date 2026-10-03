@@ -557,7 +557,6 @@ namespace VKIntox
 
                 // accent bar down the leading edge.
                 const ImVec2 content_min = ImGui::GetCursorScreenPos();
-                ImGui::InvisibleButton("##toastbg", ImVec2(0.0f, 0.0f));
 
                 ImGui::PushStyleColor(ImGuiCol_Text, headerColor);
                 ImGui::TextUnformatted(levelIcon);
