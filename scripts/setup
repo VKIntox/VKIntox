@@ -7,6 +7,9 @@ set -euo pipefail
 REPO="buwryme/VKIntox"
 WORKFLOW="flatpak-build.yml"
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
+# the M3 font set is not on main yet, so seed it from the experimental branch.
+# TODO: point this at main once the font assets are merged.
+FONT_REF="v0.2.0-experimental"
 EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/main/assets/EffectPackages.ini}"
 
 if [[ -t 1 ]]; then
@@ -272,6 +275,7 @@ curl -fsSL -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 20
 # Newest build per version wins, stable builds are listed before experimental
 # ones, and a version counts as experimental only when it ends in -experimental.
 jq -r '
+    def vkey: sub("^v"; "") | sub("[-+].*$"; "") | split(".") | map(tonumber? // 0);
     [.assets[]
      | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$"))
      | { v: (.name | sub("^libvkintox_flatpak_"; "") | sub("_[0-9]{8}\\.so$"; "")),
@@ -281,8 +285,8 @@ jq -r '
     | reduce .[] as $a ([];
         (map(select(.v == $a.v)) | length) as $seen
         | if $seen == 0 then . + [$a] else . end)
-    | (map(select(.v | endswith("-experimental") | not))) as $stable
-    | (map(select(.v | endswith("-experimental")))) as $experimental
+    | (map(select(.v | endswith("-experimental") | not)) | sort_by(.v | vkey) | reverse) as $stable
+    | (map(select(.v | endswith("-experimental"))) | sort_by(.v | vkey) | reverse) as $experimental
     | ($stable + $experimental)[]
     | "\(.v)\t\(.url)"
 ' "$TMP_DIR/release.json" >"$TMP_DIR/versions.tsv"
@@ -396,8 +400,44 @@ APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
 PACKAGE_DIR="$APP_CONFIG/reshade/packages"
 mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$APP_CONFIG/font"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version"
-curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/font/font.ttf" -o "$APP_CONFIG/font/font.ttf"
-curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assets/font/LICENSE" -o "$APP_CONFIG/font/LICENSE"
+# fonts aren't on raw.githubusercontent until pushed to the font ref, so a local
+# flatpak build would silently seed nothing. prefer the checkout, else download.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FONT_SRC=""
+if [[ -f "$SCRIPT_DIR/../assets/font/MaterialSymbolsRounded-subset.ttf" ]]; then
+    FONT_SRC="$SCRIPT_DIR/../assets/font"
+fi
+
+seed_font() {
+    local font="$1"
+    if [[ -n "$FONT_SRC" && -f "$FONT_SRC/$font" ]]; then
+        cp "$FONT_SRC/$font" "$APP_CONFIG/font/$font"
+    else
+        curl -fsSL "https://raw.githubusercontent.com/$REPO/$FONT_REF/assets/font/$font" -o "$APP_CONFIG/font/$font" ||
+            die "couldn't fetch $font; re-run this script from inside a VKIntox checkout"
+    fi
+}
+
+# 0.2.0 introduced the Google Sans + Material Symbols set. older libraries only
+# know the single font.ttf, so seed just that and its licence for them.
+SELECTED_VERSION="$(basename "$ASSET_URL" | sed -E 's/^libvkintox_flatpak_//; s/_[0-9]{8}\.so$//')"
+SELECTED_NUMERIC="${SELECTED_VERSION#v}"; SELECTED_NUMERIC="${SELECTED_NUMERIC%%-*}"; SELECTED_NUMERIC="${SELECTED_NUMERIC%%+*}"
+version_ge() {
+    if [[ "$1" == "$2" ]]; then
+        return 0
+    fi
+    [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" == "$1" ]]
+}
+if version_ge "$SELECTED_NUMERIC" "0.2.0"; then
+    for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded-subset.ttf LICENSE; do
+        seed_font "$font"
+    done
+    # Keep the historical filename as a regular-weight compatibility fallback.
+    cp "$APP_CONFIG/font/GoogleSans-Regular.ttf" "$APP_CONFIG/font/font.ttf"
+else
+    seed_font font.ttf
+    seed_font LICENSE
+fi
 curl -fsSL "$EFFECT_PACKAGES_URL" -o "$TMP_DIR/EffectPackages.ini"
 
 EFFECTS_HASH=$(sha256sum "$TMP_DIR/EffectPackages.ini" | cut -d' ' -f1)
