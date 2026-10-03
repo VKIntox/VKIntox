@@ -108,7 +108,10 @@ namespace VKIntox
     bool ConfigSerializer::deleteConfig(const std::string& configName)
     {
         std::string configsDir = getConfigsDir();
-        if (configsDir.empty())
+        if (configsDir.empty() || configName.empty() ||
+            configName.find('/') != std::string::npos ||
+            configName.find('\\') != std::string::npos ||
+            configName.find("..") != std::string::npos)
             return false;
 
         std::string filePath = configsDir + "/" + configName + ".conf";
