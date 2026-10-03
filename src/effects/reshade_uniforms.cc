@@ -9,70 +9,11 @@
 #include <algorithm>
 
 #include "logger.hh"
-#include "keyboard_input.hh"
 
 namespace VKIntox
 {
     // Thread-safe RNG (avoids std::rand() which is not thread-safe)
     static thread_local std::mt19937 tlRng{std::random_device{}()};
-
-    // ReShade's source="key" annotation carries a Windows virtual-key code.
-    // Map the keys that exist on XKB onto keysyms; the rest stay unmapped so the
-    // uniform reads false rather than guessing at a key.
-    static uint32_t vkKeyToKeysym(uint32_t vk)
-    {
-        if (vk >= 0x30 && vk <= 0x39) return vk;                    // 0-9
-        if (vk >= 0x41 && vk <= 0x5A) return vk + 0x20;             // A-Z to lower keysyms
-        if (vk >= 0x60 && vk <= 0x69) return 0xFFB0 + (vk - 0x60);  // numpad 0-9
-        if (vk >= 0x70 && vk <= 0x7B) return 0xFFBE + (vk - 0x70);  // F1-F12
-
-        switch (vk)
-        {
-            case 0x08: return 0xFF08;  // Backspace
-            case 0x09: return 0xFF09;  // Tab
-            case 0x0D: return 0xFF0D;  // Return
-            case 0x10: return 0xFFE1;  // Shift
-            case 0x11: return 0xFFE3;  // Control
-            case 0x12: return 0xFFE9;  // Alt
-            case 0x13: return 0xFF13;  // Pause
-            case 0x14: return 0xFFE5;  // Caps Lock
-            case 0x1B: return 0xFF1B;  // Escape
-            case 0x20: return 0x0020;  // space
-            case 0x21: return 0xFF55;  // Page Up
-            case 0x22: return 0xFF56;  // Page Down
-            case 0x23: return 0xFF57;  // End
-            case 0x24: return 0xFF50;  // Home
-            case 0x25: return 0xFF51;  // Left
-            case 0x26: return 0xFF52;  // Up
-            case 0x27: return 0xFF53;  // Right
-            case 0x28: return 0xFF54;  // Down
-            case 0x2C: return 0xFF61;  // Print Screen
-            case 0x2D: return 0xFF63;  // Insert
-            case 0x2E: return 0xFFFF;  // Delete
-            case 0x5B: return 0xFFEB;  // Super
-            case 0x5C: return 0xFFEC;  // Super
-            case 0x5D: return 0xFF67;  // Menu
-            case 0x6A: return 0xFFAA;  // numpad multiply
-            case 0x6B: return 0xFFAB;  // numpad add
-            case 0x6D: return 0xFFAD;  // numpad subtract
-            case 0x6E: return 0xFFAE;  // numpad decimal
-            case 0x6F: return 0xFFAF;  // numpad divide
-            case 0x90: return 0xFF7F;  // Num Lock
-            case 0x91: return 0xFF14;  // Scroll Lock
-            case 0xBA: return 0x003B;  // ;
-            case 0xBB: return 0x003D;  // =
-            case 0xBC: return 0x002C;  // ,
-            case 0xBD: return 0x002D;  // -
-            case 0xBE: return 0x002E;  // .
-            case 0xBF: return 0x002F;  // /
-            case 0xC0: return 0x0060;  // `
-            case 0xDB: return 0x005B;  // [
-            case 0xDC: return 0x005C;  // backslash
-            case 0xDD: return 0x005D;  // ]
-            case 0xDE: return 0x0027;  // '
-            default:   return 0;
-        }
-    }
 
     void enumerateReshadeUniforms(reshadefx::module module)
     {
@@ -376,51 +317,10 @@ namespace VKIntox
         }
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
-
-        auto keycode = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "keycode"; });
-        if (keycode != uniformInfo.annotations.end())
-        {
-            const uint32_t vk = keycode->type.is_integral()
-                                    ? static_cast<uint32_t>(keycode->value.as_int[0])
-                                    : static_cast<uint32_t>(keycode->value.as_float[0]);
-            keysym = vkKeyToKeysym(vk);
-        }
-
-        auto modeAnnotation = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "mode"; });
-        if (modeAnnotation != uniformInfo.annotations.end())
-        {
-            const std::string& name = modeAnnotation->value.string_data;
-            if (name == "press")
-                mode = Mode::Press;
-            else if (name == "toggle")
-                mode = Mode::Toggle;
-        }
-
-        if (keysym == 0)
-            Logger::warn("KeyUniform: source=\"key\" without a mappable keycode");
     }
     void KeyUniform::update(void* mapedBuffer)
     {
-        const bool down = keysym != 0 && isKeyDown(keysym);
-
-        bool value = false;
-        switch (mode)
-        {
-            case Mode::Held:
-                value = down;
-                break;
-            case Mode::Press:
-                value = down && !wasDown;
-                break;
-            case Mode::Toggle:
-                if (down && !wasDown)
-                    toggled = !toggled;
-                value = toggled;
-                break;
-        }
-        wasDown = down;
-
-        VkBool32 keyDown = value ? VK_TRUE : VK_FALSE;
+        VkBool32 keyDown = VK_FALSE; // TODO
         std::memcpy((uint8_t*) mapedBuffer + offset, &(keyDown), sizeof(VkBool32));
     }
     KeyUniform::~KeyUniform()

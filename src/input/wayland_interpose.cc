@@ -691,13 +691,4 @@ namespace VKIntox
             Logger::debug(std::string("Wayland interpose: ") + (withhold ? "released " : "re-pressed ")
                           + std::to_string(changed) + " held game key(s)");
     }
-
-    bool isGameKeycodeHeld(unsigned int keycode)
-    {
-        std::lock_guard<std::mutex> lock(gameDataMutex);
-        for (const auto& [kb, held] : gameHeldKeys)
-            if (held.count(keycode) != 0)
-                return true;
-        return false;
-    }
 } // namespace VKIntox

@@ -17,9 +17,4 @@ namespace VKIntox
     // click/drag ordering. Only works when the listener/dispatcher interposition
     // is active.
     void withholdGameKeys(bool withhold);
-
-    // Whether any wrapped game keyboard currently holds the given evdev keycode.
-    // The game's own events update this on its event thread, so a caller never
-    // has to touch the Wayland socket to read key state.
-    bool isGameKeycodeHeld(unsigned int keycode);
 }

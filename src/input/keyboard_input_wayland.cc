@@ -341,64 +341,6 @@ namespace VKIntox
         return false;
     }
 
-    // Translation keymap for the effect path. Held-key state comes from the
-    // interposer, which tracks the game's own keyboard events on the game's
-    // thread, so all that is needed here is keysym -> evdev keycode. A default
-    // XKB layout covers the keys key uniforms actually use; no Wayland access.
-    static bool isGameKeysymHeld(uint32_t ks)
-    {
-        static std::once_flag once;
-        static xkb_context* translationContext = nullptr;
-        static xkb_keymap* translationKeymap = nullptr;
-        std::call_once(once, []() {
-            translationContext = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-            if (translationContext)
-                translationKeymap = xkb_keymap_new_from_names(translationContext, nullptr, XKB_KEYMAP_COMPILE_NO_FLAGS);
-        });
-        if (!translationKeymap)
-            return false;
-
-        const uint32_t wanted = (ks >= 'A' && ks <= 'Z') ? ks + 0x20 : ks;
-        struct Query
-        {
-            uint32_t wanted;
-            uint32_t keycode;
-        } query{wanted, 0};
-
-        xkb_keymap_key_for_each(
-            translationKeymap,
-            [](xkb_keymap* keymap, xkb_keycode_t keycode, void* data) {
-                auto* q = static_cast<Query*>(data);
-                if (q->keycode != 0)
-                    return;
-                const xkb_keysym_t* syms = nullptr;
-                const int count = xkb_keymap_key_get_syms_by_level(keymap, keycode, 0, 0, &syms);
-                for (int i = 0; i < count; i++)
-                {
-                    uint32_t sym = syms[i];
-                    if (sym >= 'A' && sym <= 'Z')
-                        sym += 0x20;
-                    if (sym == q->wanted)
-                    {
-                        q->keycode = keycode;
-                        return;
-                    }
-                }
-            },
-            &query);
-
-        if (query.keycode == 0)
-            return false;
-        return isGameKeycodeHeld(query.keycode - 8); // evdev = xkb keycode - 8
-    }
-
-    bool isKeyDownWayland(uint32_t ks)
-    {
-        // the game's own events feed the interposer state; this must never touch
-        // the Wayland socket or our event queue
-        return isGameKeysymHeld(ks);
-    }
-
     KeyboardState getKeyboardStateWayland()
     {
         KeyboardState state;

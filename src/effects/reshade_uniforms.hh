@@ -106,21 +106,6 @@ namespace VKIntox
         KeyUniform(reshadefx::uniform_info uniformInfo);
         void virtual update(void* mapedBuffer) override;
         virtual ~KeyUniform();
-
-    private:
-        // ReShade's "mode" annotation: held is the default, press is true only
-        // on the frame the key goes down, toggle flips on each press.
-        enum class Mode : uint8_t
-        {
-            Held,
-            Press,
-            Toggle
-        };
-
-        uint32_t keysym = 0;  // 0 when the shader gave no usable keycode
-        Mode     mode = Mode::Held;
-        bool     wasDown = false;
-        bool     toggled = false;
     };
 
     class MouseButtonUniform : public ReshadeUniform
