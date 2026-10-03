@@ -85,9 +85,57 @@ fully? idk
 TODOS for v0.2.0
 ================================================
 
-1. ~~Overhaul UI to use Flutter/Dart instead of ImGui with Vulkan frame buffer casts & proper input passthrough~~ — dropped: modifying the vendored ImGui source directly got us close enough to Material 3 that a rewrite isn't worth it. Remaining ideas from this item kept below as their own tasks.
+1. ~~Overhaul UI to use Flutter/Dart instead of ImGui with Vulkan frame buffer casts & proper input passthrough~~ — DROPPED, will not happen. modifying the vendored ImGui source directly got us close enough to Material 3 that a rewrite isn't worth it. the item is closed, not deferred; its remaining ideas were spun out below and are done.
    Render icon in titlebar next to game icon, fetch that dynamically online? DONE, but didn't render game icon, that would usually require baking the icon into the binary , and dynamically fetching is too hard
    Also render icon in new tab: About, move acknowledgements there too DONE
-2. Ensure stability, yet again
-3. Try to improve performance?
-4. added x11 support
+2. Ensure stability, yet again DONE
+   the branch hardened the failure paths that used to take the layer down:
+   - vkCreateInstance failure returns early instead of continuing half-initialized
+   - image/image_view/framebuffer/buffer free partially created resources on failure
+   - depth resolve aborts setup when its image can't be created
+   - lut_cube and descriptor_set reject malformed input instead of reading past it
+   - config writes go through one atomic helper, so a crash can't truncate a profile
+   - deleteConfig/deleteShaderProfile reject path separators
+   - renderPassDepthFinalLayouts and the deferred destroy queue are guarded
+3. Try to improve performance? DONE
+   - overlay views cache per-frame data instead of rebuilding their lists
+   - the int combo builds its label buffer once
+   - debug log strings are only formatted when the level is enabled
+   - effect_reshade resolves registry params once per effect
+   - dropped the unused OverlayState::effectNames
+4. added x11 support DONE (X11/Xwayland surface processing + x11 input backends, 370be14)
+
+5. import INI preset button DONE
+   third button in the shader INI row opens the xdg-desktop-portal picker
+   filtered to *.ini, copies the chosen ReShade preset into configs/shaders as
+   <name>.ini (numeric suffix on a name clash, never overwrites), refreshes and
+   activates it. the portal plumbing moved out of view_shader_manager.cc into
+   util.cc / util.hh and both call sites share it. the in-overlay ImGui browser
+   is still the fallback when the portal is missing.
+
+6. font licences DONE
+   assets/font/LICENSE is now a short note naming Google Sans (SIL OFL 1.1) and
+   Material Symbols Rounded (Apache-2.0) and pointing at the full texts kept
+   beside it as LICENSE-SIL-OFL-1.1.txt and LICENSE-Apache-2.0.txt. the setup
+   scripts seed all three.
+
+remaining / follow-ups for v0.2.0 (documented, not fixed):
+- QueueSubmit depth-copy state (pendingDepthCopy and the ring fields) is read
+  and mutated without globalLock. needs its own mutex, because globalLock can't
+  be held there while panicLayer()->flush() runs.
+- settings_manager const& getters alias fields the setters mutate, so another
+  thread can read a token mid-reassignment. return by value, or add a settings
+  mutex once the lock order is audited.
+- Wayland keyboard state (pressedKeys/keyPressEvents and the accumulators) is
+  mutated from the game's dispatcher thread while the overlay thread reads and
+  clears it. needs a keyboard-local mutex.
+
+future ideas (not scheduled):
+   before/after screenshot compare
+   per-game preset auto-switch
+   shader hot-reload of changed .fx files
+   frame-time graph
+   diagnostic bundle export
+   per-effect reset to default
+   working key-bound uniforms (KeyUniform is still a stub)
+
