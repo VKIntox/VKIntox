@@ -3,6 +3,7 @@
 
 #include <string>
 #include <algorithm>
+#include <mutex>
 
 #include "config_serializer.hh"
 
@@ -22,56 +23,190 @@ namespace VKIntox
         void initialize();
 
         // Check if already initialized
-        bool isInitialized() const { return initialized; }
+        bool isInitialized() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return initialized;
+        }
 
         // Save current settings to VKIntox.conf
         bool save();
 
         // Getters
-        //
-        // TODO(2026-10 buwryme): the const& getters below alias fields that the
-        // setters mutate, so a caller on another thread can read a token that is
-        // being reassigned. return by value, or add a settings mutex once the
-        // UI/setter lock order is audited.
-        int getMaxEffects() const { return std::clamp(settings.maxEffects, 1, 200); }
-        bool getOverlayBlockInput() const { return settings.overlayBlockInput; }
-        const std::string& getToggleKey() const { return settings.toggleKey; }
-        const std::string& getReloadKey() const { return settings.reloadKey; }
-        const std::string& getOverlayKey() const { return settings.overlayKey; }
-        bool getEnableOnLaunch() const { return settings.enableOnLaunch; }
-        bool getDepthCapture() const { return settings.depthCapture; }
-        bool getAutoApply() const { return settings.autoApply; }
-        int getAutoApplyDelay() const { return settings.autoApplyDelay; }
-        bool getShowDebugWindow() const { return settings.showDebugWindow; }
-        int getDepthResolveMode() const { return settings.depthResolveMode; }
-        const std::string& getDepthManualPin() const { return settings.depthManualPin; }
-        bool getDepthTransientWorkaround() const { return settings.depthTransientWorkaround; }
-        int getDepthCaptureMethod() const { return std::clamp(settings.depthCaptureMethod, 0, 2); }
-        int getDepthSourceChannel() const { return std::clamp(settings.depthSourceChannel, 0, 6); }
-        bool getDepthInvert() const { return settings.depthInvert; }
+        // The string getters return by value: callers on other threads would
+        // otherwise hold a reference into a field a setter can reassign.
+        int getMaxEffects() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return std::clamp(settings.maxEffects, 1, 200);
+        }
+        bool getOverlayBlockInput() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.overlayBlockInput;
+        }
+        std::string getToggleKey() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.toggleKey;
+        }
+        std::string getReloadKey() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.reloadKey;
+        }
+        std::string getOverlayKey() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.overlayKey;
+        }
+        bool getEnableOnLaunch() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.enableOnLaunch;
+        }
+        bool getDepthCapture() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.depthCapture;
+        }
+        bool getAutoApply() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.autoApply;
+        }
+        int getAutoApplyDelay() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.autoApplyDelay;
+        }
+        bool getShowDebugWindow() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.showDebugWindow;
+        }
+        int getDepthResolveMode() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.depthResolveMode;
+        }
+        std::string getDepthManualPin() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.depthManualPin;
+        }
+        bool getDepthTransientWorkaround() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.depthTransientWorkaround;
+        }
+        int getDepthCaptureMethod() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return std::clamp(settings.depthCaptureMethod, 0, 2);
+        }
+        int getDepthSourceChannel() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return std::clamp(settings.depthSourceChannel, 0, 6);
+        }
+        bool getDepthInvert() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.depthInvert;
+        }
 
         // Setters (update in-memory state, call save() to persist)
-        void setMaxEffects(int value) { settings.maxEffects = std::clamp(value, 1, 200); }
-        void setOverlayBlockInput(bool value) { settings.overlayBlockInput = value; }
-        void setToggleKey(const std::string& value) { settings.toggleKey = value; }
-        void setReloadKey(const std::string& value) { settings.reloadKey = value; }
-        void setOverlayKey(const std::string& value) { settings.overlayKey = value; }
-        void setEnableOnLaunch(bool value) { settings.enableOnLaunch = value; }
-        void setDepthCapture(bool value) { settings.depthCapture = value; }
-        void setAutoApply(bool value) { settings.autoApply = value; }
-        void setAutoApplyDelay(int value) { settings.autoApplyDelay = value; }
-        void setShowDebugWindow(bool value) { settings.showDebugWindow = value; }
-        void setDepthResolveMode(int value) { settings.depthResolveMode = value; }
-        void setDepthManualPin(const std::string& value) { settings.depthManualPin = value; }
-        void setDepthTransientWorkaround(bool value) { settings.depthTransientWorkaround = value; }
-        void setDepthCaptureMethod(int value) { settings.depthCaptureMethod = std::clamp(value, 0, 2); }
-        void setDepthSourceChannel(int value) { settings.depthSourceChannel = std::clamp(value, 0, 6); }
-        void setDepthInvert(bool value) { settings.depthInvert = value; }
+        void setMaxEffects(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.maxEffects = std::clamp(value, 1, 200);
+        }
+        void setOverlayBlockInput(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.overlayBlockInput = value;
+        }
+        void setToggleKey(const std::string& value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.toggleKey = value;
+        }
+        void setReloadKey(const std::string& value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.reloadKey = value;
+        }
+        void setOverlayKey(const std::string& value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.overlayKey = value;
+        }
+        void setEnableOnLaunch(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.enableOnLaunch = value;
+        }
+        void setDepthCapture(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthCapture = value;
+        }
+        void setAutoApply(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.autoApply = value;
+        }
+        void setAutoApplyDelay(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.autoApplyDelay = value;
+        }
+        void setShowDebugWindow(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.showDebugWindow = value;
+        }
+        void setDepthResolveMode(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthResolveMode = value;
+        }
+        void setDepthManualPin(const std::string& value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthManualPin = value;
+        }
+        void setDepthTransientWorkaround(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthTransientWorkaround = value;
+        }
+        void setDepthCaptureMethod(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthCaptureMethod = std::clamp(value, 0, 2);
+        }
+        void setDepthSourceChannel(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthSourceChannel = std::clamp(value, 0, 6);
+        }
+        void setDepthInvert(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthInvert = value;
+        }
 
         // Get raw settings struct (for bulk operations)
-        const VkBasaltSettings& getSettings() const { return settings; }
+        VkBasaltSettings getSettings() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings;
+        }
 
     private:
+        mutable std::mutex mutex;
         VkBasaltSettings settings;
         bool initialized = false;
     };

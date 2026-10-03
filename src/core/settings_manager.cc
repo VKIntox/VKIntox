@@ -8,6 +8,7 @@ namespace VKIntox
 
     void SettingsManager::initialize()
     {
+        std::lock_guard<std::mutex> lock(mutex);
         if (initialized)
             return;
 
@@ -18,6 +19,7 @@ namespace VKIntox
 
     bool SettingsManager::save()
     {
+        std::lock_guard<std::mutex> lock(mutex);
         bool success = ConfigSerializer::saveSettings(settings);
         if (success)
             Logger::debug("Settings saved to config");
