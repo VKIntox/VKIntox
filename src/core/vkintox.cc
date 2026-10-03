@@ -2404,6 +2404,12 @@ namespace VKIntox
     // into a ring-buffered CB from a dedicated transient pool, using the
     // correct source layout obtained from the render pass's depth attachment
     // finalLayout at CmdBeginRenderPass time.
+    //
+    // TODO(2026-10 buwryme): pendingDepthCopy and the ring fields below are read
+    // and mutated without globalLock, while CmdEndRenderPass* and DestroyDevice
+    // touch them under it. give the depth-copy state its own mutex rather than
+    // holding globalLock here, because panicLayer()->flush() below must not run
+    // while it is held.
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_QueueSubmit(VkQueue queue,
                                                        uint32_t submitCount,
                                                        const VkSubmitInfo* pSubmits,

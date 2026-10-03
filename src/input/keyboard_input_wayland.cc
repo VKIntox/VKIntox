@@ -25,6 +25,11 @@ namespace VKIntox
     static xkb_keymap* xkbKeymap = nullptr;
     static xkb_state* xkbState = nullptr;
 
+    // TODO(2026-10 buwryme): the callbacks mutate pressedKeys/keyPressEvents and
+    // the accumulators from the game's dispatcher thread, while
+    // isKeyPressedWayland/getKeyboardStateWayland read and clear them on the
+    // overlay thread. guard them with a keyboard-local mutex.
+
     // Tracking pressed keys (Wayland keycodes)
     static std::unordered_set<uint32_t> pressedKeys;
 

@@ -28,6 +28,11 @@ namespace VKIntox
         bool save();
 
         // Getters
+        //
+        // TODO(2026-10 buwryme): the const& getters below alias fields that the
+        // setters mutate, so a caller on another thread can read a token that is
+        // being reassigned. return by value, or add a settings mutex once the
+        // UI/setter lock order is audited.
         int getMaxEffects() const { return std::clamp(settings.maxEffects, 1, 200); }
         bool getOverlayBlockInput() const { return settings.overlayBlockInput; }
         const std::string& getToggleKey() const { return settings.toggleKey; }
