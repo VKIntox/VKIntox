@@ -4,9 +4,12 @@ interface.
 Google Sans is distributed under the SIL Open Font License, Version 1.1.
 Material Symbols Rounded is distributed under the Apache License, Version 2.0.
 
+the Material Symbols Rounded file here is a manually made subset of the full
+font; the glyphs themselves are not modified.
+
 the full license texts ship next to this note:
   LICENSE-SIL-OFL-1.1.txt
   LICENSE-Apache-2.0.txt
 
-both fonts are used unmodified. vkintox claims no ownership over them; all
-rights remain with their respective authors.
+vkintox claims no ownership over the fonts; all rights remain with their
+respective authors.
