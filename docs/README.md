@@ -48,6 +48,9 @@ bash <(curl -fsSL https://buwryy.net/api/vkintox/setup-script) com.target.app
 > [!IMPORTANT]
 > no system prebuilts exist yet due to dependency variance. use local compilation for native installs.
 
+> [!WARNING]
+> **wayland only, effectively.** x11 is not supported yet and fails quietly.
+
 ## features
 
 -   **depth resolve:** auto-detects or manually selects correct depth buffer (reverse-z supported). fixes z-fighting in ao/dof.
