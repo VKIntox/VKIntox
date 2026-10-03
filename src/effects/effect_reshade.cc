@@ -315,6 +315,8 @@ namespace VKIntox
 
         uniforms = createReshadeUniforms(module);
 
+        buildUiParamCache();
+
         bufferSize = module.total_uniform_size;
         if (bufferSize)
         {
@@ -1257,6 +1259,22 @@ namespace VKIntox
         Logger::info("[effect-built] " + effectName + " passes=" + std::to_string(passRuntimes.size()));
     }
 
+    // Resolving the registry param per frame meant taking the registry mutex and
+    // scanning effect then parameter name lists for every uniform of every
+    // enabled effect. The registry never swaps a parameter's pointer after
+    // construction, so resolve once here instead.
+    void ReshadeEffect::buildUiParamCache()
+    {
+        uiParamCache.clear();
+        for (const auto& uniform : module.uniforms)
+        {
+            if (uniform.name.empty())
+                continue;
+            auto paramOpt = effectRegistry->getParameter(effectName, uniform.name);
+            uiParamCache[uniform.name] = paramOpt ? *paramOpt : nullptr;
+        }
+    }
+
     void ReshadeEffect::updateEffect()
     {
         if (stagingBufferMapped)
@@ -1268,10 +1286,14 @@ namespace VKIntox
                 if (uniform.name.empty())
                     continue;
 
-                if (auto registryParam = effectRegistry->getParameter(effectName, uniform.name))
+                EffectParam* registryParam = nullptr;
+                if (auto it = uiParamCache.find(uniform.name); it != uiParamCache.end())
+                    registryParam = it->second;
+
+                if (registryParam)
                 {
-                    maybeLogReshadeUiUniformWrite(effectName, uniform.name, *(*registryParam));
-                    writeConfiguredUniformValue(stagingBufferMapped, uniform, *registryParam);
+                    maybeLogReshadeUiUniformWrite(effectName, uniform.name, *registryParam);
+                    writeConfiguredUniformValue(stagingBufferMapped, uniform, registryParam);
                 }
                 else
                     writeDefaultUniformValue(stagingBufferMapped, uniform);

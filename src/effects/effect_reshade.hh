@@ -134,7 +134,11 @@ namespace VKIntox
         bool                     disableComputePipelineOptimization = false;
 
         std::vector<std::shared_ptr<ReshadeUniform>> uniforms;
+        // registry params resolved once at construction; the registry holds them
+        // in a std::list so the pointers stay valid until the effect is rebuilt
+        std::unordered_map<std::string, EffectParam*> uiParamCache;
 
+        void          buildUiParamCache();
         void          createReshadeModule();
         VkFormat      convertReshadeFormat(reshadefx::texture_format texFormat);
         VkCompareOp   convertReshadeCompareOp(reshadefx::pass_stencil_func compareOp);
