@@ -382,6 +382,7 @@ JSON
 mkdir -p "$BUILD_ROOT"
 mkdir -p "$BUILD_ROOT/repo"
 run_progress "preparing flatpak package" flatpak-builder --user --force-clean --disable-rofiles-fuse \
+    --install-deps-from=flathub \
     --state-dir="$BUILD_ROOT/state" \
     --repo="$BUILD_ROOT/repo" "$BUILD_ROOT/build" "$TMP_DIR/VKIntox.json"
 if ! flatpak remote-list --user | awk '{print $1}' | grep -qx 'vkintox-local'; then

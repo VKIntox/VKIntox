@@ -23,7 +23,7 @@ jobs:
           flatpak install --user --noninteractive -y flathub \
             runtime/org.gnome.Sdk/x86_64/51 \
             runtime/org.freedesktop.Sdk/x86_64/26.08 \
-            runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/26.08
+            runtime/org.freedesktop.Sdk.Extension.llvm22/x86_64/26.08
 
       - name: Build x86_64 library in the Flatpak SDK
         run: |

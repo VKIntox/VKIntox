@@ -26,8 +26,8 @@
       "buildsystem": "meson",
       "build-options": {
         "env": {
-          "CC": "/usr/lib/sdk/llvm21/bin/clang",
-          "CXX": "/usr/lib/sdk/llvm21/bin/clang++",
+          "CC": "/usr/lib/sdk/llvm22/bin/clang",
+          "CXX": "/usr/lib/sdk/llvm22/bin/clang++",
           "CPPFLAGS": "-I/usr/lib/extensions/vulkan/VKIntox/include"
         },
         "prepend-pkg-config-path": "/usr/lib/extensions/vulkan/VKIntox/lib/pkgconfig"
