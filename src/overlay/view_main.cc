@@ -6,13 +6,16 @@
 #include "logger.hh"
 #include "overlay/ui_theme.hh"
 #include "overlay/ui_icons.hh"
+#include "util.hh"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/imgui_internal.h"
+#include "vendor/imgui/imfilebrowser.h"
 
 namespace VKIntox
 {
@@ -85,6 +88,10 @@ namespace VKIntox
             return changed;
         }
 
+        // Fallback picker when the xdg portal is unavailable; mirrors the
+        // Shaders tab. only displayed while the main view is the active tab.
+        ImGui::FileBrowser presetBrowser(ImGuiFileBrowserFlags_CloseOnEsc);
+
     } // anonymous namespace
 
     // keyboard is part of the shared view signature; this particular view reads no
@@ -93,6 +100,28 @@ namespace VKIntox
     {
         if (!effectRegistry)
             return;
+
+        auto openPresetBrowser = [&]() {
+            presetBrowser.SetTitle("Import ReShade preset");
+            presetBrowser.SetTypeFilters({".ini"});
+            const char* home = std::getenv("HOME");
+            presetBrowser.SetPwd(home ? home : "/");
+            presetBrowser.Open();
+        };
+
+        // Harvest a completed portal import. a request started from another tab
+        // is ignored by pollFileDialog's kind check and stays queued.
+        {
+            FileDialogResult result = FileDialogResult::Cancelled;
+            std::string picked;
+            if (pollFileDialog(FileDialogKind::OpenFile, result, picked))
+            {
+                if (result == FileDialogResult::Success && !picked.empty())
+                    importShaderPreset(picked);
+                else if (result == FileDialogResult::Unavailable)
+                    openPresetBrowser();
+            }
+        }
 
         // Get a mutable copy of selected effects for this frame
         std::vector<std::string> selectedEffects = effectRegistry->getSelectedEffects();
@@ -196,6 +225,17 @@ namespace VKIntox
                     }
                 }
             }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(fileDialogPending() || presetBrowser.IsOpened());
+            const std::string importProfileLabel = std::string(Icon::FolderOpenUtf8) + "##importshaderprofile";
+            if (ImGui::Button(importProfileLabel.c_str()))
+            {
+                if (!startOpenFileDialog("Import ReShade preset", {"*.ini"}))
+                    openPresetBrowser();
+            }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Import a ReShade .ini preset");
             if (ImGui::BeginPopup("NewShaderProfilePopup"))
             {
                 static char newShaderProfileName[64] = "";
@@ -611,6 +651,39 @@ namespace VKIntox
             profileDirty = true;  // Mark for auto-save to profile
         }
         // Note: Auto-apply is handled globally in imgui_overlay.cpp
+
+        // The fallback picker is modal and must be displayed every frame.
+        presetBrowser.Display();
+        if (presetBrowser.HasSelected())
+        {
+            importShaderPreset(presetBrowser.GetSelected().string());
+            presetBrowser.ClearSelected();
+        }
+    }
+
+    void ImGuiOverlay::importShaderPreset(const std::string& sourcePath)
+    {
+        const std::string imported = ConfigSerializer::importShaderProfile(sourcePath);
+        if (imported.empty())
+        {
+            pushToast(LogLevel::Error, "Could not import the shader preset.");
+            return;
+        }
+
+        // save the outgoing profile, then activate the import. refresh can
+        // already select the new name, so the reload is queued here directly.
+        const bool saved = autoSaveProfile();
+        refreshShaderProfiles();
+        setActiveShaderProfile(imported);
+        pendingShaderProfilePath = activeShaderProfilePath;
+        pendingShaderProfile = true;
+        applyRequested = true;
+        paramsDirty = false;
+        profileDirty = false;
+        if (!saved)
+            pushToast(LogLevel::Error, "Imported \"" + imported + "\", but the previous profile could not be saved.");
+        else
+            pushToast(LogLevel::Info, "Imported shader preset \"" + imported + "\".");
     }
 
 } // namespace VKIntox

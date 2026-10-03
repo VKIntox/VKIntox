@@ -197,6 +197,7 @@ namespace VKIntox
         void startShaderTest();          // Initialize shader test queue and start
         void processShaderTest();        // Process one shader per frame (runs every frame)
         void renderMainView(const KeyboardState& keyboard);
+        void importShaderPreset(const std::string& sourcePath);
         void renderDiagnosticsView();
         void renderAboutView();
         void renderDebugWindow();  // Debug window with effect registry and log data
