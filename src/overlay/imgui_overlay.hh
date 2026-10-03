@@ -46,9 +46,8 @@ namespace VKIntox
         bool visible = false;
     };
 
-    // Persistent toast notification shown in the top-right corner.
-    // Used for fatal layer errors that require user acknowledgement.
-    // The toast does not auto-dismiss; it stays until the user clicks it.
+    // Snackbar shown bottom-centre for layer errors and notices. It is
+    // non-interactive and auto-dismisses after a few seconds.
     struct ToastNotification
     {
         std::string                         message;
@@ -102,8 +101,7 @@ namespace VKIntox
         void toggle();
         bool isVisible() const { return visible; }
 
-        // Push a persistent toast notification. Thread-safe.
-        // Toasts are rendered top-right and remain until the user dismisses them.
+        // Push a toast notification. Thread-safe, auto-dismissed after ~5s.
         void pushToast(LogLevel level, const std::string& message);
         bool hasPendingToasts() const;
 
@@ -280,9 +278,8 @@ namespace VKIntox
         bool settingsSaved = false;  // True when settings saved, cleared by vkintox.cpp
         bool shaderPathsChanged = false;  // True when shader manager saved, cleared by vkintox.cpp
 
-        // Persistent toast notifications (top-right corner, dismissable by user).
-        // Toasts survive overlay hide/show cycles and are rendered even when the
-        // main overlay window is hidden, so fatal errors stay visible.
+        // Toast snackbars (bottom-centre, auto-dismissing). They render even when
+        // the main overlay is hidden, so fatal errors stay visible.
         mutable std::mutex toastsMutex;
         std::vector<ToastNotification> toasts;
 

@@ -500,107 +500,99 @@ namespace VKIntox
         if (snapshot.empty())
             return;
 
+        constexpr float kLifetimeSeconds = 5.0f;
+        const auto now = std::chrono::steady_clock::now();
+
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        const float margin = 12.0f;
-        const float width = 380.0f;
-        const float rowHeight = 72.0f;
-        const float gap = 8.0f;
+        const float margin = 28.0f;
+        const float gap = 10.0f;
+        const float padX = 22.0f;
+        const float padY = 16.0f;
+        const float shadowPad = 14.0f;
+        const float rounding = 16.0f;
+        // never let a collapsed game window produce a negative card width
+        const float maxCardWidth = ImMax(160.0f, ImMin(560.0f, viewport->WorkSize.x - margin * 2.0f));
 
-        ImVec2 startPos(viewport->WorkPos.x + viewport->WorkSize.x - width - margin,
-                        viewport->WorkPos.y + margin);
+        std::vector<size_t> expired;
+        for (size_t i = 0; i < snapshot.size(); ++i)
+            if (std::chrono::duration<float>(now - snapshot[i].createdAt).count() >= kLifetimeSeconds)
+                expired.push_back(i);
 
-        std::vector<size_t> dismissed;
+        // the newest toast sits nearest the bottom edge, older ones stack upward
+        float cursorY = viewport->WorkPos.y + viewport->WorkSize.y - margin;
         for (size_t i = 0; i < snapshot.size(); ++i)
         {
-            const auto& t = snapshot[i];
-            ImVec2 pos(startPos.x, startPos.y + static_cast<float>(i) * (rowHeight + gap));
-            ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(width, rowHeight), ImGuiCond_Always);
+            if (std::chrono::duration<float>(now - snapshot[i].createdAt).count() >= kLifetimeSeconds)
+                continue;
 
+            const std::string& message = snapshot[i].message;
+            const float wrapWidth = maxCardWidth - padX * 2.0f;
+            const ImVec2 textSize = ImGui::CalcTextSize(message.c_str(), nullptr, false, wrapWidth);
+            const float cardWidth = ImMin(maxCardWidth, ImMax(textSize.x, 1.0f) + padX * 2.0f);
+            const float cardHeight = textSize.y + padY * 2.0f;
+            const float windowWidth = cardWidth + shadowPad * 2.0f;
+            const float windowHeight = cardHeight + shadowPad * 2.0f;
+
+            cursorY -= windowHeight;
+            const ImVec2 windowPos(viewport->WorkPos.x + (viewport->WorkSize.x - windowWidth) * 0.5f, cursorY);
+            ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(windowWidth, windowHeight), ImGuiCond_Always);
+
+            // NoInputs: the toast is informational, so clicks pass through to the
+            // game instead of being withheld by the input blocker.
             const ImGuiWindowFlags flags =
-                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
-                ImGuiWindowFlags_NoTitleBar;
+                ImGuiWindowFlags_NoInputs;
 
-            // colour by level from the shared token, so toasts and the log view
-            // can't disagree. a toast is a snackbar with a left accent bar.
-            const ImVec4 headerColor = UI::LogLevelColor(t.level);
-            const char* tag = "INFO";
-            const char* levelIcon = Icon::InfoUtf8;
-            switch (t.level)
-            {
-                case LogLevel::Error: tag = "ERROR"; levelIcon = Icon::ErrorUtf8; break;
-                case LogLevel::Warn:  tag = "WARN";  levelIcon = Icon::WarningUtf8; break;
-                default:              tag = "INFO";  levelIcon = Icon::InfoUtf8;  break;
-            }
+            // transparent host window: the card and its shadow are drawn inside,
+            // which keeps the whole thing on the top-most window layer.
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
 
             char label[32];
-            snprintf(label, sizeof(label), "##VKIntoxToast%zu", i);
-
-            // snackbar: rounded, surface-container-high.
-            ImGui::PushStyleColor(ImGuiCol_WindowBg, UI::Container());
-            ImGui::PushStyleColor(ImGuiCol_Border, ImGuiM3ColorU32(ImGuiM3Role_OutlineVariant));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 12));
-
-            bool open = ImGui::Begin(label, nullptr, flags);
+            snprintf(label, sizeof(label), "##vkintoxToast%zu", i);
+            const bool open = ImGui::Begin(label, nullptr, flags);
 
             ImGui::PopStyleVar(3);
             ImGui::PopStyleColor(2);
 
             if (open)
             {
-                frameInputRects.push_back(InputRect{pos.x, pos.y, width, rowHeight});
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                const ImVec2 cardMin(windowPos.x + shadowPad, windowPos.y + shadowPad);
+                const ImVec2 cardMax(cardMin.x + cardWidth, cardMin.y + cardHeight);
 
-                // accent bar down the leading edge.
-                const ImVec2 content_min = ImGui::GetCursorScreenPos();
+                // fake a soft drop shadow: stacked translucent rounded rects,
+                // largest first so density builds toward the card edge
+                for (int step = static_cast<int>(shadowPad); step >= 1; --step)
+                {
+                    drawList->AddRectFilled(ImVec2(cardMin.x - step, cardMin.y - step),
+                                            ImVec2(cardMax.x + step, cardMax.y + step),
+                                            IM_COL32(0, 0, 0, 7), rounding + step);
+                }
+                drawList->AddRectFilled(cardMin, cardMax, IM_COL32(255, 255, 255, 255), rounding);
 
-                ImGui::PushStyleColor(ImGuiCol_Text, headerColor);
-                ImGui::TextUnformatted(levelIcon);
+                ImGui::SetCursorScreenPos(ImVec2(cardMin.x + padX, cardMin.y + padY));
+                ImGui::PushTextWrapPos(cardMin.x + cardWidth - padX);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+                ImGui::TextUnformatted(message.c_str());
                 ImGui::PopStyleColor();
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_Primary));
-                ImGui::TextUnformatted("VKIntox");
-                ImGui::PopStyleColor();
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_TextDisabled, headerColor);
-                ImGui::TextDisabled("(%s)", tag);
-                ImGui::PopStyleColor();
-                ImGui::SameLine();
-
-                const float btnWidth = 24.0f;
-                ImGui::SetCursorPosX(ImGui::GetWindowWidth() - btnWidth - 16.0f);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHighest));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGuiM3ColorU32(ImGuiM3Role_ErrorContainer));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurface));
-                const std::string toastCloseLabel = std::string(Icon::CloseUtf8) + "##toastclose";
-                if (ImGui::Button(toastCloseLabel.c_str(), ImVec2(btnWidth, 0)))
-                    dismissed.push_back(i);
-                ImGui::PopStyleColor(3);
-
-                ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 16.0f);
-                ImGui::TextUnformatted(t.message.c_str());
                 ImGui::PopTextWrapPos();
-
-                const ImVec2 content_max = ImGui::GetCursorScreenPos();
-                ImDrawList* toast_dl = ImGui::GetWindowDrawList();
-                const float accent = 4.0f;
-                toast_dl->AddRectFilled(ImVec2(content_min.x - 12.0f, content_min.y - 4.0f),
-                                        ImVec2(content_min.x - 12.0f + accent, content_max.y + 4.0f),
-                                        ImGuiM3ColorU32(t.level == LogLevel::Error ? ImGuiM3Role_Error :
-                                                         t.level == LogLevel::Warn ? ImGuiM3Role_Primary : ImGuiM3Role_Tertiary));
             }
             ImGui::End();
+
+            cursorY -= gap;
         }
 
-        if (!dismissed.empty())
+        if (!expired.empty())
         {
             std::lock_guard<std::mutex> lock(toastsMutex);
             // Erase in reverse so indices stay valid.
-            for (auto it = dismissed.rbegin(); it != dismissed.rend(); ++it)
+            for (auto it = expired.rbegin(); it != expired.rend(); ++it)
             {
                 if (*it < toasts.size())
                     toasts.erase(toasts.begin() + *it);
@@ -1320,14 +1312,12 @@ namespace VKIntox
         ImGui_ImplVulkan_NewFrame();
         ImGui::NewFrame();
 
-        // Toast notifications render even when the main overlay window is hidden,
-        // so fatal errors stay visible until the user dismisses them.
-        renderToasts();
-
         // When the overlay is hidden but toasts are showing, skip the main
         // window — toasts are standalone floating windows.
         if (!visible)
         {
+            // toasts render on their own so fatal errors stay visible
+            renderToasts();
             // main window is gone; only toasts remain, so free the pointer.
             setWaylandInputSurfaceRect(0.0f, 0.0f, 0.0f, 0.0f);
             publishOverlayInput();
@@ -1549,6 +1539,9 @@ namespace VKIntox
 
         // Debug window (separate, controlled by setting)
         renderDebugWindow();
+
+        // toasts last, so they draw above the overlay and debug windows
+        renderToasts();
 
         // Global auto-apply check (runs regardless of which tab is active)
         if (settingsManager.getAutoApply() && paramsDirty)

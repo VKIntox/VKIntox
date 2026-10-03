@@ -638,7 +638,7 @@ namespace VKIntox
                 logicalDevice->imguiOverlay->pushToast(
                     LogLevel::Error,
                     "VKIntox disabled itself to keep the game alive.\nReason: " + reason +
-                    "\nEffects are off until you restart the game.\nClick [x] to dismiss.");
+                    "\nEffects are off until you restart the game.");
         }
     }
 
