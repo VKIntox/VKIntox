@@ -3582,10 +3582,10 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_DestroyRenderPass(VkDevice device, VkRenderPass renderPass, const VkAllocationCallbacks* pAllocator)
     {
+        scoped_lock l(globalLock);
         renderPassDepthFinalLayouts.erase(renderPass);
         if (!device)
             return;
-        scoped_lock l(globalLock);
         auto devIt = deviceMap.find(GetKey(device));
         if (devIt != deviceMap.end() && devIt->second)
             devIt->second->vkd.DestroyRenderPass(device, renderPass, pAllocator);
