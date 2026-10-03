@@ -501,6 +501,7 @@ namespace VKIntox
             return;
 
         constexpr float kLifetimeSeconds = 5.0f;
+        constexpr float kFadeSeconds = 0.6f;
         const auto now = std::chrono::steady_clock::now();
 
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -522,8 +523,13 @@ namespace VKIntox
         float cursorY = viewport->WorkPos.y + viewport->WorkSize.y - margin;
         for (size_t i = 0; i < snapshot.size(); ++i)
         {
-            if (std::chrono::duration<float>(now - snapshot[i].createdAt).count() >= kLifetimeSeconds)
+            const float age = std::chrono::duration<float>(now - snapshot[i].createdAt).count();
+            if (age >= kLifetimeSeconds)
                 continue;
+            // ramp out over the last fraction of a second instead of popping
+            const float fade = age > kLifetimeSeconds - kFadeSeconds
+                ? std::clamp((kLifetimeSeconds - age) / kFadeSeconds, 0.0f, 1.0f)
+                : 1.0f;
 
             const std::string& message = snapshot[i].message;
             const float wrapWidth = maxCardWidth - padX * 2.0f;
@@ -568,17 +574,19 @@ namespace VKIntox
 
                 // fake a soft drop shadow: stacked translucent rounded rects,
                 // largest first so density builds toward the card edge
+                const int shadowAlpha = static_cast<int>(7.0f * fade);
+                const int cardAlpha = static_cast<int>(255.0f * fade);
                 for (int step = static_cast<int>(shadowPad); step >= 1; --step)
                 {
                     drawList->AddRectFilled(ImVec2(cardMin.x - step, cardMin.y - step),
                                             ImVec2(cardMax.x + step, cardMax.y + step),
-                                            IM_COL32(0, 0, 0, 7), rounding + step);
+                                            IM_COL32(0, 0, 0, shadowAlpha), rounding + step);
                 }
-                drawList->AddRectFilled(cardMin, cardMax, IM_COL32(255, 255, 255, 255), rounding);
+                drawList->AddRectFilled(cardMin, cardMax, IM_COL32(255, 255, 255, cardAlpha), rounding);
 
                 ImGui::SetCursorScreenPos(ImVec2(cardMin.x + padX, cardMin.y + padY));
                 ImGui::PushTextWrapPos(cardMin.x + cardWidth - padX);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, fade));
                 ImGui::TextUnformatted(message.c_str());
                 ImGui::PopStyleColor();
                 ImGui::PopTextWrapPos();
