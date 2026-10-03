@@ -30,12 +30,7 @@ namespace VKIntox
             if (!p.items.empty())
             {
                 // Combo box mode for enumerated values
-                std::string itemsStr;
-                for (const auto& item : p.items)
-                    itemsStr += item + '\0';
-                itemsStr += '\0';
-
-                if (ImGui::Combo(p.label.c_str(), &p.value, itemsStr.c_str()))
+                if (ImGui::Combo(p.label.c_str(), &p.value, p.getItemsBuffer()))
                     changed = true;
             }
             else

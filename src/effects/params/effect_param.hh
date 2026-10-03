@@ -168,6 +168,21 @@ namespace VKIntox
         float step = 0.0f;
         std::vector<std::string> items;  // ui_items - combo box options
 
+        // ui_items is fixed after parsing, so the null-separated buffer ImGui's
+        // Combo wants is built on first use instead of every frame
+        std::string itemsBuffer;
+
+        const char* getItemsBuffer()
+        {
+            if (itemsBuffer.empty())
+            {
+                for (const auto& item : items)
+                    itemsBuffer += item + '\0';
+                itemsBuffer += '\0';
+            }
+            return itemsBuffer.c_str();
+        }
+
         ParamType getType() const override { return ParamType::Int; }
         const char* getTypeName() const override { return "INT"; }
 
