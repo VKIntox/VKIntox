@@ -596,11 +596,11 @@ namespace VKIntox
             settingsManager.setAutoApply(autoApplyVal);
             settingsManager.save();
         }
-        float applyWidth = ImGui::CalcTextSize("Apply").x + ImGui::GetStyle().FramePadding.x * 2;
+        const std::string applyLabel = std::string(Icon::CheckUtf8) + "  Apply";
+        float applyWidth = ImGui::CalcTextSize(applyLabel.c_str()).x + ImGui::GetStyle().FramePadding.x * 2;
         ImGui::SameLine(ImGui::GetWindowWidth() - applyWidth - ImGui::GetStyle().WindowPadding.x);
 
         // Apply button is always clickable
-        const std::string applyLabel = std::string(Icon::CheckUtf8) + "  Apply";
         if (ImGui::Button(applyLabel.c_str()))
         {
             applyRequested = true;
