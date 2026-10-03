@@ -2,6 +2,7 @@
 
 #include "c_resource.hh"
 #include "logger.hh"
+#include "util.hh"
 
 #include <fstream>
 #include <cstdlib>
@@ -18,48 +19,6 @@
 
 namespace VKIntox
 {
-    namespace
-    {
-        bool writeAtomically(const std::string& path, const std::string& contents)
-        {
-            std::string temporary = path + ".tmp-XXXXXX";
-            std::vector<char> name(temporary.begin(), temporary.end());
-            name.push_back('\0');
-            // mkstemp rewrites name in place, so the real path only exists after
-            // the call. The owner adopts the returned descriptor and the name is
-            // read back out afterwards, which is also what guarantees the
-            // unlink-on-failure below targets the file that was actually created.
-            UniqueFd fd(mkstemp(name.data()));
-            if (!fd)
-                return false;
-            size_t offset = 0;
-            bool success = true;
-            while (offset < contents.size())
-            {
-                const ssize_t count = write(fd.get(), contents.data() + offset, contents.size() - offset);
-                if (count < 0 && errno == EINTR)
-                    continue;
-                if (count <= 0)
-                {
-                    success = false;
-                    break;
-                }
-                offset += static_cast<size_t>(count);
-            }
-            if (success && fsync(fd.get()) != 0)
-                success = false;
-            // the close result is part of the answer, not cleanup noise: with
-            // deferred writeback a full or failed disk only reports itself here,
-            // so discarding it would report success for a truncated config
-            if (!fd.close())
-                success = false;
-            if (success && std::rename(name.data(), path.c_str()) == 0)
-                return true;
-            unlink(name.data());
-            return false;
-        }
-    } // namespace
-
     // --- Per-app profile system ---
 
     std::string ConfigSerializer::getProfilePath(const std::string& gameName)
@@ -111,18 +70,15 @@ namespace VKIntox
         }
 
         // Create default profile with empty effects
-        std::ofstream file(profilePath);
-        if (!file.is_open())
+        std::string contents = "# VKIntox profile for " + gameName + "\n";
+        contents += "# Auto-created on first launch\n\n";
+        contents += "effects = \n";
+        if (!writeAtomically(profilePath, contents))
         {
             Logger::err("Could not create profile for " + gameName + ": " + profilePath);
             return "";
         }
 
-        file << "# VKIntox profile for " << gameName << "\n";
-        file << "# Auto-created on first launch\n\n";
-        file << "effects = \n";
-
-        file.close();
         Logger::info("Created default profile for " + gameName + ": " + profilePath);
 
         return profilePath;

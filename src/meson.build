@@ -237,6 +237,7 @@ executable('vkintox-shader-check',
     'core/config_serializer.cc',
     'core/config_serializer_profile.cc',
     'core/logger.cc',
+    'core/util.cc',
     include_directories : [VKIntox_include_path, imgui_inc, overlay_inc, effects_inc, effects_builtin_inc, effects_params_inc, core_inc, input_inc, render_inc, vendor_inc, include_directories('vendor/reshade'), stb_inc, source_inc],
     dependencies : [reshade_dep],
     install : true)
@@ -247,6 +248,7 @@ config_serializer_tests = executable('vkintox-config-serializer-tests',
     'core/config_serializer_profile.cc',
     'core/config.cc',
     'core/logger.cc',
+    'core/util.cc',
     include_directories : [core_inc, render_inc, effects_inc, effects_params_inc, vendor_inc, source_inc])
 test('config serializer', config_serializer_tests)
 

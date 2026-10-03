@@ -2,6 +2,7 @@
 #include "config_paths.hh"
 #include "c_resource.hh"
 #include "logger.hh"
+#include "util.hh"
 
 #include <fstream>
 #include <cstdlib>
@@ -133,15 +134,12 @@ namespace VKIntox
         if (path.empty())
             return false;
 
-        std::ofstream file(path);
-        if (!file.is_open())
+        if (!writeAtomically(path, configName))
         {
             Logger::err("Could not write default config file: " + path);
             return false;
         }
 
-        file << configName;
-        file.close();
         Logger::info("Set default config: " + configName);
         return true;
     }
@@ -314,12 +312,7 @@ namespace VKIntox
         mkdir(baseDir.c_str(), 0755);
 
         std::string configPath = baseDir + "/VKIntox.conf";
-        std::ofstream file(configPath);
-        if (!file.is_open())
-        {
-            Logger::err("Could not open VKIntox.conf for writing: " + configPath);
-            return false;
-        }
+        std::ostringstream file;
 
         // Write settings with comments
         file << "# VKIntox configuration\n\n";
@@ -365,7 +358,12 @@ namespace VKIntox
         file << "# depthInvert: invert depth values (flips near/far planes)\n";
         file << "depthInvert = " << (settings.depthInvert ? "true" : "false") << "\n";
 
-        file.close();
+        if (!file.good() || !writeAtomically(configPath, file.str()))
+        {
+            Logger::err("Could not write VKIntox.conf: " + configPath);
+            return false;
+        }
+
         Logger::info("Saved settings to: " + configPath);
         return true;
     }
@@ -645,12 +643,7 @@ namespace VKIntox
         mkdir(baseDir.c_str(), 0755);
 
         std::string configPath = baseDir + "/shader_manager.conf";
-        std::ofstream file(configPath);
-        if (!file.is_open())
-        {
-            Logger::err("Could not open shader_manager.conf for writing: " + configPath);
-            return false;
-        }
+        std::ostringstream file;
 
         file << "# Shader Manager configuration\n";
         file << "# Parent directories are scanned recursively for Shaders/ and Textures/ subdirs\n\n";
@@ -667,7 +660,12 @@ namespace VKIntox
         for (const auto& path : config.discoveredTexturePaths)
             file << "texturePath = " << path << "\n";
 
-        file.close();
+        if (!file.good() || !writeAtomically(configPath, file.str()))
+        {
+            Logger::err("Could not write shader_manager.conf: " + configPath);
+            return false;
+        }
+
         Logger::info("Saved shader manager config to: " + configPath);
         return true;
     }
@@ -680,14 +678,7 @@ namespace VKIntox
         const std::map<std::string, std::string>& effectPaths,
         const std::vector<PreprocessorDefinition>& preprocessorDefs)
     {
-        // Atomic write: write to temp file then rename to prevent corruption
-        std::string tmpPath = filePath + ".tmp";
-        std::ofstream file(tmpPath);
-        if (!file.is_open())
-        {
-            Logger::err("Could not open for writing: " + tmpPath);
-            return false;
-        }
+        std::ostringstream file;
 
         // Group params by effect
         std::map<std::string, std::vector<const ConfigParam*>> paramsByEffect;
@@ -749,20 +740,9 @@ namespace VKIntox
         if (!disabledEffects.empty())
             file << "disabledEffects = " << joinEffects(disabledEffects) << "\n";
 
-        file.close();
-
-        if (file.fail())
+        if (!file.good() || !writeAtomically(filePath, file.str()))
         {
-            Logger::err("Failed to write config to: " + tmpPath);
-            std::remove(tmpPath.c_str());
-            return false;
-        }
-
-        // Atomic rename — if this fails, the original file is untouched
-        if (std::rename(tmpPath.c_str(), filePath.c_str()) != 0)
-        {
-            Logger::err("Failed to rename temp config to: " + filePath);
-            std::remove(tmpPath.c_str());
+            Logger::err("Failed to write config to: " + filePath);
             return false;
         }
 

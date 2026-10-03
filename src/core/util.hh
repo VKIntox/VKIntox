@@ -14,6 +14,10 @@ namespace VKIntox
     // shell, so a url can't smuggle in extra arguments.
     bool openInShell(const char* url);
 
+    // Writes contents to a sibling temp file and renames it over path, so a
+    // crash mid-write leaves the previous file intact instead of truncated.
+    bool writeAtomically(const std::string& path, const std::string& contents);
+
     enum class Color
     {
         defaultColor,

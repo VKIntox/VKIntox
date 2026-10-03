@@ -1,5 +1,10 @@
 #include "util.hh"
 
+#include "c_resource.hh"
+
+#include <cerrno>
+#include <cstdio>
+#include <fcntl.h>
 #include <iostream>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -102,5 +107,44 @@ namespace VKIntox
         int status = 0;
         waitpid(pid, &status, 0);
         return true;
+    }
+
+    bool writeAtomically(const std::string& path, const std::string& contents)
+    {
+        std::string temporary = path + ".tmp-XXXXXX";
+        std::vector<char> name(temporary.begin(), temporary.end());
+        name.push_back('\0');
+        // mkstemp rewrites name in place, so the real path only exists after
+        // the call, which is what makes unlink-on-failure target the right file
+        UniqueFd fd(mkstemp(name.data()));
+        if (!fd)
+            return false;
+
+        size_t offset = 0;
+        bool success = true;
+        while (offset < contents.size())
+        {
+            const ssize_t count = write(fd.get(), contents.data() + offset, contents.size() - offset);
+            if (count < 0 && errno == EINTR)
+                continue;
+            if (count <= 0)
+            {
+                success = false;
+                break;
+            }
+            offset += static_cast<size_t>(count);
+        }
+        if (success && fsync(fd.get()) != 0)
+            success = false;
+
+        // the close result is part of the answer, not cleanup noise: with
+        // deferred writeback a full or failed disk only reports itself here
+        if (!fd.close())
+            success = false;
+
+        if (success && std::rename(name.data(), path.c_str()) == 0)
+            return true;
+        unlink(name.data());
+        return false;
     }
 } // namespace VKIntox
