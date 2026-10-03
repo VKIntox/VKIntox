@@ -7,10 +7,7 @@
 namespace VKIntox
 {
     uint32_t convertToKeySymX11(std::string key);
-    void beginKeyboardInputFrameX11();
+    void     beginKeyboardInputFrameX11();
     bool     isKeyPressedX11(uint32_t ks);
     KeyboardState getKeyboardStateX11();
-
-    // For input blocking - returns the keyboard display connection
-    void* getKeyboardDisplay();
 } // namespace VKIntox

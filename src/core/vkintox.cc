@@ -2209,11 +2209,10 @@ namespace VKIntox
         logicalSwapchain->imageCount = fetchedImageCount;
         logicalSwapchain->images = std::move(realImages);
 
-        // non-wayland gets the real images. handing out the fakes below only works
-        // because the wayland present path copies them into the real swapchain
-        // first; x11 passes straight through, so the app would render into
-        // fakes nobody reads and present a blank window.
-        if (isNonWaylandSurface())
+        // a surface neither backend processes gets the real images so it still
+        // presents. wayland and x11 both get the fakes below; the present path
+        // copies them into the real swapchain.
+        if (!isWayland() && !isX11())
         {
             *pCount = std::min<uint32_t>(*pCount, logicalSwapchain->imageCount);
             std::memcpy(swapchainImages, logicalSwapchain->images.data(), sizeof(VkImage) * (*pCount));
@@ -2793,7 +2792,7 @@ namespace VKIntox
             }
         }
 
-        if (isNonWaylandSurface())
+        if (!isWayland() && !isX11())
         {
             std::shared_ptr<LogicalDevice> passThroughDevice;
 
@@ -2806,9 +2805,9 @@ namespace VKIntox
                 if (!devIt->second->queue)
                 {
                     VkResult vr = devIt->second->vkd.QueuePresentKHR(queue, pPresentInfo);
-                    reportDeviceLostDiagnostics(devIt->second.get(), queue, "vkQueuePresentKHR(non-wayland direct)", vr);
+                    reportDeviceLostDiagnostics(devIt->second.get(), queue, "vkQueuePresentKHR(unsupported-surface direct)", vr);
                     if (vr == VK_ERROR_DEVICE_LOST)
-                        panicLayer(devIt->second.get(), "Vulkan device lost during non-wayland direct present");
+                        panicLayer(devIt->second.get(), "Vulkan device lost during unsupported-surface direct present");
                     return vr;
                 }
 
@@ -2816,14 +2815,15 @@ namespace VKIntox
             }
 
             VkResult vr = passThroughDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
-            reportDeviceLostDiagnostics(passThroughDevice.get(), queue, "vkQueuePresentKHR(non-wayland passthrough)", vr);
+            reportDeviceLostDiagnostics(passThroughDevice.get(), queue, "vkQueuePresentKHR(unsupported-surface passthrough)", vr);
             if (vr == VK_ERROR_DEVICE_LOST)
-                panicLayer(passThroughDevice.get(), "Vulkan device lost during non-wayland passthrough present");
+                panicLayer(passThroughDevice.get(), "Vulkan device lost during unsupported-surface passthrough present");
             return vr;
         }
 
         // Mark new input frame so dispatch deduplication resets
-        beginWaylandInputFrame();
+        if (isWayland())
+            beginWaylandInputFrame();
         beginKeyboardInputFrame();
 
         // Keybindings - read from settingsManager (can be updated when settings are saved)
@@ -5034,7 +5034,8 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         Logger::trace("vkCreateXlibSurfaceKHR");
-        markNonWaylandSurface("vkCreateXlibSurfaceKHR");
+        if (pCreateInfo && pCreateInfo->window)
+            setX11Window((unsigned long)pCreateInfo->window);
 
         auto nextFunc = (PFN_vkCreateXlibSurfaceKHR)
             instanceDispatchMap[GetKey(instance)].GetInstanceProcAddr(
@@ -5054,7 +5055,8 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         Logger::trace("vkCreateXcbSurfaceKHR");
-        markNonWaylandSurface("vkCreateXcbSurfaceKHR");
+        if (pCreateInfo && pCreateInfo->window)
+            setX11Window((unsigned long)pCreateInfo->window);
 
         auto nextFunc = (PFN_vkCreateXcbSurfaceKHR)
             instanceDispatchMap[GetKey(instance)].GetInstanceProcAddr(

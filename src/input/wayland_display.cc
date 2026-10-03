@@ -2,27 +2,47 @@
 
 #include "logger.hh"
 
-#include <cstdlib>
-#include <string>
 #include <atomic>
+#include <string>
 
 namespace VKIntox
 {
+    static std::atomic<int> surfaceKind{static_cast<int>(SurfaceKind::Unknown)};
     static std::atomic<wl_display*> waylandDisplay{nullptr};
     static std::atomic<wl_surface*> waylandSurface{nullptr};
-    static std::atomic<int> waylandChecked{-1}; // -1 = unchecked, 0 = no, 1 = yes
-    static std::atomic<bool> nonWaylandSurfaceFlag{false};
+    static std::atomic<unsigned long> x11Window{0};
+
+    // first surface wins: an app drives one WSI, and a late second kind must not
+    // steal the capture from the one it actually presents with.
+    static bool claimKind(SurfaceKind kind)
+    {
+        int current = surfaceKind.load(std::memory_order_acquire);
+        if (current == static_cast<int>(SurfaceKind::Unknown))
+            return surfaceKind.compare_exchange_strong(current, static_cast<int>(kind),
+                                                       std::memory_order_acq_rel);
+        return current == static_cast<int>(kind);
+    }
+
+    SurfaceKind getSurfaceKind()
+    {
+        return static_cast<SurfaceKind>(surfaceKind.load(std::memory_order_acquire));
+    }
+
+    bool isWayland()
+    {
+        return getSurfaceKind() == SurfaceKind::Wayland;
+    }
+
+    bool isX11()
+    {
+        return getSurfaceKind() == SurfaceKind::X11;
+    }
 
     void setWaylandDisplay(wl_display* display)
     {
-        if (!display)
+        if (!display || !claimKind(SurfaceKind::Wayland))
             return;
-
-        if (nonWaylandSurfaceFlag.load(std::memory_order_acquire))
-            return;
-
         waylandDisplay.store(display, std::memory_order_release);
-        waylandChecked.store(1, std::memory_order_release);
         Logger::info("captured Wayland display from vkCreateWaylandSurfaceKHR");
     }
 
@@ -33,12 +53,8 @@ namespace VKIntox
 
     void setWaylandSurface(wl_surface* surface)
     {
-        if (!surface)
+        if (!surface || !claimKind(SurfaceKind::Wayland))
             return;
-
-        if (nonWaylandSurfaceFlag.load(std::memory_order_acquire))
-            return;
-
         waylandSurface.store(surface, std::memory_order_release);
         Logger::info("captured Wayland surface from vkCreateWaylandSurfaceKHR");
     }
@@ -48,47 +64,16 @@ namespace VKIntox
         return waylandSurface.load(std::memory_order_acquire);
     }
 
-    bool isWayland()
+    void setX11Window(unsigned long window)
     {
-        if (nonWaylandSurfaceFlag.load(std::memory_order_acquire))
-            return false;
-
-        int checked = waylandChecked.load(std::memory_order_acquire);
-        if (checked >= 0)
-            return checked == 1;
-
-        // Only enable the Wayland input backend after we actually intercepted
-        // vkCreateWaylandSurfaceKHR and captured the game's wl_display/surface.
-        // This avoids false positives on Xwayland apps where WAYLAND_DISPLAY
-        // exists in the session but Vulkan uses Xlib/Xcb surfaces.
-        if (waylandDisplay.load(std::memory_order_acquire) != nullptr
-            || waylandSurface.load(std::memory_order_acquire) != nullptr)
-        {
-            waylandChecked.store(1, std::memory_order_release);
-            return true;
-        }
-
-        waylandChecked.store(0, std::memory_order_release);
-        return false;
-    }
-
-    bool isNonWaylandSurface()
-    {
-        return nonWaylandSurfaceFlag.load(std::memory_order_acquire);
-    }
-
-    void markNonWaylandSurface(const char* source)
-    {
-        if (nonWaylandSurfaceFlag.load(std::memory_order_acquire))
+        if (!window || !claimKind(SurfaceKind::X11))
             return;
+        x11Window.store(window, std::memory_order_release);
+        Logger::info("captured X11 window from a Vulkan surface; processing X11 surface");
+    }
 
-        nonWaylandSurfaceFlag.store(true, std::memory_order_release);
-        waylandDisplay.store(nullptr, std::memory_order_release);
-        waylandSurface.store(nullptr, std::memory_order_release);
-        waylandChecked.store(0, std::memory_order_release);
-        if (source && *source)
-            Logger::warn(std::string("unsupported non-Wayland Vulkan surface via ") + source + "; VKIntox will pass through only");
-        else
-            Logger::warn("unsupported non-Wayland Vulkan surface detected; VKIntox will pass through only");
+    unsigned long getX11Window()
+    {
+        return x11Window.load(std::memory_order_acquire);
     }
 } // namespace VKIntox

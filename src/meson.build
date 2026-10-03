@@ -142,6 +142,17 @@ keyboard_input_x11_lib = static_library('keyboard_input_x11', 'input/keyboard_in
 mouse_input_lib = static_library('mouse_input', 'input/mouse_input.cc', include_directories: [include_directories('core')])
 input_blocker_lib = static_library('input_blocker', 'input/input_blocker.cc', include_directories: [include_directories('core')])
 
+# X11 input backends. The shared connection (x11_display) owns the single event
+# queue; keyboard and mouse register callbacks into it and the blocker grabs on
+# the same connection. Kept out of the unity-compiled core because X11/X.h
+# defines symbols (None, ...) that collide with the codebase.
+x11_display_lib = static_library('x11_display',
+    'input/x11_display.cc',
+    include_directories: [include_directories('core')])
+mouse_input_x11_lib = static_library('mouse_input_x11',
+    'input/mouse_input_x11.cc',
+    include_directories: [include_directories('core')])
+
 # Wayland input backends — built as static libs to isolate wayland-client headers.
 # wayland_input_common provides a shared seat/queue used by both keyboard and mouse.
 wayland_input_common_lib = static_library('wayland_input_common',
@@ -201,6 +212,7 @@ endif
 shared_library('vkintox',
     VKIntox_src, overlay_src, imgui_src, shader_include,
     link_with: [keyboard_input_x11_lib, mouse_input_lib, input_blocker_lib,
+                x11_display_lib, mouse_input_x11_lib,
                 wayland_input_common_lib, keyboard_input_wayland_lib, mouse_input_wayland_lib,
                 wayland_pointer_constraints_lib, wayland_interpose_lib],
     include_directories : [VKIntox_include_path, imgui_inc, overlay_inc, effects_inc, effects_builtin_inc, effects_params_inc, core_inc, input_inc, render_inc, vendor_inc, include_directories('vendor/reshade'), stb_inc, shader_asset_inc, source_inc],

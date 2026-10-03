@@ -44,9 +44,9 @@ configure:
 
 prepare-layer:
     mkdir -p {{ dev_layer_dir }}
-    sed \
+    sed -E \
       -e 's#"name": "{{ layer_name }}"#"name": "{{ dev_layer_name }}"#' \
-      -e 's#"/usr/local/lib/libvkintox.so"#"{{ lib_dir / "libvkintox.so" }}"#' \
+      -e 's#"library_path": "[^"]*"#"library_path": "{{ lib_dir }}/libvkintox.so"#' \
       {{ layer_dir }}/VKIntox.json > {{ dev_layer_manifest }}
 
 run +args: prepare-layer
@@ -55,6 +55,7 @@ run +args: prepare-layer
       VK_INSTANCE_LAYERS={{ dev_layer_name }} \
       LD_LIBRARY_PATH={{ lib_dir }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
       ENABLE_VKINTOX=${ENABLE_VKINTOX:-1} \
+      DISABLE_VKINTOX=1 \
       {{ args }}
 
 run-debug log +args: prepare-layer
@@ -63,6 +64,7 @@ run-debug log +args: prepare-layer
       VK_INSTANCE_LAYERS={{ dev_layer_name }} \
       LD_LIBRARY_PATH={{ lib_dir }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
       ENABLE_VKINTOX=${ENABLE_VKINTOX:-1} \
+      DISABLE_VKINTOX=1 \
       VKINTOX_LOG_LEVEL=debug \
       VKINTOX_LOG_FILE={{ log }} \
       {{ args }}
@@ -84,6 +86,7 @@ prime-run +args: prepare-layer
       VK_INSTANCE_LAYERS={{ dev_layer_name }} \
       LD_LIBRARY_PATH={{ lib_dir }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
       ENABLE_VKINTOX=${ENABLE_VKINTOX:-1} \
+      DISABLE_VKINTOX=1 \
       {{ args }}
 
 prime-run-debug log +args: prepare-layer
@@ -94,6 +97,7 @@ prime-run-debug log +args: prepare-layer
       VK_INSTANCE_LAYERS={{ dev_layer_name }} \
       LD_LIBRARY_PATH={{ lib_dir }}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
       ENABLE_VKINTOX=${ENABLE_VKINTOX:-1} \
+      DISABLE_VKINTOX=1 \
       VKINTOX_LOG_LEVEL=debug \
       VKINTOX_LOG_FILE={{ log }} \
       {{ args }}
