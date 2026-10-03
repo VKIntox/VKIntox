@@ -28,6 +28,8 @@ else
 fi
 
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
+# the freedesktop branch this layer is built for; must match the flatpak manifest.
+LAYER_BRANCH="26.08"
 # where `just flatpak-build` leaves the local repo, per the Justfile
 FLATPAK_BUILD_ROOT="build/flatpak-repo"
 # caches the source hash so an unchanged tree can skip a rebuild; uninstall has

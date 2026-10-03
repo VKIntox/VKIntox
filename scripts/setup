@@ -100,8 +100,13 @@ EOF
 # wants to have to redo.
 uninstall_layer() {
     section "removing layer"
-    if flatpak info --user "$LAYER_ID" >/dev/null 2>&1; then
-        run_progress "uninstalling $LAYER_ID" flatpak uninstall --user --noninteractive -y "$LAYER_ID"
+    local installed
+    installed=$(flatpak list --user --runtime --columns=application,branch 2>/dev/null | awk -v id="$LAYER_ID" '$1==id{print id "//" $2}')
+    if [ -n "$installed" ]; then
+        while read -r ref; do
+            [ -n "$ref" ] || continue
+            run_progress "uninstalling $ref" flatpak uninstall --user --noninteractive -y "$ref"
+        done <<<"$installed"
     else
         ok "layer is not installed"
     fi
