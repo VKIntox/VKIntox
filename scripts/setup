@@ -330,9 +330,9 @@ section "installing layer"
 cat >"$TMP_DIR/VKIntox.json" <<'JSON'
 {
   "id": "org.freedesktop.Platform.VulkanLayer.VKIntox",
-  "branch": "25.08",
+  "branch": "26.08",
   "runtime": "org.freedesktop.Platform",
-  "runtime-version": "25.08",
+  "runtime-version": "26.08",
   "sdk": "org.freedesktop.Sdk",
   "build-extension": true,
   "modules": [{
@@ -388,7 +388,7 @@ if flatpak info --user "$LAYER_ID" >/dev/null 2>&1; then
     run_progress "removing previous layer" flatpak uninstall --user --noninteractive -y "$LAYER_ID"
 fi
 run_progress "installing layer" flatpak install --user --noninteractive -y vkintox-local \
-    "runtime/$LAYER_ID/x86_64/25.08"
+    "runtime/$LAYER_ID/x86_64/26.08"
 ok "layer installed"
 
 section "config dirs"

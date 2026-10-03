@@ -213,14 +213,14 @@ fi
 if [[ "$MODE" != "system" ]]; then
     section "flatpak sdks"
 
-    run_progress "pulling gnome sdk" flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/50
-    flatpak info --user runtime/org.gnome.Sdk/x86_64/50 >/dev/null 2>&1 || die "gnome sdk install failed"
+    run_progress "pulling gnome sdk" flatpak install -y --user flathub runtime/org.gnome.Sdk/x86_64/51
+    flatpak info --user runtime/org.gnome.Sdk/x86_64/51 >/dev/null 2>&1 || die "gnome sdk install failed"
 
-    run_progress "pulling freedesktop sdk" flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/25.08
-    flatpak info --user runtime/org.freedesktop.Sdk/x86_64/25.08 >/dev/null 2>&1 || die "freedesktop sdk install failed"
+    run_progress "pulling freedesktop sdk" flatpak install -y --user flathub runtime/org.freedesktop.Sdk/x86_64/26.08
+    flatpak info --user runtime/org.freedesktop.Sdk/x86_64/26.08 >/dev/null 2>&1 || die "freedesktop sdk install failed"
 
-    run_progress "pulling clang" flatpak install -y --user flathub runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/25.08
-    flatpak info --user runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/25.08 >/dev/null 2>&1 || die "llvm 21 sdk extension install failed"
+    run_progress "pulling clang" flatpak install -y --user flathub runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/26.08
+    flatpak info --user runtime/org.freedesktop.Sdk.Extension.llvm21/x86_64/26.08 >/dev/null 2>&1 || die "llvm 21 sdk extension install failed"
 fi
 
 SOURCE_HASH=$(find src packaging/meson-config -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
