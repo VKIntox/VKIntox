@@ -334,8 +334,15 @@ if (( SELECTED == 1 )); then
     select_menu "multiple versions found:" "${VERSION_LABELS[@]}"
     ASSET_URL="${VERSION_URLS[$SELECTED]}"
 else
-    ASSET_URL=$(jq -er '[.assets[] | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$"))] | sort_by(.created_at) | last | .browser_download_url // empty' \
-        "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
+    # prefer the newest stable build, so an actively-built experimental branch
+    # can never become the default; only fall back to any build if none is stable
+    ASSET_URL=$(jq -er '
+        [ .assets[] | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$")) ]
+        | (map(select(.name | contains("-experimental") | not))) as $stable
+        | (if ($stable | length) > 0 then $stable else . end)
+        | sort_by(.created_at) | last
+        | .browser_download_url // empty
+    ' "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
 fi
 LIBRARY="$TMP_DIR/$(basename "$ASSET_URL")"
 say "downloading $(basename "$ASSET_URL")"
