@@ -3512,62 +3512,69 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     if (value_changed)
         MarkItemEdited(id);
 
-    // 16dp track, `corner-full` on the outer ends, rounded corners facing the
-    // thumb, and a 6dp gap on each side of the pill.
+    // 16dp track with `corner-full` outer ends and rounded corners facing the
+    // thumb. the active/inactive split uses the resting handle width, not the
+    // animated press width, so the track edges don't twitch as the handle
+    // narrows on a drag.
     const float track_h = m3.slider_track_height * m3.density;
-    const float handle_h = m3.slider_handle_height * m3.density;
-    const float external_r = track_h * 0.5f;
+    const float track_half = track_h * 0.5f;
+    const float external_r = track_half;
     const float inside_r = ImMin(m3.slider_track_inside_corner * m3.density, external_r);
     const float gap = m3.slider_handle_padding * m3.density;
-    const ImRect track_rect(frame_bb.Min.x, frame_bb.GetCenter().y - track_h * 0.5f, frame_bb.Max.x, frame_bb.GetCenter().y + track_h * 0.5f);
+    const float rest_half = m3.slider_handle_width * m3.density * 0.5f;
+    const ImRect track_rect(frame_bb.Min.x, frame_bb.GetCenter().y - track_half,
+                            frame_bb.Max.x, frame_bb.GetCenter().y + track_half);
 
-    // Handle narrows while the slider is being dragged, then springs back.
+    // handle narrows while dragged, then springs back. the handle and its state
+    // layer are capped to the row height so neither can spill into the item
+    // above or below.
     const bool slider_held = (g.ActiveId == id);
     const float narrow = ImGuiM3SpringStepEffectsDefault(id ^ 0x534C44, slider_held ? 1.0f : 0.0f);
     const float handle_w = ImLerp(m3.slider_handle_width, m3.slider_handle_width_pressed, ImSaturate(narrow)) * m3.density;
     const float half_handle = handle_w * 0.5f;
+    const float row_h = frame_bb.GetHeight();
+    const float handle_h = ImMin(m3.slider_handle_height * m3.density, row_h);
+    const float handle_r = ImMin(half_handle, handle_h * 0.5f);
     const ImVec2 handle_center = grab_bb.GetCenter();
 
     const ImU32 inactive_col = ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHighest);
     const ImU32 active_col = ImGuiM3ColorU32(ImGuiM3Role_Primary);
-    if (track_rect.GetWidth() > 0.0f)
+    if (track_rect.GetWidth() > 0.0f && row_h > 0.0f)
     {
-        // active always stops `gap` short of the pill, even at max, so the thumb
-        // stays distinct. the inactive side only draws when it fits, and radii
-        // clamp to half a segment's width so short slivers can't bleed past.
-        const float pill_left = handle_center.x - half_handle;
-        const float pill_right = handle_center.x + half_handle;
-        const bool has_inactive = pill_right + gap < track_rect.Max.x;
-        const float active_end = pill_left - gap;
+        // active stops `gap` short of the resting pill, inactive starts `gap`
+        // after it. both edges clamp to the track, so a value at either extreme
+        // shrinks its segment to nothing instead of overshooting.
+        const float active_end = ImClamp(handle_center.x - rest_half - gap, track_rect.Min.x, track_rect.Max.x);
+        const float inactive_start = ImClamp(handle_center.x + rest_half + gap, track_rect.Min.x, track_rect.Max.x);
 
         if (active_end > track_rect.Min.x)
         {
             const ImRect active(track_rect.Min.x, track_rect.Min.y, active_end, track_rect.Max.y);
-            const float ar = ImMax(0.0f, active.GetWidth() * 0.5f);
+            const float ar = active.GetWidth() * 0.5f;
             ImGuiM3PathRoundedRect(window->DrawList, active,
                                    ImGuiM3ShapeRounding{ ImMin(external_r, ar), ImMin(inside_r, ar), ImMin(inside_r, ar), ImMin(external_r, ar) },
                                    active_col);
         }
-        if (has_inactive)
+        if (inactive_start < track_rect.Max.x)
         {
-            const ImRect inactive(pill_right + gap, track_rect.Min.y, track_rect.Max.x, track_rect.Max.y);
-            const float ir = ImMax(0.0f, inactive.GetWidth() * 0.5f);
+            const ImRect inactive(inactive_start, track_rect.Min.y, track_rect.Max.x, track_rect.Max.y);
+            const float ir = inactive.GetWidth() * 0.5f;
             ImGuiM3PathRoundedRect(window->DrawList, inactive,
                                    ImGuiM3ShapeRounding{ ImMin(inside_r, ir), ImMin(external_r, ir), ImMin(external_r, ir), ImMin(inside_r, ir) },
                                    inactive_col);
         }
     }
 
-    // Handle: 4x44dp pill, and the 40dp state layer behind it.
-    if (grab_bb.Max.x > grab_bb.Min.x)
+    // Handle pill, with the state layer behind it.
+    if (grab_bb.Max.x > grab_bb.Min.x && handle_h > 0.0f)
     {
-        const float layer_r = m3.state_layer_size * m3.density * 0.5f;
+        const float layer_r = ImMin(m3.state_layer_size * m3.density * 0.5f, row_h * 0.5f);
         window->DrawList->AddCircleFilled(handle_center, layer_r,
                                           ImGuiM3StateLayerU32(ImGuiM3Role_Primary, (hovered && slider_held) ? ImGuiM3State_Pressed : hovered ? ImGuiM3State_Hovered : ImGuiM3State_Enabled),
                                           window->DrawList->_CalcCircleAutoSegmentCount(layer_r));
         const ImRect handle(handle_center.x - half_handle, handle_center.y - handle_h * 0.5f,
                             handle_center.x + half_handle, handle_center.y + handle_h * 0.5f);
-        ImGuiM3PathRoundedRect(window->DrawList, handle, ImGuiM3ShapeRounding{ half_handle, half_handle, half_handle, half_handle },
+        ImGuiM3PathRoundedRect(window->DrawList, handle, ImGuiM3ShapeRounding{ handle_r, handle_r, handle_r, handle_r },
                                active_col);
     }
 
