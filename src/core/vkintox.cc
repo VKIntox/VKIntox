@@ -1519,6 +1519,13 @@ namespace VKIntox
         modifiedCreateInfo.pApplicationInfo = &appInfo;
         VkResult ret                        = createFunc(&modifiedCreateInfo, pAllocator, pInstance);
 
+        if (ret != VK_SUCCESS)
+        {
+            // *pInstance is only valid on VK_SUCCESS, and the maps key on the handle
+            Logger::err("vkCreateInstance failed: " + std::to_string(ret));
+            return ret;
+        }
+
         // fetch our own dispatch table for the functions we need, into the next layer
         InstanceDispatch dispatchTable;
         fillDispatchTableInstance(*pInstance, gpa, &dispatchTable);
