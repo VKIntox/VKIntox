@@ -1,9 +1,25 @@
 #include "lut_cube.hh"
 
+#include <algorithm>
+#include <stdexcept>
+
 #include "logger.hh"
 
 namespace VKIntox
 {
+    static bool parseFloat(const std::string& text, float& out)
+    {
+        try
+        {
+            out = std::stof(text);
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+        return true;
+    }
+
     LutCube::LutCube()
     {
     }
@@ -37,9 +53,19 @@ namespace VKIntox
         {
             line = line.substr(line.find("LUT_3D_SIZE") + 11);
             line = skipWhiteSpace(line);
-            size = std::stoi(line);
+            int parsedSize = 0;
+            try
+            {
+                parsedSize = std::stoi(line);
+            }
+            catch (const std::exception&)
+            {
+                Logger::err("invalid LUT_3D_SIZE: " + line);
+                return;
+            }
+            size = std::clamp(parsedSize, 2, 256);
 
-            colorCube = std::vector<unsigned char>(size * size * size * 4, 255);
+            colorCube = std::vector<unsigned char>(static_cast<size_t>(size) * size * size * 4, 255);
             return;
         }
         if (line.find("DOMAIN_MIN") != std::string::npos)
@@ -94,31 +120,32 @@ namespace VKIntox
 
     void LutCube::splitTripel(std::string tripel, float& x, float& y, float& z)
     {
+        x = 0.0f;
+        y = 0.0f;
+        z = 0.0f;
+
         tripel       = skipWhiteSpace(tripel);
         size_t after = tripel.find_first_of(" \n");
         if (after == std::string::npos)
         {
-            x = std::stof(tripel);
-            y = 0.0f;
-            z = 0.0f;
+            parseFloat(tripel, x);
             return;
         }
-        x            = std::stof(tripel.substr(0, after));
-        tripel       = tripel.substr(after);
+        parseFloat(tripel.substr(0, after), x);
+        tripel = tripel.substr(after);
 
         tripel = skipWhiteSpace(tripel);
         after  = tripel.find_first_of(" \n");
         if (after == std::string::npos)
         {
-            y = std::stof(tripel);
-            z = 0.0f;
+            parseFloat(tripel, y);
             return;
         }
-        y      = std::stof(tripel.substr(0, after));
+        parseFloat(tripel.substr(0, after), y);
         tripel = tripel.substr(after);
 
         tripel = skipWhiteSpace(tripel);
-        z      = std::stof(tripel);
+        parseFloat(tripel, z);
     }
 
     void LutCube::clampTripel(float x, float y, float z, unsigned char& outX, unsigned char& outY, unsigned char& outZ)
@@ -132,9 +159,10 @@ namespace VKIntox
         if (rangeY == 0.0f) rangeY = 1.0f;
         if (rangeZ == 0.0f) rangeZ = 1.0f;
 
-        outX = static_cast<unsigned char>(255.0f * (x / rangeX));
-        outY = static_cast<unsigned char>(255.0f * (y / rangeY));
-        outZ = static_cast<unsigned char>(255.0f * (z / rangeZ));
+        // clamp before the cast: out-of-range floats to unsigned char are UB
+        outX = static_cast<unsigned char>(255.0f * std::clamp(x / rangeX, 0.0f, 1.0f));
+        outY = static_cast<unsigned char>(255.0f * std::clamp(y / rangeY, 0.0f, 1.0f));
+        outZ = static_cast<unsigned char>(255.0f * std::clamp(z / rangeZ, 0.0f, 1.0f));
     }
 
     void LutCube::writeColor(int x, int y, int z, unsigned char r, unsigned char g, unsigned char b)

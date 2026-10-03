@@ -29,7 +29,7 @@ namespace VKIntox
     {
     public:
         std::vector<unsigned char> colorCube;
-        int                        size;
+        int                        size = 0;
 
         LutCube(const std::string& file);
         LutCube();
