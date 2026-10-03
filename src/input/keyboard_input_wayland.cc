@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <mutex>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <unordered_set>
@@ -25,10 +26,10 @@ namespace VKIntox
     static xkb_keymap* xkbKeymap = nullptr;
     static xkb_state* xkbState = nullptr;
 
-    // TODO(2026-10 buwryme): the callbacks mutate pressedKeys/keyPressEvents and
-    // the accumulators from the game's dispatcher thread, while
-    // isKeyPressedWayland/getKeyboardStateWayland read and clear them on the
-    // overlay thread. guard them with a keyboard-local mutex.
+    // Guards everything below: the dispatch-thread callbacks mutate it while the
+    // overlay thread reads and clears it. Never held across init/dispatch, which
+    // run those callbacks and would self-deadlock on this non-recursive lock.
+    static std::mutex keyboardMutex;
 
     // Tracking pressed keys (Wayland keycodes)
     static std::unordered_set<uint32_t> pressedKeys;
@@ -54,6 +55,7 @@ namespace VKIntox
     // Process a key press event
     static void processWaylandKey(uint32_t keycode, uint32_t state)
     {
+        std::lock_guard<std::mutex> lock(keyboardMutex);
         if (!xkbState)
             return;
 
@@ -135,6 +137,7 @@ namespace VKIntox
         }
 
         // Clean up old keymap/state
+        std::lock_guard<std::mutex> lock(keyboardMutex);
         if (xkbState)
         {
             xkb_state_unref(xkbState);
@@ -173,6 +176,7 @@ namespace VKIntox
     static void keyboardLeave(void* /*data*/, wl_keyboard* /*keyboard*/,
                               uint32_t /*serial*/, wl_surface* /*surface*/)
     {
+        std::lock_guard<std::mutex> lock(keyboardMutex);
         pressedKeys.clear();
         keyPressEvents.clear();  // Prevent stale keysyms surviving focus loss
     }
@@ -189,6 +193,7 @@ namespace VKIntox
                                   uint32_t modsLatched, uint32_t modsLocked,
                                   uint32_t group)
     {
+        std::lock_guard<std::mutex> lock(keyboardMutex);
         if (xkbState)
             xkb_state_update_mask(xkbState, modsDepressed, modsLatched, modsLocked, 0, 0, group);
     }
@@ -263,25 +268,28 @@ namespace VKIntox
             wl_keyboard_destroy(wlKeyboard);
             wlKeyboard = nullptr;
         }
-        if (xkbState)
         {
-            xkb_state_unref(xkbState);
-            xkbState = nullptr;
-        }
-        if (xkbKeymap)
-        {
-            xkb_keymap_unref(xkbKeymap);
-            xkbKeymap = nullptr;
-        }
-        if (xkbCtx)
-        {
-            xkb_context_unref(xkbCtx);
-            xkbCtx = nullptr;
-        }
+            std::lock_guard<std::mutex> lock(keyboardMutex);
+            if (xkbState)
+            {
+                xkb_state_unref(xkbState);
+                xkbState = nullptr;
+            }
+            if (xkbKeymap)
+            {
+                xkb_keymap_unref(xkbKeymap);
+                xkbKeymap = nullptr;
+            }
+            if (xkbCtx)
+            {
+                xkb_context_unref(xkbCtx);
+                xkbCtx = nullptr;
+            }
 
-        pressedKeys.clear();
-        keyPressEvents.clear();
-        initialized = false;
+            pressedKeys.clear();
+            keyPressEvents.clear();
+            initialized = false;
+        }
 
         // Clean up shared resources (idempotent)
         cleanupWaylandInputCommon();
@@ -308,6 +316,8 @@ namespace VKIntox
             return false;
 
         dispatchWaylandInputEvents();
+
+        std::lock_guard<std::mutex> lock(keyboardMutex);
 
         // Check accumulated press events first — catches rapid taps where
         // press+release both arrive in the same dispatch cycle
@@ -339,6 +349,8 @@ namespace VKIntox
             return state;
 
         dispatchWaylandInputEvents();
+
+        std::lock_guard<std::mutex> lock(keyboardMutex);
 
         state.typedChars = std::move(typedCharsAccumulator);
         state.lastKeyName = std::move(lastKeyNameAccumulator);
