@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main, master, v0.1.3-experimental]
+    branches: [main, master, v0.1.3-experimental, v0.2.0-experimental]
     paths:
       - 'src/**'
       - 'assets/**'
