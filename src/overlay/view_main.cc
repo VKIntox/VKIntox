@@ -467,11 +467,13 @@ namespace VKIntox
                 ImGui::CloseCurrentPopup();
             UI::EndM3Dialog();
         }
-        ImGui::Separator();
-
-        // Scrollable effect list (reserve space for footer controls)
+        // Scrollable effect list, carded and scrolled independently of the view
         float footerHeight = ImGui::GetFrameHeightWithSpacing() * 2 + ImGui::GetStyle().ItemSpacing.y;
-        ImGui::BeginChild("EffectList", ImVec2(0, -footerHeight), false);
+        const ImGuiM3Metrics& listMetrics = ImGuiM3GetMetrics();
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * listMetrics.density, 10.0f * listMetrics.density));
+        ImGui::BeginChild("EffectList", ImVec2(0, -footerHeight), ImGuiChildFlags_AlwaysUseWindowPadding);
 
         // Show selected effects with their parameters
         float itemHeight = ImGui::GetFrameHeightWithSpacing();
@@ -788,8 +790,9 @@ namespace VKIntox
         }
 
         ImGui::EndChild();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor();
 
-        ImGui::Separator();
         bool autoApplyVal = settingsManager.getAutoApply();
         if (ImGui::Checkbox("Apply automatically", &autoApplyVal))
         {
