@@ -608,7 +608,7 @@ namespace VKIntox
 
                 // fake a soft drop shadow: stacked translucent rounded rects,
                 // largest first so density builds toward the card edge
-                const int shadowAlpha = static_cast<int>(7.0f * fade);
+                const int shadowAlpha = static_cast<int>(5.0f * fade);
                 const int cardAlpha = static_cast<int>(255.0f * fade);
                 for (int step = static_cast<int>(shadowPad); step >= 1; --step)
                 {
