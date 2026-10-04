@@ -1575,15 +1575,15 @@ namespace VKIntox
             }
         };
 
-        // Cross-slide. The outgoing view is drawn stationary and the incoming
-        // view is drawn on top of it inside an offset child, so the whole view
-        // moves no matter how its own layout places things. The motion is a
-        // fixed-duration cubic bezier (the Hyprland curve) sampled from a start
-        // timestamp, so it is deterministic: no frame-time integration, and no
-        // spring that tightens or bounces depending on how the frames land.
+        // View transition. Both the outgoing and incoming views animate at once:
+        // each travels a fifth of the width in opposite directions and fades with
+        // the same eased clock, so the edge is soft instead of a moving boundary.
+        // The clock is a fixed-duration cubic bezier sampled from a start
+        // timestamp, so it is deterministic: no frame-time integration and no
+        // spring whose bounce depends on how the frames land.
         constexpr float kViewSlideSeconds = 0.30f;
         constexpr float kBezX1 = 0.05f, kBezY1 = 0.90f;
-        constexpr float kBezX2 = 0.10f, kBezY2 = 1.12f;
+        constexpr float kBezX2 = 0.10f, kBezY2 = 1.06f;
 
         static int    viewLastIndex     = -1;  // last observed target key
         static int    viewSettledIndex  = 0;   // last fully shown key
@@ -1633,34 +1633,43 @@ namespace VKIntox
 
         const ImVec2 viewPos  = ImGui::GetCursorScreenPos();
         const ImVec2 viewSize = ImGui::GetContentRegionAvail();
-        const float slideOffset = (1.0f - viewEase) * static_cast<float>(viewSlideDir) * viewSize.x;
+        const bool showingFrom = viewTransitioning && viewFromIndex != viewTargetIndex;
 
-        // Clip the whole strip to the content region so a sliding view can never
+        // Slidefade: a spatial travel of a fifth of the width, with the incoming
+        // view fading in and the outgoing view fading out on the same clock.
+        const float travel    = 0.20f * viewSize.x * static_cast<float>(viewSlideDir);
+        const float offsetIn  = showingFrom ? (1.0f - viewEase) * travel : 0.0f;
+        const float offsetOut = showingFrom ? -viewEase * travel : 0.0f;
+        const float alphaIn   = showingFrom ? ImClamp(viewEase, 0.0f, 1.0f) : 1.0f;
+        const float alphaOut  = showingFrom ? ImClamp(1.0f - viewEase, 0.0f, 1.0f) : 1.0f;
+
+        // A zero-padding child guarantees the offset applies even for views that
+        // position their own content. WindowPadding is popped right after
+        // BeginChild so popups opened inside the view keep the real padding; the
+        // alpha stays pushed across the view so the whole thing fades together.
+        auto renderSlidingView = [&](int key, const char* childId, float offset, float alpha) {
+            ImGui::SetCursorScreenPos(ImVec2(viewPos.x + offset, viewPos.y));
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImVec4 viewBg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+            viewBg.w = 1.0f;
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, viewBg);
+            ImGui::BeginChild(childId, viewSize, false,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+            renderView(key);
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+        };
+
+        // Clip the strip to the content region so an animating view can never
         // draw over the nav or the title bar.
         ImGui::PushClipRect(viewPos, ImVec2(viewPos.x + viewSize.x, viewPos.y + viewSize.y), true);
 
-        if (viewTransitioning && viewFromIndex != viewTargetIndex)
-        {
-            ImGui::SetCursorScreenPos(viewPos);
-            renderView(viewFromIndex);
-        }
-
-        // Incoming view on top, offset. A zero-padding child is what guarantees
-        // the offset applies even for views that position their own content; its
-        // opaque background makes it slide *over* the outgoing view instead of
-        // showing it through. The style vars are popped right after BeginChild
-        // so popups opened inside the view still get the real window padding.
-        ImGui::SetCursorScreenPos(ImVec2(viewPos.x + slideOffset, viewPos.y));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        ImVec4 viewBg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
-        viewBg.w = 1.0f;  // opaque, so the incoming view fully covers the outgoing one
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, viewBg);
-        ImGui::BeginChild("##view_slide", viewSize, false,
-                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar();
-        renderView(viewTargetIndex);
-        ImGui::EndChild();
+        if (showingFrom)
+            renderSlidingView(viewFromIndex, "##view_slide_out", offsetOut, alphaOut);
+        renderSlidingView(viewTargetIndex, "##view_slide_in", offsetIn, alphaIn);
 
         ImGui::PopClipRect();
         ImGui::SetCursorScreenPos(viewPos);
