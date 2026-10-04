@@ -182,6 +182,17 @@ namespace VKIntox
                                         const std::string& copyFromProfile = "");
         static bool deleteShaderProfile(const std::string& gameName, const std::string& profileName);
 
+        // A usable preset name: non-empty, no path separators, no '@' (the
+        // game/profile separator) and no control bytes.
+        static bool isValidShaderProfileName(const std::string& name);
+
+        // Rename a preset in place, keeping its game-specific or imported-global
+        // kind, carrying its sidecar, and repointing the game's last-used file.
+        // Refuses an invalid or already-taken name and rolls back a partial
+        // rename, so on failure every file is exactly where it started.
+        static bool renameShaderProfile(const std::string& gameName, const std::string& oldName,
+                                        const std::string& newName);
+
         // Copy an external ReShade preset into configs/shaders as a global
         // (game-agnostic) <name>.ini. never overwrites: an existing name gets a
         // numeric suffix. returns the imported profile name, or empty on failure.

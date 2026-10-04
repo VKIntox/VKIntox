@@ -2,6 +2,7 @@
 #include "effects/effect_registry.hh"
 #include "settings_manager.hh"
 #include "config_serializer.hh"
+#include "async_writer.hh"
 #include "params/field_editor.hh"
 #include "logger.hh"
 #include "overlay/ui_theme.hh"
@@ -10,10 +11,13 @@
 #include "util.hh"
 
 #include <algorithm>
+#include <atomic>
 #include <cfloat>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/imgui_internal.h"
@@ -201,8 +205,81 @@ namespace VKIntox
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Create shader INI profile");
             static std::string deleteProfileTarget;
+            static std::string renameProfileTarget;
+            static char renameShaderProfileName[64] = "";
             if (!activeShaderProfileName.empty())
             {
+                ImGui::SameLine();
+                const std::string editProfileLabel = std::string(Icon::EditUtf8) + "##editshaderprofile";
+                if (ImGui::Button(editProfileLabel.c_str()))
+                {
+                    renameProfileTarget = activeShaderProfileName;
+                    std::snprintf(renameShaderProfileName, sizeof(renameShaderProfileName), "%s",
+                                  activeShaderProfileName.c_str());
+                    ImGui::OpenPopup("##rename_shader_profile");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Rename shader INI profile");
+
+                if (UI::BeginM3Dialog("##rename_shader_profile", "Rename shader preset"))
+                {
+                    ImGui::TextDisabled("Name");
+                    ImGui::SetNextItemWidth(240.0f);
+                    ImGui::InputText("##renameshaderprofilename", renameShaderProfileName,
+                                     sizeof(renameShaderProfileName));
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    const UI::M3DialogAction actions[] = {
+                        {"Cancel", ImGuiM3Button_Outlined, false},
+                        {"Rename", ImGuiM3Button_Filled, renameShaderProfileName[0] == '\0'},
+                    };
+                    const int action = UI::M3DialogActions(actions, 2);
+                    if (action == 1)
+                    {
+                        const std::string newName = renameShaderProfileName;
+                        const std::string oldName = renameProfileTarget;
+                        if (newName == oldName)
+                        {
+                            // name unchanged: nothing to rename
+                        }
+                        else if (!ConfigSerializer::isValidShaderProfileName(newName))
+                            pushToast(LogLevel::Error, "Preset names can't contain /, \\ or @.");
+                        else if (std::find(shaderProfiles.begin(), shaderProfiles.end(), newName) != shaderProfiles.end())
+                            pushToast(LogLevel::Error, "A shader preset named \"" + newName + "\" already exists.");
+                        else if (!autoSaveProfile(true))
+                            pushToast(LogLevel::Error, "Could not save the active shader profile.");
+                        else
+                        {
+                            // run the rename on the writer thread so a queued
+                            // save can't race the files, then update the UI's
+                            // name/path only after it has landed
+                            auto renamed = std::make_shared<std::atomic<bool>>(false);
+                            AsyncWriter::instance().submit([game = activeGameName, oldName, newName, renamed]() {
+                                renamed->store(ConfigSerializer::renameShaderProfile(game, oldName, newName),
+                                               std::memory_order_relaxed);
+                            });
+                            AsyncWriter::instance().waitForIdle();
+                            if (renamed->load(std::memory_order_relaxed))
+                            {
+                                if (activeShaderProfileName == oldName)
+                                    setActiveShaderProfile(newName);
+                                refreshShaderProfiles();
+                                pendingShaderProfilePath = activeShaderProfilePath;
+                                pendingShaderProfile = true;
+                                applyRequested = true;
+                                paramsDirty = false;
+                                profileDirty = false;
+                                pushToast(LogLevel::Info, "Renamed shader preset to \"" + newName + "\".");
+                            }
+                            else
+                                pushToast(LogLevel::Error, "Could not rename the shader profile.");
+                        }
+                    }
+                    if (action >= 0)
+                        ImGui::CloseCurrentPopup();
+                    UI::EndM3Dialog();
+                }
+
                 ImGui::SameLine();
                 const std::string delProfileLabel = std::string(Icon::DeleteUtf8) + "##delshaderprofile";
                 if (ImGui::Button(delProfileLabel.c_str()))

@@ -28,6 +28,7 @@ namespace VKIntox::Icon
 
     // Actions.
     constexpr ImWchar Add            = 0xE145;
+    constexpr ImWchar Edit           = 0xE3C9;
     constexpr ImWchar Close          = 0xE14C;
     constexpr ImWchar Search         = 0xE8B6;
     constexpr ImWchar Delete         = 0xE872;
@@ -92,6 +93,7 @@ namespace VKIntox::Icon
     constexpr const char* MonitorHeartUtf8  = "\xEE\xAA\xA2";
     constexpr const char* BugReportUtf8     = "\xEE\xA1\xA8";
     constexpr const char* AddUtf8           = "\xEE\x85\x85";
+    constexpr const char* EditUtf8          = "\xEE\x8F\x89";
     constexpr const char* CloseUtf8         = "\xEE\x85\x8C";
     constexpr const char* SearchUtf8        = "\xEE\xA2\xB6";
     constexpr const char* DeleteUtf8        = "\xEE\xA1\xB2";
@@ -151,7 +153,7 @@ namespace VKIntox::Icon
     {
         static const ImWchar ranges[] = {
             AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport,
-            Add, Close, Search, Delete, ExpandMore, ChevronRight, Refresh, Save,
+            Add, Edit, Close, Search, Delete, ExpandMore, ChevronRight, Refresh, Save,
             FolderOpen, Upload, Check, CheckCircle, Cancel, Warning, Error, Info,
             Visibility, VisibilityOff, Power, PlayArrow,
             Speed, Bolt, Science, Build, Extension, Brush, Image, Layers, Texture,

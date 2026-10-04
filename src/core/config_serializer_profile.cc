@@ -247,6 +247,87 @@ namespace VKIntox
         return std::remove(path.c_str()) == 0;
     }
 
+    bool ConfigSerializer::isValidShaderProfileName(const std::string& name)
+    {
+        if (name.empty() || name == "." || name == "..")
+            return false;
+        for (const unsigned char c : name)
+            if (c < 0x20 || c == 0x7f)
+                return false;
+        return name.find('/') == std::string::npos &&
+               name.find('\\') == std::string::npos &&
+               name.find('@') == std::string::npos;
+    }
+
+    bool ConfigSerializer::renameShaderProfile(const std::string& gameName, const std::string& oldName,
+                                               const std::string& newName)
+    {
+        if (gameName.empty() || oldName.empty() || !isValidShaderProfileName(newName))
+            return false;
+        if (oldName == newName)
+            return true;
+
+        const std::string oldPath = getShaderProfilePath(gameName, oldName);
+        if (oldPath.empty())
+            return false;
+
+        std::error_code ec;
+        if (!std::filesystem::exists(oldPath, ec) || ec)
+            return false;
+
+        // keep the preset's kind: a game-specific file stays game-specific and
+        // an imported global preset stays global
+        const std::filesystem::path oldFilePath(oldPath);
+        const std::string dir = oldFilePath.parent_path().string();
+        const std::string oldFilename = oldFilePath.filename().string();
+        const std::string prefix = gameName + "@";
+        const bool gameSpecific = oldFilename.compare(0, prefix.size(), prefix) == 0;
+        const std::string newPath = dir + "/" + (gameSpecific ? prefix + newName : newName) + ".ini";
+
+        // a name is taken when either kind would collide, not just the same kind
+        ec.clear();
+        if (std::filesystem::exists(dir + "/" + newName + ".ini", ec) || ec)
+            return false;
+        ec.clear();
+        if (std::filesystem::exists(dir + "/" + prefix + newName + ".ini", ec) || ec)
+            return false;
+
+        const std::string oldSidecar = getShaderProfileSidecarPath(oldPath);
+        const std::string newSidecar = getShaderProfileSidecarPath(newPath);
+        ec.clear();
+        const bool hasSidecar = std::filesystem::exists(oldSidecar, ec) && !ec;
+        ec.clear();
+        if (std::filesystem::exists(newSidecar, ec) || ec)
+            return false;
+
+        // the sidecar carries the instance list, so it moves with the ini;
+        // move it first and undo both if the ini move fails
+        if (hasSidecar && std::rename(oldSidecar.c_str(), newSidecar.c_str()) != 0)
+            return false;
+        if (std::rename(oldPath.c_str(), newPath.c_str()) != 0)
+        {
+            if (hasSidecar)
+                std::rename(newSidecar.c_str(), oldSidecar.c_str());
+            return false;
+        }
+
+        // the last-used pointer is keyed by name, so move it too, rolling the
+        // renames back if it cannot be written
+        if (getLastShaderProfile(gameName) == oldName)
+        {
+            const std::string lastPath = getBaseConfigDir() + "/configs/shaders/" + gameName + ".last-profile";
+            if (!writeAtomically(lastPath, newName + "\n"))
+            {
+                std::rename(newPath.c_str(), oldPath.c_str());
+                if (hasSidecar)
+                    std::rename(newSidecar.c_str(), oldSidecar.c_str());
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     std::string ConfigSerializer::importShaderProfile(const std::string& sourcePath)
     {
         if (sourcePath.empty())

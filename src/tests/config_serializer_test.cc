@@ -299,6 +299,64 @@ int main()
     expect(!VKIntox::ConfigSerializer::createShaderProfile("roundtrip-game", "inherited", "source"),
            "duplicate shader profile creation fails");
 
+    // Renaming a preset moves the ini, its sidecar, and the last-used pointer.
+    expect(VKIntox::ConfigSerializer::createShaderProfile("roundtrip-game", "rename-src", "owned"),
+           "create rename source");
+    const std::string renameSrcPath = VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "rename-src");
+    const std::string renameSrcSidecar = VKIntox::ConfigSerializer::getShaderProfileSidecarPath(renameSrcPath);
+    expect(VKIntox::ConfigSerializer::setLastShaderProfile("roundtrip-game", "rename-src") &&
+               VKIntox::ConfigSerializer::renameShaderProfile("roundtrip-game", "rename-src", "rename-dst"),
+           "rename a game-specific preset");
+    const std::string renameDstPath = VKIntox::ConfigSerializer::getBaseConfigDir() +
+                                      "/configs/shaders/roundtrip-game@rename-dst.ini";
+    expect(std::filesystem::exists(renameDstPath) && !std::filesystem::exists(renameSrcPath),
+           "rename moves the game-specific ini");
+    expect(!std::filesystem::exists(renameSrcSidecar) &&
+               std::filesystem::exists(VKIntox::ConfigSerializer::getShaderProfileSidecarPath(renameDstPath)),
+           "rename carries the sidecar");
+    expect(readFile(renameDstPath) == readFile(ownedPath), "rename preserves preset contents");
+    expect(VKIntox::ConfigSerializer::getLastShaderProfile("roundtrip-game") == "rename-dst",
+           "rename repoints the last-used name");
+    expect(VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "rename-dst") == renameDstPath,
+           "renamed preset resolves by its new name");
+
+    // Refusals must leave every file exactly where it started.
+    expect(!VKIntox::ConfigSerializer::renameShaderProfile("roundtrip-game", "rename-dst", "owned"),
+           "rename onto an existing preset is refused");
+    expect(std::filesystem::exists(renameDstPath) &&
+               !std::filesystem::exists(VKIntox::ConfigSerializer::getBaseConfigDir() +
+                                        "/configs/shaders/roundtrip-game@owned-renamed.ini"),
+           "refused rename leaves the source in place");
+    expect(VKIntox::ConfigSerializer::isValidShaderProfileName("good name") &&
+               !VKIntox::ConfigSerializer::isValidShaderProfileName("") &&
+               !VKIntox::ConfigSerializer::isValidShaderProfileName(".") &&
+               !VKIntox::ConfigSerializer::isValidShaderProfileName("bad/name") &&
+               !VKIntox::ConfigSerializer::isValidShaderProfileName("bad\\name") &&
+               !VKIntox::ConfigSerializer::isValidShaderProfileName("bad@name"),
+           "profile-name validation rejects separators, '@' and empties");
+    expect(!VKIntox::ConfigSerializer::renameShaderProfile("roundtrip-game", "rename-dst", "bad/name"),
+           "rename refuses an invalid target name");
+    expect(!VKIntox::ConfigSerializer::renameShaderProfile("roundtrip-game", "missing-source", "whatever"),
+           "rename refuses a missing source");
+    expect(std::filesystem::exists(renameDstPath), "invalid rename leaves the source in place");
+    expect(VKIntox::ConfigSerializer::renameShaderProfile("roundtrip-game", "rename-dst", "rename-dst") &&
+               std::filesystem::exists(renameDstPath),
+           "rename to the same name is a no-op success");
+
+    // An imported global preset keeps its global kind when renamed.
+    const std::string globalRenameSrc = VKIntox::ConfigSerializer::getBaseConfigDir() +
+                                        "/configs/shaders/global-rename-src.ini";
+    {
+        std::ofstream preset(globalRenameSrc);
+        preset << "Techniques=\nTechniqueSorting=\n";
+    }
+    expect(VKIntox::ConfigSerializer::renameShaderProfile("roundtrip-game", "global-rename-src", "global-rename-dst"),
+           "rename an imported global preset");
+    const std::string globalRenameDst = VKIntox::ConfigSerializer::getBaseConfigDir() +
+                                        "/configs/shaders/global-rename-dst.ini";
+    expect(std::filesystem::exists(globalRenameDst) && !std::filesystem::exists(globalRenameSrc),
+           "global rename keeps the file global (no game prefix)");
+
     std::filesystem::remove_all(root);
     if (failures != 0)
     {
