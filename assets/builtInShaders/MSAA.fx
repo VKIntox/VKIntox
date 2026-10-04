@@ -36,16 +36,6 @@ uniform int SearchSteps <
         "8 covers most geometry; 12-16 helps long, shallow silhouettes.";
 > = 8;
 
-uniform int Passes <
-    ui_label = "Passes";
-    ui_type = "slider";
-    ui_min = 1; ui_max = 16; ui_step = 1;
-    ui_tooltip =
-        "How many times the filter runs over each pixel.\n"
-        "1 is a single MLAA pass; more passes re-smooth what is left and\n"
-        "gradually settle as the local contrast drops below the threshold.";
-> = 2;
-
 uniform float BlendStrength <
     ui_label = "Blend strength";
     ui_type = "slider";
@@ -125,21 +115,14 @@ float3 PS_MSAA(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_T
         edgeWeight[e] = MSAACoverage(min(measured.x, measured.y), total) * BlendStrength;
     }
 
-    // Each pass re-blends from the unchanged neighbours, so a pass only bites
-    // while the local contrast is still over the threshold. That makes later
-    // passes taper off instead of washing the edge out.
-    [loop]
-    for (int passIndex = 0; passIndex < Passes; passIndex++)
-    {
-        const float here = MSAALuma(color);
-        [unroll]
-        for (int e = 0; e < 4; e++)
-        {
-            if (!edgeActive[e] || abs(here - neighbourLuma[e]) <= EdgeThreshold)
-                continue;
+    // One MLAA pass: blend each active edge by its coverage. The edge search
+    // already ran against the source, and a morphological filter is single-pass
+    // by construction, so there is nothing a second pass could refine without
+    // re-blending the same ends toward the same neighbours.
+    [unroll]
+    for (int e = 0; e < 4; e++)
+        if (edgeActive[e])
             color = lerp(color, neighbourColor[e], edgeWeight[e]);
-        }
-    }
 
     return color;
 }
@@ -149,8 +132,7 @@ technique MSAA <
     ui_tooltip =
         "Post-process morphological anti-aliasing. Finds luminance edges and\n"
         "blends only the pixels at the ends of each edge segment, leaving long\n"
-        "straight edges untouched. Search steps set how far it looks; passes\n"
-        "set how many times it runs.";
+        "straight edges untouched. Search steps set how far it looks.";
 >
 {
     pass
