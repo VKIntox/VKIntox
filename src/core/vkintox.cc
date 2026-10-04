@@ -1319,6 +1319,13 @@ namespace VKIntox
         logicalSwapchain->effects.clear();
         logicalSwapchain->defaultTransfer.reset();
 
+        // Clearing the effects hands every handle they owned to the deferred
+        // destroy queue. The caller's fence check already proved their GPU work is
+        // done, so drain it now instead of letting the orphans pile up until the
+        // next swapchain teardown. Without this, rapid reloads (the reload key,
+        // depth pinning) grow VRAM by a full effect's worth of images per reload.
+        DeferredDestroyQueue::instance().flush();
+
         // Use provided active effects list directly - no fallback to config
         // Registry is the single source of truth (initialized at first swapchain creation)
         std::vector<std::string> effectStrings = activeEffects;
@@ -3423,10 +3430,11 @@ namespace VKIntox
                 if (swapIt != swapchainMap.end() && swapIt->second)
                 {
                     LogicalSwapchain* sc = swapIt->second.get();
-                    // Reset depth resolve state to prevent use of stale resources
+                    // Reset the source view so the next rebuild tears the old
+                    // resolve images down and frees them. Nulling the image
+                    // handles here instead made destroyDepthResolveResources skip
+                    // them, leaking a set of full-res images per present.
                     sc->depthResolveSourceView = VK_NULL_HANDLE;
-                    
-                    for (auto& perImg : sc->depthResolvePerImage) perImg.image = VK_NULL_HANDLE;
                     // Flag for reload on next valid frame
                     sc->rebuildEffectsOnNextPresent = true;
                 }
