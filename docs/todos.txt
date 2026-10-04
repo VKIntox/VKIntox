@@ -127,6 +127,12 @@ TODOS for v0.2.0
    upgrade), and the setup scripts keep seeding it too.
 
 remaining / follow-ups for v0.2.0 (documented, not fixed):
-- QueueSubmit depth-copy state (pendingDepthCopy and the ring fields) is read
-  and mutated without globalLock. needs its own mutex, because globalLock can't
-  be held there while panicLayer()->flush() runs.
+- QueueSubmit depth-copy state DONE
+  the pending copy and the copy ring moved into DepthCopyState
+  (src/render/depth_copy_state.hh), which owns its own mutex. CmdEndRenderPass*
+  publishes and DestroyDevice tears the ring down under it; QueueSubmit consumes
+  and runs the whole ring section under it. The lock order is globalLock ->
+  depthCopy and QueueSubmit never takes globalLock from inside the ring section,
+  so panicLayer()->flush() runs with no lock held. storage is still globalLock
+  state: prepared before the ring section and published after it. covered by
+  vkintox-depth-copy-state-tests (functional + threaded).

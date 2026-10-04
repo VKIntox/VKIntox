@@ -270,6 +270,16 @@ vk_handle_tests = executable('vkintox-vk-handle-tests',
     include_directories : [core_inc, render_inc, source_inc])
 test('vk handle ordering', vk_handle_tests)
 
+# DepthCopyState serializes the CmdEndRenderPass* -> QueueSubmit handoff and the
+# copy ring against DestroyDevice. A missing lock only shows as an intermittent
+# device loss under load, so the state is hammered directly here.
+threads_dep = dependency('threads')
+depth_copy_state_tests = executable('vkintox-depth-copy-state-tests',
+    'render/depth_copy_state_test.cc',
+    dependencies : [threads_dep],
+    include_directories : [render_inc, source_inc])
+test('depth copy state', depth_copy_state_tests)
+
 vkintox_run = configure_file(
     input: '../scripts/vkintox-run.in',
     output: 'vkintox-run',

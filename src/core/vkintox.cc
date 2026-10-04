@@ -1916,21 +1916,27 @@ namespace VKIntox
         // Destroy persistent depth storage
         destroyPersistentDepthStorage(logicalDevice);
 
-        // Destroy depth copy ring buffer pool and its fences
-        if (logicalDevice->depthCopyPool != VK_NULL_HANDLE)
-        {
+        // Destroy depth copy ring buffer pool and its fences. The teardown takes
+        // the ring's own lock so it cannot race a QueueSubmit mid-copy; lock
+        // order here is globalLock -> depthCopy, as DepthCopyState documents.
+        logicalDevice->depthCopy.withRing([&](DepthCopyState::RingAccess& ring) {
+            VkCommandPool pool = VK_NULL_HANDLE;
+            std::vector<VkFence> fences;
+            ring.detach(pool, fences);
+
+            if (pool == VK_NULL_HANDLE && fences.empty())
+                return;
+
             Logger::debug("DestroyCommandPool (depth copy ring buffer)");
             // Destroy fences first (they're independent of the pool)
-            for (VkFence f : logicalDevice->depthCopyRingFences)
+            for (VkFence f : fences)
             {
                 if (f != VK_NULL_HANDLE)
                     logicalDevice->vkd.DestroyFence(device, f, nullptr);
             }
-            logicalDevice->depthCopyRingFences.clear();
-            logicalDevice->vkd.DestroyCommandPool(device, logicalDevice->depthCopyPool, pAllocator);
-            logicalDevice->depthCopyPool = VK_NULL_HANDLE;
-            logicalDevice->depthCopyRingBufs.clear();
-        }
+            if (pool != VK_NULL_HANDLE)
+                logicalDevice->vkd.DestroyCommandPool(device, pool, pAllocator);
+        });
 
         // Clean up Wayland input resources (no-op if not initialized)
         cleanupWaylandKeyboard();
@@ -2365,11 +2371,11 @@ namespace VKIntox
     // correct source layout obtained from the render pass's depth attachment
     // finalLayout at CmdBeginRenderPass time.
     //
-    // TODO(2026-10 buwryme): pendingDepthCopy and the ring fields below are read
-    // and mutated without globalLock, while CmdEndRenderPass* and DestroyDevice
-    // touch them under it. give the depth-copy state its own mutex rather than
-    // holding globalLock here, because panicLayer()->flush() below must not run
-    // while it is held.
+    // The pending copy and the ring live in DepthCopyState and are guarded by
+    // its own mutex, not globalLock: panicLayer() below flushes the deferred
+    // destroy queue, which must never happen with globalLock held. The lock
+    // order is globalLock -> depthCopy, so nothing in withRing() touches
+    // globalLock-backed state; storage is prepared before and published after.
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_QueueSubmit(VkQueue queue,
                                                        uint32_t submitCount,
                                                        const VkSubmitInfo* pSubmits,
@@ -2387,7 +2393,6 @@ namespace VKIntox
         if (!logicalDevice || method < 1 || method > 2
             || !settingsManager.getDepthCapture()
             || logicalDevice->softDisabled.load(std::memory_order_acquire)
-            || !logicalDevice->pendingDepthCopy.pending
             || submitCount == 0 || !pSubmits)
         {
             if (logicalDevice)
@@ -2401,12 +2406,28 @@ namespace VKIntox
             return reinterpret_cast<PFN_vkQueueSubmit>(dlsym(RTLD_NEXT, "vkQueueSubmit"))(queue, submitCount, pSubmits, fence);
         }
 
-        // --- v3 Deferred Depth Copy ---
-        DepthState captureDepth = logicalDevice->pendingDepthCopy.depthState;
-        VkImageLayout sourceLayout = logicalDevice->pendingDepthCopy.sourceLayout;
-        logicalDevice->pendingDepthCopy.pending = false;
+        // Claim the pending copy. Clearing the flag is unconditional and happens
+        // under the depth-copy lock, so a copy can be published mid-read without
+        // tearing the DepthState and without two submits racing for it.
+        DepthState captureDepth;
+        VkImageLayout sourceLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (!logicalDevice->depthCopy.consume(captureDepth, sourceLayout))
+        {
+            VkResult passthroughResult = logicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(passthrough)", passthroughResult);
+            if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                panicLayer(logicalDevice, "Vulkan device lost during QueueSubmit passthrough");
+            return passthroughResult;
+        }
 
-        if (!hasDepthState(captureDepth) || !validateDepthStateForResolve(logicalDevice, captureDepth))
+        // Validate the tracked maps under globalLock, but drop it before any
+        // panic: panicLayer() -> flush() is not allowed under globalLock.
+        bool depthValid = false;
+        {
+            scoped_lock l(globalLock);
+            depthValid = hasDepthState(captureDepth) && validateDepthStateForResolve(logicalDevice, captureDepth);
+        }
+        if (!depthValid)
         {
             Logger::debug("QueueSubmit v3: skipping invalid/stale depth state");
             VkResult passthroughResult = logicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
@@ -2416,100 +2437,25 @@ namespace VKIntox
             return passthroughResult;
         }
 
-        // Ensure ring buffer is initialized
-        if (logicalDevice->depthCopyRingBufs.empty())
-        {
-            VkCommandPoolCreateInfo poolCI = {};
-            poolCI.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-            poolCI.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-            poolCI.queueFamilyIndex = logicalDevice->queueFamilyIndex;
-            logicalDevice->vkd.CreateCommandPool(logicalDevice->device, &poolCI, nullptr, &logicalDevice->depthCopyPool);
-
-            VkCommandBufferAllocateInfo cbai = {};
-            cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-            cbai.commandPool = logicalDevice->depthCopyPool;
-            cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            cbai.commandBufferCount = LogicalDevice::DEPTH_COPY_RING_SIZE;
-            logicalDevice->depthCopyRingBufs.resize(LogicalDevice::DEPTH_COPY_RING_SIZE);
-            logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &cbai, logicalDevice->depthCopyRingBufs.data());
-
-            for (auto cb : logicalDevice->depthCopyRingBufs)
-                initializeDispatchTable(cb, logicalDevice->device);
-
-            // Create one fence per ring slot — we signal it on submit and wait
-            // before reusing the slot.  This prevents resetting a CB that the GPU
-            // is still executing (which causes VK_ERROR_DEVICE_LOST).
-            logicalDevice->depthCopyRingFences.resize(LogicalDevice::DEPTH_COPY_RING_SIZE, VK_NULL_HANDLE);
-            VkFenceCreateInfo fci = {};
-            fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-            for (uint32_t i = 0; i < LogicalDevice::DEPTH_COPY_RING_SIZE; ++i)
-            {
-                VkResult fr = logicalDevice->vkd.CreateFence(logicalDevice->device, &fci, nullptr, &logicalDevice->depthCopyRingFences[i]);
-                if (fr != VK_SUCCESS)
-                {
-                    Logger::err("QueueSubmit v3: failed to create depth copy fence for slot " + std::to_string(i) + " (" + std::to_string(fr) + ")");
-                    // Continue without this slot's fence — we'll still try to use it,
-                    // but device loss is possible if the slot wraps around.
-                }
-            }
-
-            Logger::debug("depth copy ring buffer initialized: " + std::to_string(LogicalDevice::DEPTH_COPY_RING_SIZE) + " CBs + fences");
-        }
-
-        // Get next CB from ring buffer
-        const uint32_t slotIndex = logicalDevice->depthCopyRingIndex % LogicalDevice::DEPTH_COPY_RING_SIZE;
-        VkCommandBuffer copyCB = logicalDevice->depthCopyRingBufs[slotIndex];
-        logicalDevice->depthCopyRingIndex++;
-
-        // never block on a ring slot. an unsignaled fence means the old buffer is still
-        // in flight: skip the optional copy and let the app's submit proceed, or a
-        // stalled GPU becomes a multi-second present-thread freeze.
-        if (slotIndex < logicalDevice->depthCopyRingFences.size() && logicalDevice->depthCopyRingFences[slotIndex] != VK_NULL_HANDLE)
-        {
-            VkResult fenceStatus = reinterpret_cast<PFN_vkGetFenceStatus>(logicalDevice->vkd.GetDeviceProcAddr(logicalDevice->device, "vkGetFenceStatus"))(
-                logicalDevice->device, logicalDevice->depthCopyRingFences[slotIndex]);
-            if (fenceStatus == VK_NOT_READY)
-            {
-                Logger::debug("QueueSubmit v3: depth copy ring slot "
-                              + std::to_string(slotIndex) + " still in flight; skipping optional depth copy");
-                logicalDevice->pendingDepthCopy.pending = false;
-                VkResult passthroughResult = logicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
-                reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(passthrough-ring-busy)", passthroughResult);
-                if (passthroughResult == VK_ERROR_DEVICE_LOST)
-                    panicLayer(logicalDevice, "Vulkan device lost during QueueSubmit passthrough");
-                return passthroughResult;
-            }
-            if (fenceStatus == VK_ERROR_DEVICE_LOST)
-            {
-                reportDeviceLostDiagnostics(logicalDevice, queue,
-                                            "QueueSubmit v3 depth-copy fence status", fenceStatus);
-                panicLayer(logicalDevice, "Device lost during depth-copy ring fence status");
-                return fenceStatus;
-            }
-            if (fenceStatus != VK_SUCCESS)
-            {
-                Logger::warn("QueueSubmit v3: depth copy ring fence status failed for slot "
-                             + std::to_string(slotIndex) + " (" + std::to_string(fenceStatus) + ")");
-                logicalDevice->pendingDepthCopy.pending = false;
-                VkResult passthroughResult = logicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
-                reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(passthrough-ring-status)", passthroughResult);
-                if (passthroughResult == VK_ERROR_DEVICE_LOST)
-                    panicLayer(logicalDevice, "Vulkan device lost during QueueSubmit passthrough");
-                return passthroughResult;
-            }
-            logicalDevice->vkd.ResetFences(logicalDevice->device, 1, &logicalDevice->depthCopyRingFences[slotIndex]);
-        }
-
-        logicalDevice->vkd.ResetCommandBuffer(copyCB, 0);
-
-        // Determine storage format
+        // Prepare the storage under globalLock and snapshot what the recording
+        // needs into locals, so the ring section below holds only depthCopy.
         const VkFormat storageFormat = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
             ? VK_FORMAT_R32_SFLOAT
             : captureDepth.format;
 
-        ensurePersistentDepthStorage(logicalDevice, storageFormat, captureDepth.extent);
-        auto& storage = logicalDevice->depthCaptureStorage;
-        if (storage.image == VK_NULL_HANDLE)
+        VkImage storageImage = VK_NULL_HANDLE;
+        VkImageView storageImageView = VK_NULL_HANDLE;
+        bool storageWasValid = false;
+        {
+            scoped_lock l(globalLock);
+            ensurePersistentDepthStorage(logicalDevice, storageFormat, captureDepth.extent);
+            const auto& storage = logicalDevice->depthCaptureStorage;
+            storageImage = storage.image;
+            storageImageView = storage.view;
+            storageWasValid = storage.valid;
+        }
+
+        if (storageImage == VK_NULL_HANDLE)
         {
             VkResult passthroughResult = logicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
             reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(passthrough-no-depth-storage)", passthroughResult);
@@ -2518,132 +2464,255 @@ namespace VKIntox
             return passthroughResult;
         }
 
-        const bool isMsaa = captureDepth.samples != VK_SAMPLE_COUNT_1_BIT;
-        const VkImageAspectFlags depthAspect = isStencilFormat(captureDepth.format)
-            ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
-            : VK_IMAGE_ASPECT_DEPTH_BIT;
+        // --- ring section: init, reserve, fence, record, submit ---
+        bool ringBusy = false;            // slot in flight or ring unavailable: skip the copy
+        VkResult slotFenceError = VK_SUCCESS;
+        VkResult submitResult = VK_SUCCESS;
 
-        // Record the copy
-        VkCommandBufferBeginInfo cbbi = {};
-        cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        logicalDevice->vkd.BeginCommandBuffer(copyCB, &cbbi);
+        logicalDevice->depthCopy.withRing([&](DepthCopyState::RingAccess& ring) {
+            if (!ring.ready())
+            {
+                VkCommandPoolCreateInfo poolCI = {};
+                poolCI.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+                poolCI.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+                poolCI.queueFamilyIndex = logicalDevice->queueFamilyIndex;
 
-        // Barrier: source from KNOWN sourceLayout → TRANSFER_SRC
-        VkImageMemoryBarrier barriers[2] = {};
-        barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barriers[0].image = captureDepth.image;
-        barriers[0].oldLayout = (sourceLayout != VK_IMAGE_LAYOUT_UNDEFINED) ? sourceLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        barriers[0].srcAccessMask = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
-            ? (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
-            : (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-        barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barriers[0].subresourceRange = {depthAspect, 0, 1, 0, 1};
+                VkCommandPool pool = VK_NULL_HANDLE;
+                VkResult poolResult = logicalDevice->vkd.CreateCommandPool(logicalDevice->device, &poolCI, nullptr, &pool);
+                if (poolResult != VK_SUCCESS || pool == VK_NULL_HANDLE)
+                {
+                    Logger::err("QueueSubmit v3: could not create depth copy pool (" + std::to_string(poolResult) + ")");
+                    ringBusy = true;
+                    return;
+                }
 
-        // Barrier: storage → TRANSFER_DST
-        barriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barriers[1].image = storage.image;
-        barriers[1].oldLayout = storage.valid ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
-        barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barriers[1].srcAccessMask = storage.valid ? VK_ACCESS_SHADER_READ_BIT : 0;
-        barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barriers[1].subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+                std::vector<VkCommandBuffer> buffers(DepthCopyState::RING_SIZE, VK_NULL_HANDLE);
+                VkCommandBufferAllocateInfo cbai = {};
+                cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+                cbai.commandPool = pool;
+                cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                cbai.commandBufferCount = DepthCopyState::RING_SIZE;
+                VkResult cbResult = logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &cbai, buffers.data());
+                if (cbResult != VK_SUCCESS)
+                {
+                    Logger::err("QueueSubmit v3: could not allocate depth copy command buffers (" + std::to_string(cbResult) + ")");
+                    logicalDevice->vkd.DestroyCommandPool(logicalDevice->device, pool, nullptr);
+                    ringBusy = true;
+                    return;
+                }
 
-        VkPipelineStageFlags srcStages = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
-            ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
-            : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
+                for (auto cb : buffers)
+                    initializeDispatchTable(cb, logicalDevice->device);
 
-        logicalDevice->vkd.CmdPipelineBarrier(copyCB, srcStages, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
+                std::vector<VkFence> fences(DepthCopyState::RING_SIZE, VK_NULL_HANDLE);
+                VkFenceCreateInfo fci = {};
+                fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+                bool fencesOk = true;
+                for (uint32_t i = 0; i < DepthCopyState::RING_SIZE; ++i)
+                {
+                    VkResult fr = logicalDevice->vkd.CreateFence(logicalDevice->device, &fci, nullptr, &fences[i]);
+                    if (fr != VK_SUCCESS)
+                    {
+                        Logger::err("QueueSubmit v3: failed to create depth copy fence for slot " + std::to_string(i) + " (" + std::to_string(fr) + ")");
+                        fencesOk = false;
+                        break;
+                    }
+                }
+                if (!fencesOk)
+                {
+                    for (VkFence f : fences)
+                        if (f != VK_NULL_HANDLE)
+                            logicalDevice->vkd.DestroyFence(logicalDevice->device, f, nullptr);
+                    logicalDevice->vkd.DestroyCommandPool(logicalDevice->device, pool, nullptr);
+                    ringBusy = true;
+                    return;
+                }
 
-        if (isMsaa)
+                ring.install(pool, std::move(buffers), std::move(fences));
+                Logger::debug("depth copy ring buffer initialized: " + std::to_string(DepthCopyState::RING_SIZE) + " CBs + fences");
+            }
+
+            const uint32_t slotIndex = ring.reserveSlot();
+            VkCommandBuffer copyCB = ring.buffer(slotIndex);
+            VkFence slotFence = ring.fence(slotIndex);
+
+            // never block on a ring slot. an unsignaled fence means the old buffer is still
+            // in flight: skip the optional copy and let the app's submit proceed, or a
+            // stalled GPU becomes a multi-second present-thread freeze.
+            if (slotFence != VK_NULL_HANDLE)
+            {
+                auto getFenceStatus = reinterpret_cast<PFN_vkGetFenceStatus>(
+                    logicalDevice->vkd.GetDeviceProcAddr(logicalDevice->device, "vkGetFenceStatus"));
+                VkResult fenceStatus = getFenceStatus(logicalDevice->device, slotFence);
+                if (fenceStatus == VK_NOT_READY)
+                {
+                    Logger::debug("QueueSubmit v3: depth copy ring slot "
+                                  + std::to_string(slotIndex) + " still in flight; skipping optional depth copy");
+                    ringBusy = true;
+                    return;
+                }
+                if (fenceStatus != VK_SUCCESS)
+                {
+                    slotFenceError = fenceStatus;
+                    return;
+                }
+                logicalDevice->vkd.ResetFences(logicalDevice->device, 1, &slotFence);
+            }
+
+            logicalDevice->vkd.ResetCommandBuffer(copyCB, 0);
+
+            const bool isMsaa = captureDepth.samples != VK_SAMPLE_COUNT_1_BIT;
+            const VkImageAspectFlags depthAspect = isStencilFormat(captureDepth.format)
+                ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
+                : VK_IMAGE_ASPECT_DEPTH_BIT;
+
+            // Record the copy
+            VkCommandBufferBeginInfo cbbi = {};
+            cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            logicalDevice->vkd.BeginCommandBuffer(copyCB, &cbbi);
+
+            // Barrier: source from KNOWN sourceLayout → TRANSFER_SRC
+            VkImageMemoryBarrier barriers[2] = {};
+            barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[0].image = captureDepth.image;
+            barriers[0].oldLayout = (sourceLayout != VK_IMAGE_LAYOUT_UNDEFINED) ? sourceLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barriers[0].srcAccessMask = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
+                ? (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
+                : (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[0].subresourceRange = {depthAspect, 0, 1, 0, 1};
+
+            // Barrier: storage → TRANSFER_DST
+            barriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[1].image = storageImage;
+            barriers[1].oldLayout = storageWasValid ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+            barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barriers[1].srcAccessMask = storageWasValid ? VK_ACCESS_SHADER_READ_BIT : 0;
+            barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[1].subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+
+            VkPipelineStageFlags srcStages = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
+                ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+                : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
+
+            logicalDevice->vkd.CmdPipelineBarrier(copyCB, srcStages, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
+
+            if (isMsaa)
+            {
+                VkImageResolve resolveRegion = {};
+                resolveRegion.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+                resolveRegion.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+                resolveRegion.extent = {captureDepth.extent.width, captureDepth.extent.height, 1};
+                logicalDevice->vkd.CmdResolveImage(copyCB, captureDepth.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, storageImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolveRegion);
+            }
+            else
+            {
+                VkImageCopy copyRegion = {};
+                copyRegion.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+                copyRegion.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+                copyRegion.extent = {captureDepth.extent.width, captureDepth.extent.height, 1};
+                logicalDevice->vkd.CmdCopyImage(copyCB, captureDepth.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, storageImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+            }
+
+            // Barrier: storage → SHADER_READ_ONLY
+            VkImageMemoryBarrier readOnlyBarrier = {};
+            readOnlyBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            readOnlyBarrier.image = storageImage;
+            readOnlyBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            readOnlyBarrier.newLayout = isStencilFormat(storageFormat) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+            readOnlyBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            readOnlyBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            readOnlyBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            readOnlyBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            readOnlyBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+            logicalDevice->vkd.CmdPipelineBarrier(copyCB, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &readOnlyBarrier);
+
+            logicalDevice->vkd.EndCommandBuffer(copyCB);
+
+            Logger::debug("QueueSubmit v3: depth copy via ring CB index=" + std::to_string(slotIndex)
+                          + " " + std::to_string(captureDepth.extent.width) + "x" + std::to_string(captureDepth.extent.height)
+                          + " fmt=" + std::to_string(storageFormat)
+                          + " srcLayout=" + std::to_string(static_cast<uint32_t>(sourceLayout))
+                          + (isMsaa ? " [MSAA resolve]" : " [copy]"));
+
+            // Inject copyCB into the last submit's command buffer list
+            const VkSubmitInfo& lastSubmit = pSubmits[submitCount - 1];
+            std::vector<VkCommandBuffer> combinedCmdBufs(lastSubmit.pCommandBuffers, lastSubmit.pCommandBuffers + lastSubmit.commandBufferCount);
+            combinedCmdBufs.push_back(copyCB);
+
+            VkSubmitInfo modifiedLastSubmit = lastSubmit;
+            modifiedLastSubmit.commandBufferCount = static_cast<uint32_t>(combinedCmdBufs.size());
+            modifiedLastSubmit.pCommandBuffers = combinedCmdBufs.data();
+
+            // Submit — no splitting, just replace the last submit. The slot fence
+            // is signaled on completion so the slot can be safely reused.
+            if (submitCount <= 1)
+            {
+                submitResult = logicalDevice->vkd.QueueSubmit(queue, 1, &modifiedLastSubmit, slotFence);
+            }
+            else
+            {
+                submitResult = logicalDevice->vkd.QueueSubmit(queue, submitCount - 1, pSubmits, VK_NULL_HANDLE);
+                if (submitResult == VK_SUCCESS)
+                    submitResult = logicalDevice->vkd.QueueSubmit(queue, 1, &modifiedLastSubmit, slotFence);
+            }
+        });
+
+        if (ringBusy)
         {
-            VkImageResolve resolveRegion = {};
-            resolveRegion.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-            resolveRegion.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-            resolveRegion.extent = {captureDepth.extent.width, captureDepth.extent.height, 1};
-            logicalDevice->vkd.CmdResolveImage(copyCB, captureDepth.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, storage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolveRegion);
+            VkResult passthroughResult = logicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(passthrough-ring-busy)", passthroughResult);
+            if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                panicLayer(logicalDevice, "Vulkan device lost during QueueSubmit passthrough");
+            return passthroughResult;
         }
-        else
+
+        if (slotFenceError != VK_SUCCESS)
         {
-            VkImageCopy copyRegion = {};
-            copyRegion.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-            copyRegion.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
-            copyRegion.extent = {captureDepth.extent.width, captureDepth.extent.height, 1};
-            logicalDevice->vkd.CmdCopyImage(copyCB, captureDepth.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, storage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+            if (slotFenceError == VK_ERROR_DEVICE_LOST)
+            {
+                reportDeviceLostDiagnostics(logicalDevice, queue, "QueueSubmit v3 depth-copy fence status", slotFenceError);
+                panicLayer(logicalDevice, "Device lost during depth-copy ring fence status");
+                return slotFenceError;
+            }
+            Logger::warn("QueueSubmit v3: depth copy ring fence status failed (" + std::to_string(slotFenceError) + ")");
+            VkResult passthroughResult = logicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(passthrough-ring-status)", passthroughResult);
+            if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                panicLayer(logicalDevice, "Vulkan device lost during QueueSubmit passthrough");
+            return passthroughResult;
         }
 
-        // Barrier: storage → SHADER_READ_ONLY
-        VkImageMemoryBarrier readOnlyBarrier = {};
-        readOnlyBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        readOnlyBarrier.image = storage.image;
-        readOnlyBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        readOnlyBarrier.newLayout = isStencilFormat(storage.format) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
-        readOnlyBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        readOnlyBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        readOnlyBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        readOnlyBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        readOnlyBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-        logicalDevice->vkd.CmdPipelineBarrier(copyCB, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &readOnlyBarrier);
-
-        logicalDevice->vkd.EndCommandBuffer(copyCB);
-        storage.valid = true;
-
-        Logger::debug("QueueSubmit v3: depth copy via ring CB index=" + std::to_string((logicalDevice->depthCopyRingIndex - 1) % LogicalDevice::DEPTH_COPY_RING_SIZE)
-                      + " " + std::to_string(captureDepth.extent.width) + "x" + std::to_string(captureDepth.extent.height)
-                      + " fmt=" + std::to_string(storageFormat)
-                      + " srcLayout=" + std::to_string(static_cast<uint32_t>(sourceLayout))
-                      + (isMsaa ? " [MSAA resolve]" : " [copy]"));
-
-        // Inject copyCB into the last submit's command buffer list
-        const VkSubmitInfo& lastSubmit = pSubmits[submitCount - 1];
-        std::vector<VkCommandBuffer> combinedCmdBufs(lastSubmit.pCommandBuffers, lastSubmit.pCommandBuffers + lastSubmit.commandBufferCount);
-        combinedCmdBufs.push_back(copyCB);
-
-        VkSubmitInfo modifiedLastSubmit = lastSubmit;
-        modifiedLastSubmit.commandBufferCount = static_cast<uint32_t>(combinedCmdBufs.size());
-        modifiedLastSubmit.pCommandBuffers = combinedCmdBufs.data();
-
-        // Update activeDepthState to persistent storage (under lock)
+        // The copy went out; publish the storage as the deepest state and let the
+        // barrier in the next copy treat its contents as valid. If the submit
+        // failed the storage is left marked invalid so the next copy starts from
+        // UNDEFINED rather than assuming contents that never landed.
+        if (submitResult == VK_SUCCESS)
         {
             scoped_lock l(globalLock);
+            logicalDevice->depthCaptureStorage.valid = true;
             DepthState storageState = captureDepth;
-            storageState.image = storage.image;
-            storageState.imageView = storage.view;
-            storageState.format = storage.format;
+            storageState.image = storageImage;
+            storageState.imageView = storageImageView;
+            storageState.format = storageFormat;
             storageState.samples = VK_SAMPLE_COUNT_1_BIT;
             storageState.transient = false;
-            storageState.observedLayout = isStencilFormat(storage.format) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+            storageState.observedLayout = isStencilFormat(storageFormat)
+                ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
             updateDeviceDepthStateLocked(logicalDevice, storageState, "QueueSubmit v3");
         }
 
-        // Submit — no splitting, just replace the last submit
-        // Signal this slot's fence so we can safely reuse it later
-        const uint32_t submittedSlot = (logicalDevice->depthCopyRingIndex - 1) % LogicalDevice::DEPTH_COPY_RING_SIZE;
-        VkFence slotFence = (submittedSlot < logicalDevice->depthCopyRingFences.size())
-            ? logicalDevice->depthCopyRingFences[submittedSlot] : VK_NULL_HANDLE;
-
-        if (submitCount <= 1)
-        {
-            VkResult vr = logicalDevice->vkd.QueueSubmit(queue, 1, &modifiedLastSubmit, slotFence);
-            reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(depth-copy)", vr);
-            if (vr == VK_ERROR_DEVICE_LOST)
-                panicLayer(logicalDevice, "Vulkan device lost during depth-copy submit");
-            return vr;
-        }
-
-        // Multiple submits: pass through first N-1 unchanged, replace last.
-        VkResult vr = logicalDevice->vkd.QueueSubmit(queue, submitCount - 1, pSubmits, VK_NULL_HANDLE);
-        if (vr == VK_SUCCESS)
-            vr = logicalDevice->vkd.QueueSubmit(queue, 1, &modifiedLastSubmit, slotFence);
-        reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(depth-copy)", vr);
-        if (vr == VK_ERROR_DEVICE_LOST)
+        reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(depth-copy)", submitResult);
+        if (submitResult == VK_ERROR_DEVICE_LOST)
             panicLayer(logicalDevice, "Vulkan device lost during depth-copy submit");
-        return vr;
+        return submitResult;
     }
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo)
@@ -4149,9 +4218,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->pendingDepthCopy.depthState = promoted;
-                    logicalDevice->pendingDepthCopy.sourceLayout = sourceLayout;
-                    logicalDevice->pendingDepthCopy.pending = true;
+                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else
@@ -4204,9 +4271,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->pendingDepthCopy.depthState = promoted;
-                    logicalDevice->pendingDepthCopy.sourceLayout = sourceLayout;
-                    logicalDevice->pendingDepthCopy.pending = true;
+                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else
@@ -4258,9 +4323,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->pendingDepthCopy.depthState = promoted;
-                    logicalDevice->pendingDepthCopy.sourceLayout = sourceLayout;
-                    logicalDevice->pendingDepthCopy.pending = true;
+                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else
@@ -4312,9 +4375,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->pendingDepthCopy.depthState = promoted;
-                    logicalDevice->pendingDepthCopy.sourceLayout = sourceLayout;
-                    logicalDevice->pendingDepthCopy.pending = true;
+                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else
@@ -4366,9 +4427,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->pendingDepthCopy.depthState = promoted;
-                    logicalDevice->pendingDepthCopy.sourceLayout = sourceLayout;
-                    logicalDevice->pendingDepthCopy.pending = true;
+                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else

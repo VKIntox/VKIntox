@@ -8,6 +8,8 @@
 
 #include "vulkan_include.hh"
 #include "vkdispatch.hh"
+#include "depth_state.hh"
+#include "depth_copy_state.hh"
 #include <mutex>
 
 namespace VKIntox
@@ -17,25 +19,6 @@ namespace VKIntox
     // Global lock guarding all layer state (defined in vkintox.cpp). Shared with
     // the overlay so it can read LogicalDevice state for the Advanced tab.
     extern std::mutex globalLock;
-
-    struct DepthState
-    {
-        VkImageView imageView = VK_NULL_HANDLE;
-        VkImage image = VK_NULL_HANDLE;
-        VkFormat format = VK_FORMAT_UNDEFINED;
-        VkExtent3D extent = {0, 0, 1};
-        VkImageLayout observedLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        // Sample count of the source depth image. 1 for non-MSAA, >1 for MSAA
-        // depth buffers (e.g. Roblox). The resolve path uses this to decide
-        // between copy / resolve / shader-resolve.
-        VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
-        // True when the source image was created with
-        // VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT. Transient images may have
-        // restricted lifetime; the layer forces storeOp=STORE and uses the
-        // depth-stencil resolve subpass to capture depth before potential
-        // discard.
-        bool transient = false;
-    };
 
     struct DepthSnapshotTarget
     {
@@ -149,27 +132,8 @@ namespace VKIntox
         bool persistentStorageTracked = false;
 
         // v3 deferred copy: depth that needs blitting at QueueSubmit time.
-        struct
-        {
-            DepthState     depthState;
-            VkImageLayout sourceLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            bool           pending = false;
-        } pendingDepthCopy;
-
-        // Ring buffer of pre-allocated command buffers for depth copy.
-        // Size 4 supports up to 4 frames in flight. Uses a dedicated
-        // transient command pool (separate from the main effect pool).
-        //
-        // CRITICAL: Each slot has a companion fence that is signaled when the
-        // command buffer is submitted.  Before reusing a slot we MUST wait on
-        // its fence — otherwise we reset/re-record a CB the GPU may still be
-        // executing, which causes VK_ERROR_DEVICE_LOST (the exact symptom
-        // reported by users).
-        static constexpr uint32_t DEPTH_COPY_RING_SIZE = 4;
-        VkCommandPool            depthCopyPool = VK_NULL_HANDLE;
-        std::vector<VkCommandBuffer> depthCopyRingBufs;
-        std::vector<VkFence>      depthCopyRingFences;  // One per slot, signaled on submit
-        uint32_t                 depthCopyRingIndex = 0;
+        // Owns its own mutex; see DepthCopyState for the lock-order contract.
+        DepthCopyState depthCopy;
 
         // Persistent overlay state that survives swapchain recreation
         std::unique_ptr<OverlayPersistentState> overlayPersistentState;
