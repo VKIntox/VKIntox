@@ -60,6 +60,34 @@ namespace VKIntox
         return -1;
     }
 
+    // The first directory under the shader root names the effect package. Nested
+    // installs (Shaders/Package/Sub/Effect.fx) still report the top-level package,
+    // and a shader sitting directly in Shaders/ reports none.
+    static std::string effectPackageForPath(const std::string& path)
+    {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char c : path)
+        {
+            if (c == '/' || c == '\\')
+            {
+                if (!current.empty()) parts.push_back(current);
+                current.clear();
+            }
+            else
+            {
+                current.push_back(c);
+            }
+        }
+        if (!current.empty()) parts.push_back(current);
+
+        size_t shaders = parts.size();
+        for (size_t i = 0; i < parts.size(); i++)
+            if (parts[i] == "Shaders" || parts[i] == "Textures")
+                shaders = i;
+        return (shaders + 2 < parts.size()) ? parts[shaders + 1] : std::string();
+    }
+
     // A visual hint about what an effect does, picked from its name. First match
     // wins, so the more specific hints come before the broad ones.
     static const char* effectIconFor(const std::string& name)
@@ -194,7 +222,7 @@ namespace VKIntox
             auto addEntry = [&](const std::string& type, const std::string& path, int group) {
                 const int score = matchScore(type, addEffectsSearch);
                 if (score >= 0)
-                    addEffectsEntries.push_back({type, path, group, score});
+                    addEffectsEntries.push_back({type, path, effectPackageForPath(path), group, score});
             };
             for (const auto& et : sortedCurrent)
             {
@@ -214,9 +242,12 @@ namespace VKIntox
                                                        [&](const AddEffectsEntry& e) { return e.group != filter - 1; }),
                                         addEffectsEntries.end());
 
+            // group results by their effect package, keeping search relevance first
             std::stable_sort(addEffectsEntries.begin(), addEffectsEntries.end(), [](const AddEffectsEntry& a, const AddEffectsEntry& b) {
                 if (a.score != b.score)
                     return a.score < b.score;
+                if (a.package != b.package)
+                    return a.package < b.package;
                 if (a.group != b.group)
                     return a.group < b.group;
                 return a.type < b.type;
@@ -374,9 +405,12 @@ namespace VKIntox
                     if (medium)
                         ImGui::PopFont();
 
-                    const char* group = e.group == 0 ? "config" : "reshade";
+                    const std::string groupLabel = !e.package.empty() ? e.package
+                                                                      : (e.group == 0 ? "config" : "reshade");
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
                     ImGui::RenderTextClipped(ImVec2(bb.Max.x - 150.0f * d, bb.Min.y), ImVec2(bb.Max.x - 40.0f * d, bb.Max.y),
-                                             group, NULL, NULL, ImVec2(1.0f, 0.5f), &bb);
+                                             groupLabel.c_str(), NULL, NULL, ImVec2(1.0f, 0.5f), &bb);
+                    ImGui::PopStyleColor();
 
                     if (iconFont)
                         ImGuiM3DrawIcon(dl, added ? Icon::CheckCircleUtf8 : Icon::AddUtf8,

@@ -485,6 +485,70 @@ namespace VKIntox
         }
     }
 
+    // Effect packages used to install under reshade/packages/. Merge that tree
+    // into reshade/ once, keeping any file already at the destination so a newer
+    // install is never clobbered, then drop the legacy tree only if every file
+    // made it across. Safe to run on every launch: an incomplete copy is retried.
+    void ConfigSerializer::migrateLegacyReshadePackages()
+    {
+        const std::string base = getBaseConfigDir();
+        if (base.empty())
+            return;
+
+        const std::filesystem::path reshade = std::filesystem::path(base) / "reshade";
+        const std::filesystem::path legacy = reshade / "packages";
+
+        std::error_code ec;
+        if (!std::filesystem::is_directory(legacy, ec) || ec)
+            return;
+
+        bool complete = true;
+        std::filesystem::recursive_directory_iterator it(
+            legacy, std::filesystem::directory_options::skip_permission_denied, ec);
+        const std::filesystem::recursive_directory_iterator end;
+        for (; !ec && it != end; it.increment(ec))
+        {
+            std::error_code entryError;
+            if (it->is_symlink(entryError) || !it->is_regular_file(entryError) || entryError)
+                continue;
+
+            std::error_code relError;
+            const auto relative = std::filesystem::relative(it->path(), legacy, relError);
+            if (relError || relative.empty())
+            {
+                complete = false;
+                continue;
+            }
+
+            const auto dest = reshade / relative;
+            std::filesystem::create_directories(dest.parent_path(), entryError);
+            if (entryError)
+            {
+                complete = false;
+                continue;
+            }
+            if (std::filesystem::exists(dest, entryError))
+                continue;  // the new layout wins
+
+            std::filesystem::copy_file(it->path(), dest, std::filesystem::copy_options::none, entryError);
+            if (entryError)
+                complete = false;
+        }
+
+        if (!complete)
+        {
+            Logger::warn("VKIntox: reshade/packages migration incomplete; leaving it in place");
+            return;
+        }
+
+        std::error_code removeError;
+        std::filesystem::remove_all(legacy, removeError);
+        if (removeError)
+            Logger::warn("VKIntox: could not remove the legacy reshade/packages directory");
+        else
+            Logger::info("VKIntox: migrated reshade/packages into reshade/");
+    }
+
     ShaderManagerConfig ConfigSerializer::loadShaderManagerConfig()
     {
         static ShaderManagerConfig cachedConfig;

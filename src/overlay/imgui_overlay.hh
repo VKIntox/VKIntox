@@ -243,6 +243,7 @@ namespace VKIntox
         {
             std::string type;
             std::string path;
+            std::string package;  // top-level directory under Shaders/, for grouping
             int         group = 0;
             int         score = 0;
         };

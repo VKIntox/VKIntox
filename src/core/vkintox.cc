@@ -878,6 +878,10 @@ namespace VKIntox
                     mkdir(baseDir.c_str(), 0755);
             }
 
+            // move shaders out of the old reshade/packages/ tree before anything
+            // scans for them
+            ConfigSerializer::migrateLegacyReshadePackages();
+
             // Initialize settings manager (single source of truth for settings)
             settingsManager.initialize();
 

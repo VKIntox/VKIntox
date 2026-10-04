@@ -139,6 +139,10 @@ namespace VKIntox
         // Ensure VKIntox.conf exists with defaults (call early at startup)
         static void ensureConfigExists();
 
+        // Merge a legacy reshade/packages/ tree into reshade/ once, keeping any
+        // file already present. Call early at startup, before shader discovery.
+        static void migrateLegacyReshadePackages();
+
         // Detect the game executable name from /proc/self/exe
         static std::string detectGameName();
 
