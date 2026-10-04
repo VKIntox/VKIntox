@@ -1969,11 +1969,12 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     const bool pressed = ButtonBehavior(bb, id, &hovered, &held);
     RenderNavCursor(bb, id);
 
-    // corners morph corner-full→corner-small on the default spatial spring; the
-    // spec's fast spring reads as a snap on a button.
+    // corners morph corner-full → corner-small while pressed. driven off `held`
+    // alone so the shrink is unmistakable on a click (an `hovered && held` test
+    // could drop the state mid-press and read as no animation at all).
     const float rest_radius = ImGuiM3Radius(ImGuiM3Shape_Full);
     const float press_radius = ImGuiM3Radius(ImGuiM3Shape_Small);
-    const float morph = ImGuiM3SpringStepSpatialSlow(id ^ 0x42544F, (held && hovered) ? 1.0f : 0.0f);
+    const float morph = ImGuiM3SpringStepSpatialDefault(id ^ 0x42544F, held ? 1.0f : 0.0f);
     const float radius = ImMin(rest_radius + (press_radius - rest_radius) * morph, ImMin(size.x, size.y) * 0.5f);
     const ImGuiM3ShapeRounding rounding{ radius, radius, radius, radius };
 
