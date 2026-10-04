@@ -40,6 +40,7 @@ namespace VKIntox::Icon
     constexpr ImWchar FolderOpen     = 0xE2C8;
     constexpr ImWchar Upload         = 0xE2C6;  // Import preset
     constexpr ImWchar Check          = 0xE5CA;
+    constexpr ImWchar Minus          = 0xE15B;
     constexpr ImWchar CheckCircle    = 0xE86C;
     constexpr ImWchar Cancel         = 0xE5C9;
     constexpr ImWchar Warning        = 0xE002;
@@ -107,6 +108,7 @@ namespace VKIntox::Icon
     constexpr const char* FolderOpenUtf8    = "\xEE\x8B\x88";
     constexpr const char* UploadUtf8        = "\xEE\x8B\x86";
     constexpr const char* CheckUtf8         = "\xEE\x97\x8A";
+    constexpr const char* MinusUtf8         = "\xEE\x85\x9B";
     constexpr const char* CheckCircleUtf8   = "\xEE\xA1\xAC";
     constexpr const char* CancelUtf8        = "\xEE\x97\x89";
     constexpr const char* WarningUtf8       = "\xEE\x80\x82";
@@ -158,7 +160,7 @@ namespace VKIntox::Icon
         static const ImWchar ranges[] = {
             AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport,
             Add, Edit, Close, Search, Delete, ExpandMore, ChevronRight, ChevronLeft, Refresh, Save,
-            FolderOpen, Upload, Check, CheckCircle, Cancel, Warning, Error, Info,
+            FolderOpen, Upload, Check, Minus, CheckCircle, Cancel, Warning, Error, Info,
             Visibility, VisibilityOff, Power, PlayArrow,
             Speed, Bolt, Joystick, Science, Build, Extension, Brush, Image, Layers, Texture,
             BlurOn, Grain, Colorize, Contrast, Straighten, Gradient, DiamondShine,

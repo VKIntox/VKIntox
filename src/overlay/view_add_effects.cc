@@ -202,6 +202,7 @@ namespace VKIntox
             if (atLimit || isPending(effectType))
                 return;
             pendingAddEffects.push_back({getNextInstanceName(effectType), effectType});
+            addEffectsRemoved.erase(effectType);
             pushRecent(effectType);
         };
 
@@ -213,22 +214,34 @@ namespace VKIntox
                                                    [&](const auto& p) { return p.second == type; }),
                                     pendingAddEffects.end());
         };
-        // the + starts at one extra copy; the map only holds explicit overrides
+        // the extras map starts empty, so an already-listed effect shows 0 copies
         auto duplicateCountFor = [&](const std::string& type) {
             auto it = addEffectsDuplicateCount.find(type);
-            return (it == addEffectsDuplicateCount.end()) ? 1 : std::max(1, it->second);
+            return (it == addEffectsDuplicateCount.end()) ? 0 : std::max(0, it->second);
         };
         auto queueCopies = [&](const std::string& type, int copies) {
             for (int i = 0; i < copies && selectedEffects.size() + pendingAddEffects.size() < maxEffectsLimit; i++)
                 pendingAddEffects.push_back({getNextInstanceName(type), type});
             pushRecent(type);
         };
-        // the switch covers the whole group: one copy for a shader not yet in the
-        // preset, the duplicate count for one that is
+        // the switch is the whole group: an already-listed effect keeps its
+        // original, a new one gets one copy, and the count adds extra copies
+        auto groupActive = [&](const std::string& type) {
+            return isPending(type) || (alreadyInConfig(type) && !addEffectsRemoved.count(type));
+        };
+        auto copiesFor = [&](const std::string& type) {
+            return duplicateCountFor(type) + (alreadyInConfig(type) ? 0 : 1);
+        };
         auto toggleQueued = [&](const std::string& type, bool on) {
             removeQueued(type);
-            if (on)
-                queueCopies(type, alreadyInConfig(type) ? duplicateCountFor(type) : 1);
+            if (!on)
+            {
+                if (alreadyInConfig(type))
+                    addEffectsRemoved.insert(type);
+                return;
+            }
+            addEffectsRemoved.erase(type);
+            queueCopies(type, copiesFor(type));
         };
 
         // ---- Build the working set ------------------------------------------
@@ -354,6 +367,11 @@ namespace VKIntox
         ImGui::TextColored(atLimit ? UI::Warning() : UI::Muted(), "%zu / %zu queued", pendingCount, maxEffectsLimit);
         ImGui::SameLine();
         ImGui::TextDisabled("%zu %s", currentCount, currentCount == 1 ? "effect" : "effects");
+        if (!addEffectsRemoved.empty())
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(UI::Warning(), "%zu to remove", addEffectsRemoved.size());
+        }
         if (insertPosition >= 0)
         {
             ImGui::SameLine();
@@ -366,6 +384,7 @@ namespace VKIntox
         {
             pendingAddEffects.clear();
             addEffectsDuplicateCount.clear();
+            addEffectsRemoved.clear();
             insertPosition = -1;
             inSelectionMode = false;
             addEffectsSearch[0] = '\0';
@@ -503,7 +522,7 @@ namespace VKIntox
                     const bool hovered = ImGui::IsItemHovered();
                     const bool held = ImGui::IsItemActive();
                     const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
-                    const bool added = isPending(e.type);
+                    const bool added = groupActive(e.type);
 
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     const float pill = ImGuiM3PillRadius(bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
@@ -517,8 +536,7 @@ namespace VKIntox
                         ImGuiM3DrawIcon(dl, effectIconFor(e.type), ImRect(ImVec2(bb.Min.x + 16.0f * d, bb.Min.y), ImVec2(bb.Min.x + 44.0f * d, bb.Max.y)),
                                         20.0f * d, ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_Primary));
 
-                    const bool inConfig = alreadyInConfig(e.type);
-                    const float nameClip = (inConfig ? 200.0f : 130.0f) * d;
+                    const float nameClip = 230.0f * d;
                     if (medium)
                         ImGui::PushFont(medium, ImGui::GetFontSize());
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_OnSurface));
@@ -528,8 +546,8 @@ namespace VKIntox
                     if (medium)
                         ImGui::PopFont();
 
-                    // right cluster: duplicate counter + add button for effects
-                    // already in the preset, then the queue switch
+                    // right cluster: [-] count [+] over the group, then the switch;
+                    // the stepper only shows while the group is in the preset
                     const ImGuiM3Metrics& rowMetrics = ImGuiM3GetMetrics();
                     const float switchW = rowMetrics.switch_track_width * d;
                     const float switchH = rowMetrics.list_item_height_1 * d;
@@ -537,29 +555,42 @@ namespace VKIntox
                     const float gap = 10.0f * d;
                     bool overControl = false;
 
-                    if (inConfig)
+                    if (added)
                     {
                         const int dupCount = duplicateCountFor(e.type);
                         char dupText[8];
                         std::snprintf(dupText, sizeof(dupText), "%d", dupCount);
-                        const float plusSize = m.icon_button_size * d;
+                        const float stepSize = m.icon_button_size * d;
                         const float dupW = ImGui::CalcTextSize(dupText).x;
-                        const float plusX = switchX - gap - plusSize;
+                        const float plusX = switchX - gap - stepSize;
+                        const float countX = plusX - gap - dupW;
+                        const float minusX = countX - gap - stepSize;
+                        const float controlY = bb.Min.y + (rowH - stepSize) * 0.5f;
+
+                        ImGui::SetCursorScreenPos(ImVec2(minusX, controlY));
+                        ImGui::PushID(3);
+                        ImGui::BeginDisabled(dupCount == 0);
+                        if (ImGui::M3IconButton(Icon::MinusUtf8, "Remove a duplicate copy", ImGuiM3Button_Tonal))
+                        {
+                            addEffectsDuplicateCount[e.type] = std::max(0, dupCount - 1);
+                            toggleQueued(e.type, true);
+                        }
+                        ImGui::EndDisabled();
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                            overControl = true;
+                        ImGui::PopID();
 
                         ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
-                        ImGui::SetCursorScreenPos(ImVec2(plusX - gap - dupW, bb.Min.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f));
+                        ImGui::SetCursorScreenPos(ImVec2(countX, bb.Min.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f));
                         ImGui::TextUnformatted(dupText);
                         ImGui::PopStyleColor();
 
-                        ImGui::SetCursorScreenPos(ImVec2(plusX, bb.Min.y + (rowH - plusSize) * 0.5f));
+                        ImGui::SetCursorScreenPos(ImVec2(plusX, controlY));
                         ImGui::PushID(2);
-                        if (ImGui::M3IconButton(Icon::AddUtf8,
-                                                "Add a duplicate copy of this effect",
-                                                ImGuiM3Button_Filled))
+                        if (ImGui::M3IconButton(Icon::AddUtf8, "Add a duplicate copy", ImGuiM3Button_Filled))
                         {
                             addEffectsDuplicateCount[e.type] = std::min(99, dupCount + 1);
-                            if (isPending(e.type))
-                                toggleQueued(e.type, true);
+                            toggleQueued(e.type, true);
                         }
                         if (ImGui::IsItemHovered())
                             overControl = true;
@@ -574,11 +605,8 @@ namespace VKIntox
                     if (ImGui::IsItemHovered())
                     {
                         overControl = true;
-                        if (inConfig)
-                            ImGui::SetTooltip("Queue this effect and its %d duplicate(s).\nThe switch toggles the effect and its duplicates together.",
-                                              duplicateCountFor(e.type));
-                        else
-                            ImGui::SetTooltip("Queue this effect.");
+                        ImGui::SetTooltip("The switch adds or removes this effect and its %d duplicate(s) together.",
+                                          duplicateCountFor(e.type));
                     }
                     ImGui::PopID();
                     // restore the row's layout cursor; the Dummy consumes the
@@ -634,21 +662,45 @@ namespace VKIntox
 
         // ---- Footer ---------------------------------------------------------
         const std::string cancelLabel = std::string(Icon::CloseUtf8) + "  Cancel";
-        std::string addLabel = std::string(Icon::CheckUtf8) + "  ";
-        addLabel += pendingCount == 0 ? "Add" : ("Add " + std::to_string(pendingCount) + (pendingCount == 1 ? " Effect" : " Effects"));
+        const bool hasRemovals = !addEffectsRemoved.empty();
+        std::string applyLabel = std::string(Icon::CheckUtf8) + "  ";
+        if (hasRemovals)
+            applyLabel += "Apply";
+        else if (pendingCount > 0)
+            applyLabel += "Add " + std::to_string(pendingCount) + (pendingCount == 1 ? " Effect" : " Effects");
+        else
+            applyLabel += "Add";
 
         if (ImGui::M3Button(cancelLabel.c_str(), ImGuiM3Button_Outlined))
         {
             pendingAddEffects.clear();
             addEffectsDuplicateCount.clear();
+            addEffectsRemoved.clear();
             insertPosition = -1;
             inSelectionMode = false;
             addEffectsSearch[0] = '\0';
         }
         ImGui::SameLine();
-        ImGui::BeginDisabled(pendingAddEffects.empty());
-        if (ImGui::M3Button(addLabel.c_str(), ImGuiM3Button_Filled))
+        ImGui::BeginDisabled(pendingAddEffects.empty() && addEffectsRemoved.empty());
+        if (ImGui::M3Button(applyLabel.c_str(), ImGuiM3Button_Filled))
         {
+            // removals first, so an insert position lines up with what is left
+            bool removedAny = false;
+            if (hasRemovals)
+            {
+                for (const auto& removed : addEffectsRemoved)
+                {
+                    auto it = std::find(selectedEffects.begin(), selectedEffects.end(), removed);
+                    if (it == selectedEffects.end())
+                        continue;
+                    effectRegistry->removeEffect(*it);
+                    selectedEffects.erase(it);
+                    removedAny = true;
+                }
+                if (removedAny)
+                    effectRegistry->setSelectedEffects(selectedEffects);
+            }
+
             int pos = (insertPosition >= 0 && insertPosition <= static_cast<int>(selectedEffects.size()))
                       ? insertPosition : static_cast<int>(selectedEffects.size());
             for (const auto& [instanceName, effectType] : pendingAddEffects)
@@ -658,14 +710,23 @@ namespace VKIntox
                 effectRegistry->ensureEffect(instanceName, effectType);
                 effectRegistry->setEffectEnabled(instanceName, true);
             }
-            if (!pendingAddEffects.empty())
-            {
+            const bool addedAny = !pendingAddEffects.empty();
+            if (addedAny)
                 effectRegistry->setSelectedEffects(selectedEffects);
+
+            if (removedAny || addedAny)
+            {
+                if (removedAny)
+                {
+                    paramsDirty = true;
+                    lastChangeTime = std::chrono::steady_clock::now();
+                }
                 applyRequested = true;
                 profileDirty = true;
             }
             pendingAddEffects.clear();
             addEffectsDuplicateCount.clear();
+            addEffectsRemoved.clear();
             insertPosition = -1;
             inSelectionMode = false;
             addEffectsSearch[0] = '\0';
