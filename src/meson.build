@@ -116,6 +116,23 @@ conf_paths.set_quoted('DATADIR', join_paths(get_option('prefix'), get_option('da
 configure_file(output: 'config_paths.hh',
                configuration : conf_paths)
 
+# the binary reports its own version, so it must not depend on its filename or
+# on the setup script dropping a version file next to the config.
+fs = import('fs')
+version_string = 'unknown'
+if fs.exists('../VERSION')
+    version_string = fs.read('../VERSION').strip()
+    if version_string == ''
+        version_string = 'unknown'
+    endif
+endif
+
+conf_version = configuration_data()
+conf_version.set_quoted('VKINTOX_VERSION', version_string)
+
+configure_file(output: 'version.hh',
+               configuration : conf_version)
+
 # X11/X.h library contains many definitions (e.g. None)
 # which conflicts with the rest codebase with with Meson --unity=on option
 keyboard_input_x11_lib = static_library('keyboard_input_x11', 'input/keyboard_input_x11.cc', include_directories: [include_directories('core')])

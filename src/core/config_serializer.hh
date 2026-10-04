@@ -139,6 +139,11 @@ namespace VKIntox
         // Ensure VKIntox.conf exists with defaults (call early at startup)
         static void ensureConfigExists();
 
+        // Write the running layer version to <config>/version. Keeps the config
+        // dir identifiable when the setup script did not seed it, and refreshes
+        // a stale file after an upgrade.
+        static bool ensureVersionFile();
+
         // Merge a legacy reshade/packages/ tree into reshade/ once, keeping any
         // file already present. Call early at startup, before shader discovery.
         static void migrateLegacyReshadePackages();

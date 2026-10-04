@@ -119,11 +119,12 @@ TODOS for v0.2.0
    beside it as LICENSE-SIL-OFL-1.1.txt and LICENSE-Apache-2.0.txt. the setup
    scripts seed all three.
 
-7. embed the version in the built library itself. a built library carries no
-   version right now, so it depends on its filename or on the setup script
-   writing the version file to be identifiable. generate a version string via a
-   meson template (configure_file) and compile it in, so the binary can report
-   its own version.
+7. embed the version in the built library itself DONE
+   src/meson.build reads the top-level VERSION file and generates version.hh
+   with configure_file, so VKINTOX_VERSION is compiled in and the About view
+   reports it without touching the config dir. ConfigSerializer::ensureVersionFile
+   still writes <config>/version at startup (refreshing a stale file after an
+   upgrade), and the setup scripts keep seeding it too.
 
 remaining / follow-ups for v0.2.0 (documented, not fixed):
 - QueueSubmit depth-copy state (pendingDepthCopy and the ring fields) is read

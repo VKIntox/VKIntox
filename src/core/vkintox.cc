@@ -878,6 +878,9 @@ namespace VKIntox
                     mkdir(baseDir.c_str(), 0755);
             }
 
+            // keep the config dir's version file in step with the built library
+            ConfigSerializer::ensureVersionFile();
+
             // move shaders out of the old reshade/packages/ tree before anything
             // scans for them
             ConfigSerializer::migrateLegacyReshadePackages();

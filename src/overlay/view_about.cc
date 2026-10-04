@@ -1,9 +1,8 @@
 #include "imgui_overlay.hh"
-#include "config_serializer.hh"
 #include "overlay/ui_icons.hh"
+#include "version.hh"
 
 #include <algorithm>
-#include <fstream>
 #include <string>
 
 #include "vendor/imgui/imgui.h"
@@ -12,23 +11,12 @@ namespace VKIntox
 {
     namespace
     {
-        // the setup script drops a `version` file next to the config; read it
-        // once so the label and the footer cannot disagree.
-        const std::string& runtimeVersion()
+        // compiled in from the top-level VERSION file, so the label and the
+        // footer agree and neither depends on a file the installer may not have
+        // written.
+        const char* runtimeVersion()
         {
-            static const std::string version = [] {
-                std::ifstream file(ConfigSerializer::getBaseConfigDir() + "/version");
-                std::string value;
-                if (file.is_open() && std::getline(file, value) && !value.empty())
-                {
-                    if (value.back() == '\r')
-                        value.pop_back();
-                    if (!value.empty())
-                        return value;
-                }
-                return std::string("unknown");
-            }();
-            return version;
+            return VKINTOX_VERSION;
         }
     }
 
@@ -39,7 +27,7 @@ namespace VKIntox
 
         // dimmed build line under the wordmark, centred the same way.
         {
-            const std::string label = "version " + runtimeVersion();
+            const std::string label = std::string("version ") + runtimeVersion();
             const float textWidth = ImGui::CalcTextSize(label.c_str()).x;
             const float contentWidth = ImGui::GetContentRegionAvail().x;
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (contentWidth - textWidth) * 0.5f));
@@ -70,7 +58,7 @@ namespace VKIntox
 
         // build footer: the version again, plus the issue tracker.
         ImGui::Spacing();
-        ImGui::TextDisabled("VKIntox version %s", runtimeVersion().c_str());
+        ImGui::TextDisabled("VKIntox version %s", runtimeVersion());
         ImGui::TextDisabled("Report issues:");
         ImGui::SameLine();
         ImGui::TextLinkOpenURL("github.com/buwryme/VKIntox/issues", "https://github.com/buwryme/VKIntox/issues");

@@ -3,6 +3,7 @@
 #include "c_resource.hh"
 #include "logger.hh"
 #include "util.hh"
+#include "version.hh"
 
 #include <fstream>
 #include <cstdlib>
@@ -393,6 +394,39 @@ namespace VKIntox
         VkBasaltSettings defaults;
         saveSettings(defaults);
         Logger::info("Created default VKIntox.conf");
+    }
+
+    bool ConfigSerializer::ensureVersionFile()
+    {
+        const std::string version = VKINTOX_VERSION;
+        if (version.empty() || version == "unknown")
+            return false;
+
+        const std::string baseDir = getBaseConfigDir();
+        if (baseDir.empty())
+            return false;
+
+        const std::string path = baseDir + "/version";
+
+        // leave a correct file alone so a read-only config dir stays quiet
+        std::ifstream existing(path);
+        std::string current;
+        if (existing.is_open() && std::getline(existing, current))
+        {
+            if (!current.empty() && current.back() == '\r')
+                current.pop_back();
+            if (current == version)
+                return true;
+        }
+
+        mkdir(baseDir.c_str(), 0755);
+        if (!writeAtomically(path, version + "\n"))
+        {
+            Logger::err("Could not write version file: " + path);
+            return false;
+        }
+
+        return true;
     }
 
     std::string ConfigSerializer::detectGameName()
