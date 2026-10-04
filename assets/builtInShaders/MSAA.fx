@@ -115,10 +115,9 @@ float3 PS_MSAA(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_T
         edgeWeight[e] = MSAACoverage(min(measured.x, measured.y), total) * BlendStrength;
     }
 
-    // One MLAA pass: blend each active edge by its coverage. The edge search
-    // already ran against the source, and a morphological filter is single-pass
-    // by construction, so there is nothing a second pass could refine without
-    // re-blending the same ends toward the same neighbours.
+    // One MLAA application. The technique declares three passes, so each one
+    // re-measures the softened result and cleans up whatever the previous pass
+    // left; a single pass is already correct, the extras just refine.
     [unroll]
     for (int e = 0; e < 4; e++)
         if (edgeActive[e])
@@ -132,12 +131,11 @@ technique MSAA <
     ui_tooltip =
         "Post-process morphological anti-aliasing. Finds luminance edges and\n"
         "blends only the pixels at the ends of each edge segment, leaving long\n"
-        "straight edges untouched. Search steps set how far it looks.";
+        "straight edges untouched. Runs three passes, each re-measuring the\n"
+        "softened image.";
 >
 {
-    pass
-    {
-        VertexShader = PostProcessVS;
-        PixelShader = PS_MSAA;
-    }
+    pass { VertexShader = PostProcessVS; PixelShader = PS_MSAA; }
+    pass { VertexShader = PostProcessVS; PixelShader = PS_MSAA; }
+    pass { VertexShader = PostProcessVS; PixelShader = PS_MSAA; }
 }

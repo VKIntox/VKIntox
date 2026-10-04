@@ -91,7 +91,7 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 -   **add effects:** a dedicated view with a back breadcrumb, package tabs (all / vkintox / every installed pack), ranked search, recents, keyboard navigation, and a per-effect duplicate stepper (`-` count `+`) that stops at the max-effects limit.
 -   **shader presets:** create (inherits the active preset), rename, delete behind a confirm, and import a reshade `.ini` through the desktop portal, with an in-overlay browser as the fallback.
 -   **shader manager:** compile-test every discovered shader, grey the test out once the installed set is unchanged, and flag which shaders need a depth buffer.
--   **built-in shaders:** a from-scratch morphological msaa shader (search steps, edge threshold, blend strength) that ships as its own `vkintox` package.
+-   **built-in shaders:** a from-scratch morphological msaa shader (search steps, edge threshold, blend strength, three refinement passes) that ships as its own `vkintox` package.
 -   **per-app profiles:** one config per detected game, shown by name and a joystick icon.
 
 **diagnostics**
