@@ -248,8 +248,15 @@ namespace VKIntox
             int         score = 0;
         };
         std::vector<AddEffectsEntry> addEffectsEntries;
+        std::vector<std::string>     addEffectsPackages;  // unique package names for the tabs
+        struct AddEffectsRow
+        {
+            std::string header;  // non-empty on a package header row
+            int         entry = -1;
+        };
+        std::vector<AddEffectsRow>   addEffectsRows;      // display order, headers included
         std::string                  addEffectsCacheSearch;
-        int                          addEffectsCacheFilter = -1;
+        std::string                  addEffectsCacheFilter;  // selected package, empty = All
         uint64_t                     addEffectsCacheVersion = UINT64_MAX;
         bool inConfigManageMode = false;
         std::vector<std::string> configList;

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cctype>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -205,12 +206,12 @@ namespace VKIntox
 
         // ---- Build the working set ------------------------------------------
         // Rebuilding and re-sorting 300+ shaders every frame is wasted when the
-        // inputs rarely move, so cache the result until state, search or filter
-        // actually changes.
-        static int filter = 0;   // 0 all, 1 this config, 2 reshade
+        // inputs rarely move, so cache the result until state, search or package
+        // tab actually changes.
+        static std::string filterPackage;  // empty = All
         if (overlayStateVersion != addEffectsCacheVersion
             || std::string(addEffectsSearch) != addEffectsCacheSearch
-            || filter != addEffectsCacheFilter)
+            || filterPackage != addEffectsCacheFilter)
         {
             addEffectsEntries.clear();
 
@@ -237,9 +238,23 @@ namespace VKIntox
                 addEntry(et, (it != state.effectPaths.end()) ? it->second : "", 1);
             }
 
-            if (filter != 0)
+            // the tabs are the packages present in this set, so they follow installs
+            {
+                std::set<std::string> packages;
+                for (const auto& e : addEffectsEntries)
+                    if (!e.package.empty())
+                        packages.insert(e.package);
+                addEffectsPackages.assign(packages.begin(), packages.end());
+            }
+
+            // a tab can vanish when the install changes; fall back to All
+            if (!filterPackage.empty() &&
+                std::find(addEffectsPackages.begin(), addEffectsPackages.end(), filterPackage) == addEffectsPackages.end())
+                filterPackage.clear();
+
+            if (!filterPackage.empty())
                 addEffectsEntries.erase(std::remove_if(addEffectsEntries.begin(), addEffectsEntries.end(),
-                                                       [&](const AddEffectsEntry& e) { return e.group != filter - 1; }),
+                                                       [&](const AddEffectsEntry& e) { return e.package != filterPackage; }),
                                         addEffectsEntries.end());
 
             // group results by their effect package, keeping search relevance first
@@ -253,26 +268,41 @@ namespace VKIntox
                 return a.type < b.type;
             });
 
+            // the All tab, with no active search, shows a dimmed header per package
+            addEffectsRows.clear();
+            const bool groupHeads = filterPackage.empty() && addEffectsSearch[0] == '\0';
+            std::string currentPackage;
+            for (int i = 0; i < static_cast<int>(addEffectsEntries.size()); i++)
+            {
+                if (groupHeads && addEffectsEntries[i].package != currentPackage)
+                {
+                    currentPackage = addEffectsEntries[i].package;
+                    addEffectsRows.push_back({currentPackage.empty() ? std::string("Other") : currentPackage, -1});
+                }
+                addEffectsRows.push_back({std::string(), i});
+            }
+
             addEffectsCacheVersion = overlayStateVersion;
             addEffectsCacheSearch = addEffectsSearch;
-            addEffectsCacheFilter = filter;
+            addEffectsCacheFilter = filterPackage;
         }
         const std::vector<AddEffectsEntry>& entries = addEffectsEntries;
+        const std::vector<AddEffectsRow>& rows = addEffectsRows;
 
-        const int entryCount = static_cast<int>(entries.size());
+        const int rowCount = static_cast<int>(rows.size());
         const bool hasSearch = addEffectsSearch[0] != '\0';
 
-        // Keyboard cursor.
+        // Keyboard cursor. Indexes display rows, which may include package headers.
         static int highlight = 0;
-        if (entryCount == 0)
+        if (rowCount == 0)
             highlight = 0;
-        else if (highlight >= entryCount)
-            highlight = entryCount - 1;
+        else
+            highlight = std::clamp(highlight, 0, rowCount - 1);
 
-        if (entryCount > 0)
+        if (rowCount > 0)
         {
             if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
-                highlight = std::min(highlight + 1, entryCount - 1);
+                highlight = std::min(highlight + 1, rowCount - 1);
             if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
                 highlight = std::max(highlight - 1, 0);
         }
@@ -311,26 +341,25 @@ namespace VKIntox
                                 ImRect(ImVec2(fmin.x + 8.0f * d, fmin.y), ImVec2(fmin.x + 30.0f * d, fmax.y)),
                                 18.0f * d, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
             ImGui::PopStyleVar();
-            if (submitted && entryCount > 0)
-                queueEffect(entries[highlight].type);
+            if (submitted && rowCount > 0 && rows[highlight].entry >= 0)
+                queueEffect(entries[rows[highlight].entry].type);
         }
 
-        // Filter chips.
+        // Package tabs: All plus one per installed effect package, in a
+        // horizontally scrolling row so a long package list stays usable.
         {
-            const std::pair<const char*, int> chips[] = {
-                {"All", 0}, {"This config", 1}, {"ReShade", 2}};
-            for (int i = 0; i < (int)(sizeof(chips) / sizeof(chips[0])); i++)
-            {
-                if (i > 0)
-                    ImGui::SameLine();
-                const bool selected = (filter == chips[i].second);
-                if (ImGui::M3Button(chips[i].first,
-                                    selected ? ImGuiM3Button_Tonal : ImGuiM3Button_Text,
-                                    ImVec2(0, 30.0f * d)))
-                    filter = chips[i].second;
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("%d result%s", entryCount, entryCount == 1 ? "" : "s");
+            ImGui::BeginChild("##packagetabs", ImVec2(0, 46.0f * d), false, ImGuiWindowFlags_HorizontalScrollbar);
+            auto tab = [&](const char* label, const std::string& package) {
+                const bool selected = (filterPackage == package);
+                if (ImGui::M3Button(label, selected ? ImGuiM3Button_Tonal : ImGuiM3Button_Text, ImVec2(0, 30.0f * d)))
+                    filterPackage = package;
+                ImGui::SameLine();
+            };
+            tab("All", std::string());
+            for (const auto& package : addEffectsPackages)
+                tab(package.c_str(), package);
+            ImGui::TextDisabled("%d result%s", static_cast<int>(entries.size()), entries.size() == 1 ? "" : "s");
+            ImGui::EndChild();
         }
 
         // Recents (only when browsing, not searching).
@@ -355,7 +384,7 @@ namespace VKIntox
         ImFont* medium = ImGuiM3FontMedium();
 
         ImGui::BeginChild("##results", ImVec2(0, -footerHeight - trayHeight), true);
-        if (entryCount == 0)
+        if (rowCount == 0)
         {
             ImGui::Spacing();
             ImGui::TextDisabled("%s", Icon::SearchUtf8);
@@ -364,12 +393,26 @@ namespace VKIntox
         else
         {
             ImGuiListClipper clipper;
-            clipper.Begin(entryCount, rowH);
+            clipper.Begin(rowCount, rowH);
             while (clipper.Step())
             {
                 for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
                 {
-                    const AddEffectsEntry& e = entries[i];
+                    const AddEffectsRow& row = rows[i];
+                    if (!row.header.empty())
+                    {
+                        // dimmed, smaller package label; the row height supplies the gap
+                        const ImVec2 headerPos = ImGui::GetCursorScreenPos();
+                        ImGui::Dummy(ImVec2(1.0f, rowH));
+                        ImDrawList* headerList = ImGui::GetWindowDrawList();
+                        const float headerSize = ImGui::GetFontSize() * 0.85f;
+                        headerList->AddText(medium ? medium : ImGui::GetFont(), headerSize,
+                                            ImVec2(headerPos.x + 8.0f * d, headerPos.y + (rowH - headerSize) * 0.5f),
+                                            ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant), row.header.c_str());
+                        continue;
+                    }
+
+                    const AddEffectsEntry& e = entries[row.entry];
                     ImGui::PushID(i);
                     const ImVec2 pos = ImGui::GetCursorScreenPos();
                     // clamp vs a zero avail width: InvisibleButton asserts on a zero axis
@@ -405,8 +448,7 @@ namespace VKIntox
                     if (medium)
                         ImGui::PopFont();
 
-                    const std::string groupLabel = !e.package.empty() ? e.package
-                                                                      : (e.group == 0 ? "config" : "reshade");
+                    const std::string groupLabel = e.group == 0 ? "config" : "reshade";
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
                     ImGui::RenderTextClipped(ImVec2(bb.Max.x - 150.0f * d, bb.Min.y), ImVec2(bb.Max.x - 40.0f * d, bb.Max.y),
                                              groupLabel.c_str(), NULL, NULL, ImVec2(1.0f, 0.5f), &bb);
