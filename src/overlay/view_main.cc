@@ -172,7 +172,7 @@ namespace VKIntox
         // Profile section — auto-detected game with fixed config and shader INI selector
         if (!activeGameName.empty())
         {
-            ImGui::TextColored(UI::Success(), "%s  %s", Icon::BoltUtf8, activeGameName.c_str());
+            ImGui::TextColored(UI::Success(), "%s  %s", Icon::JoystickUtf8, activeGameName.c_str());
 
             ImGui::AlignTextToFramePadding();
             ImGui::Text("%s  Shader INI:", Icon::BrushUtf8);
