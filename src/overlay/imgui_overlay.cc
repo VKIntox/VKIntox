@@ -1698,6 +1698,19 @@ namespace VKIntox
             (!activeProfilePath.empty() || !activeShaderProfilePath.empty()))
             autoSaveProfile();
 
+        // combo dropdowns and dialogs are separate windows that stick out past
+        // the main one; publish their rects too so pointer events over them are
+        // withheld from the game instead of leaking through.
+        if (ImGuiContext* ctx = ImGui::GetCurrentContext())
+        {
+            for (ImGuiWindow* w : ctx->Windows)
+            {
+                if (!w->Active || !(w->Flags & ImGuiWindowFlags_Popup))
+                    continue;
+                frameInputRects.push_back(InputRect{w->Pos.x, w->Pos.y, w->Size.x, w->Size.y});
+            }
+        }
+
         publishOverlayInput();
         ImGui::Render();
 
