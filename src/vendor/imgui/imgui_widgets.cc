@@ -802,7 +802,7 @@ bool ImGui::ButtonEx(const char* label, const ImVec2& size_arg, ImGuiButtonFlags
     // press tween off `held`, so an ordinary click actually shows it.
     const float morph = ImGuiM3PressMorph(id ^ 0x42544E, held);
     const float rest_radius = ImGuiM3PillRadius(size, ImGuiM3Radius(ImGuiM3Shape_Full));
-    const float press_radius = ImGuiM3Radius(ImGuiM3Shape_Small);
+    const float press_radius = ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
     const float radius = rest_radius + (press_radius - rest_radius) * morph;
     const ImGuiM3ShapeRounding rounding{ radius, radius, radius, radius };
     const bool disabled = (g.LastItemData.ItemFlags & ImGuiItemFlags_Disabled) != 0;

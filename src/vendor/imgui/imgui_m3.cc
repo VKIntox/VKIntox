@@ -1503,14 +1503,31 @@ float ImGuiM3SpringStepEffectsSlow(ImGuiID id, float target)
 
 float ImGuiM3PressMorph(ImGuiID id, bool held)
 {
+    // time-based tween with a cubic ease-out: no overshoot, animates to the
+    // pressed radius while held, and only starts easing back on release.
+    static constexpr float kMorphSeconds = 0.32f;
+
     ImGuiWindow* window = ImGui::GetCurrentWindow();
-    const float dt = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f,
-                             1.0f / 240.0f, 1.0f / 15.0f);
     const float target = held ? 1.0f : 0.0f;
+    const double now = ImGui::GetTime();
+
     float value = window->StateStorage.GetFloat(id, 0.0f);
-    value += (target - value) * ImMin(1.0f, dt * 16.0f);
-    if (ImAbs(value - target) < 0.002f)
+    const float prevTarget = window->StateStorage.GetFloat(id ^ 1, value);
+    if (target != prevTarget)
+    {
+        window->StateStorage.SetFloat(id ^ 2, value);       // animate from here
+        window->StateStorage.SetFloat(id ^ 3, (float)now);  // and start now
+        window->StateStorage.SetFloat(id ^ 1, target);
+    }
+
+    const float from = window->StateStorage.GetFloat(id ^ 2, value);
+    const double start = static_cast<double>(window->StateStorage.GetFloat(id ^ 3, static_cast<float>(now)));
+    const float clock = ImClamp(static_cast<float>((now - start) / kMorphSeconds), 0.0f, 1.0f);
+    const float inv = 1.0f - clock;
+    value = from + (target - from) * (1.0f - inv * inv * inv);
+    if (clock >= 1.0f)
         value = target;
+
     window->StateStorage.SetFloat(id, value);
     return value;
 }
@@ -1986,7 +2003,7 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     // corners morph corner-full → corner-small while pressed. a direct press
     // tween so a normal click reaches the small radius and springs back visibly.
     const float rest_radius = ImGuiM3Radius(ImGuiM3Shape_Full);
-    const float press_radius = ImGuiM3Radius(ImGuiM3Shape_Small);
+    const float press_radius = ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
     const float morph = ImGuiM3PressMorph(id ^ 0x42544F, held);
     const float radius = ImMin(rest_radius + (press_radius - rest_radius) * morph, ImMin(size.x, size.y) * 0.5f);
     const ImGuiM3ShapeRounding rounding{ radius, radius, radius, radius };
