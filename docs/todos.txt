@@ -154,7 +154,7 @@ UI polish backlog (in commit order, after the overlay-threading work):
 2. slide transitions between every nav bar view, including add effects
 3. "are you sure you want to clear all effects from this preset?" confirm on
    Clear all, with pill-shaped accent buttons (dark text) "Yes" and "No"
-4. popup appear animations, and generally make the overlay more lively
+4. popup appear animations, and generally make the overlay more lively DONE
 5. fast background blur for the overlay: 3 passes, size 5, background opacity
    80%, foreground stays opaque and unblurred. add a BackgroundBlur bool to
    background surface objects, applied only when BackgroundBlur is on and
@@ -162,5 +162,4 @@ UI polish backlog (in commit order, after the overlay-threading work):
    needs direct imgui source changes. optimise the blur heavily.
 6. quick overlay optimisation pass: no freezes, genuinely smooth
 7. remove the "Enter to add..." label from the add-effects search placeholder,
-   since that key does not do that
-
+   since that key does not do that DONE
