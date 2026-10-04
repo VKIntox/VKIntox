@@ -305,15 +305,30 @@ namespace VKIntox
         ImGui::BeginDisabled(selectedEffects.empty());
         const std::string clearAllLabel = std::string(Icon::DeleteUtf8) + "  Clear All";
         if (ImGui::Button(clearAllLabel.c_str()))
-        {
-            selectedEffects.clear();
-            effectRegistry->clearSelectedEffects();
-            paramsDirty = true;
-            lastChangeTime = std::chrono::steady_clock::now();
-            applyRequested = true;
-            profileDirty = true;
-        }
+            ImGui::OpenPopup("##clear_all_confirm");
         ImGui::EndDisabled();
+
+        // Destructive action, so confirm it. Popups are submitted every frame,
+        // so this sits beside the button that opens it.
+        if (ImGui::BeginPopup("##clear_all_confirm"))
+        {
+            ImGui::TextWrapped("Are you sure you want to clear all effects from this preset?");
+            ImGui::Spacing();
+            if (ImGui::M3Button("Yes", ImGuiM3Button_Filled))
+            {
+                selectedEffects.clear();
+                effectRegistry->clearSelectedEffects();
+                paramsDirty = true;
+                lastChangeTime = std::chrono::steady_clock::now();
+                applyRequested = true;
+                profileDirty = true;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::M3Button("No", ImGuiM3Button_Filled))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
         ImGui::Separator();
 
         // Scrollable effect list (reserve space for footer controls)
