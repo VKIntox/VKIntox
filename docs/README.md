@@ -9,7 +9,7 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 [![version](https://img.shields.io/badge/version-0.2.0--experimental-blueviolet?style=flat-square)](#)
 [![license](https://img.shields.io/badge/license-zlib-2e8b57?style=flat-square)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-linux-555555?style=flat-square)](#)
-[![CI](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml)
+[![CI](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml/badge.svg?branch=v0.2.0-experimental&style=flat-square)](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml)
 
 </div>
 
