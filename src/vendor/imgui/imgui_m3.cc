@@ -2657,14 +2657,12 @@ void ImGui::M3ThemeEditor()
     M3SectionHeader("Blur");
     {
         ImGuiM3BlurSettings& bs = ImGuiM3GetBlurSettings();
-        ImGuiM3BackgroundObject& bg = ImGuiM3GetBackgroundObject();
         bool changed = false;
 
         changed |= M3Switch("Blur", &bs.blur);
         changed |= ImGui::SliderFloat("Background opacity", &bs.background_opacity, 0.0f, 1.0f, "%.2f");
         changed |= ImGui::SliderFloat("Size", &bs.size, 0.5f, 20.0f, "%.1f");
         changed |= ImGui::SliderInt("Passes", &bs.passes, 1, 10);
-        changed |= M3Switch("Background surface blur", &bg.BackgroundBlur);
 
         // Keep the shared struct legal regardless of what the widgets or a
         // hand-edited file produced.
