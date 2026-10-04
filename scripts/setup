@@ -7,10 +7,11 @@ set -euo pipefail
 REPO="buwryme/VKIntox"
 WORKFLOW="flatpak-build.yml"
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
-# the M3 font set is not on main yet, so seed it from the experimental branch.
-# TODO: point this at main once the font assets are merged.
-FONT_REF="v0.2.0-experimental"
-EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/main/assets/EffectPackages.ini}"
+# the M3 font set and the curated EffectPackages.ini are not on main yet, so
+# seed both from the experimental branch.
+# TODO: point this at main once those assets are merged.
+ASSET_REF="v0.2.0-experimental"
+EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/$ASSET_REF/assets/EffectPackages.ini}"
 
 if [[ -t 1 ]]; then
     B='\033[1m'; BLUE='\033[34m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; DIM='\033[2m'; NC='\033[0m'
@@ -467,7 +468,7 @@ seed_font() {
     if [[ -n "$FONT_SRC" && -f "$FONT_SRC/$font" ]]; then
         cp "$FONT_SRC/$font" "$APP_CONFIG/font/$dest"
     else
-        curl -fsSL "https://raw.githubusercontent.com/$REPO/$FONT_REF/assets/font/$font" -o "$APP_CONFIG/font/$dest" ||
+        curl -fsSL "https://raw.githubusercontent.com/$REPO/$ASSET_REF/assets/font/$font" -o "$APP_CONFIG/font/$dest" ||
             die "couldn't fetch $font; re-run this script from inside a VKIntox checkout"
     fi
 }
