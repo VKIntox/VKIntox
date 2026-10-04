@@ -418,7 +418,7 @@ namespace VKIntox
             toggleEffectsRequested = true;
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("(Bound to %s)", settingsManager.getToggleKey().c_str());
+        ImGui::TextDisabled("(Toggle keybind bound to %s)", settingsManager.getToggleKey().c_str());
 
         const std::string clearAllLabel = std::string(Icon::DeleteUtf8) + "  Clear all";
         const std::string addEffectsLabel = std::string(Icon::AddUtf8) + "  Add effects...";
