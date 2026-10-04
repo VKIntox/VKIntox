@@ -175,6 +175,12 @@ namespace VKIntox
                     ImGui::SetTooltip("Identical files (symlinks or copies) found in multiple shader paths.\nEach unique file is tested exactly once.");
             }
         }
+
+        ImGui::PushFont(ImGui::GetFont(), ImGui::GetFontSize() * 0.85f);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("This resulting in success doesn't guarantee that all shaders will look and/or behave correctly.");
+        ImGui::PopTextWrapPos();
+        ImGui::PopFont();
     }
 
     // Render detailed test results in collapsible sections
