@@ -584,6 +584,15 @@ if failed:
     raise SystemExit(1)
 PYEOF
     printf '%s\n' "$EFFECTS_HASH" > "$EFFECTS_MARKER"
+
+    # shaders that ship with VKIntox itself, in their own VKIntox package dir
+    # beside the downloaded packages
+    mkdir -p "$SHADERS_DIR/VKIntox"
+    for shader in CAS.fx MSAA.fx; do
+        curl -fsSL "https://raw.githubusercontent.com/$REPO/$FONT_REF/assets/builtInShaders/$shader" \
+            -o "$SHADERS_DIR/VKIntox/$shader" ||
+            warn "couldn't fetch builtInShaders/$shader"
+    done
 else
     ok "effects up to date"
 fi
