@@ -1625,7 +1625,10 @@ namespace VKIntox
         const float offsetIn  = showingFrom ? (1.0f - viewEase) * travel : 0.0f;
         const float offsetOut = showingFrom ? -viewEase * travel : 0.0f;
         const float alphaIn   = showingFrom ? ImClamp(viewEase, 0.0f, 1.0f) : 1.0f;
-        const float alphaOut  = showingFrom ? ImClamp(1.0f - viewEase, 0.0f, 1.0f) : 1.0f;
+        // the outgoing view is the expensive half of a transition (both views are
+        // submitted each frame), so it fades out over the first ~40% and is then
+        // dropped entirely; the incoming still uses the full curve.
+        const float alphaOut  = showingFrom ? ImClamp(1.0f - viewEase * 2.5f, 0.0f, 1.0f) : 1.0f;
 
         // A zero-padding child guarantees the offset applies even for views that
         // position their own content. WindowPadding is popped right after
@@ -1651,7 +1654,7 @@ namespace VKIntox
         // draw over the nav or the title bar.
         ImGui::PushClipRect(viewPos, ImVec2(viewPos.x + viewSize.x, viewPos.y + viewSize.y), true);
 
-        if (showingFrom)
+        if (showingFrom && alphaOut > 0.01f)
             renderSlidingView(viewFromIndex, "##view_slide_out", offsetOut, alphaOut);
         renderSlidingView(viewTargetIndex, "##view_slide_in", offsetIn, alphaIn);
 
