@@ -2052,9 +2052,25 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
     const float pill = ImMin(track_h, track_w) * 0.5f;
     const ImGuiM3ShapeRounding track_rounding{ pill, pill, pill, pill };
 
-    // Press narrows the track, which is the switch's own shape morph.
-    const float press_t = ImGuiM3SpringStepSpatialDefault(id ^ 0x5357, held ? 1.0f : 0.0f);
-    const float track_width = track_w + (m.switch_pressed_track_width - m.switch_track_width) * m.density * press_t;
+    // Press narrows the track, which is the switch's own shape morph. This is
+    // the switch's own spring, slower and less bouncy than the shared default
+    // spatial spring: damping 0.9 + stiffness 120 settle in ~405ms, where the
+    // default's 0.8 + 380 settled in ~257ms and read as a snap.
+    const float press_t = ImGuiM3SpringStep(id ^ 0x5357, held ? 1.0f : 0.0f, 0.9f, 120.0f);
+
+    // Handle: 22dp normally, 26dp when pressed, with a spring so it grows.
+    // on and off share the icon handle size so the side padding is identical,
+    // and the inset tracks the vertical centring so all four gaps match.
+    // The spring's overshoot is clamped to the track: without it the circle can
+    // grow past the pill's height or push its travel negative and leave the pill.
+    const float handle_size = ImMin(
+        (m.switch_handle_with_icon + (m.switch_pressed_handle - m.switch_handle_with_icon) * press_t) * m.density,
+        track_h);
+    const float track_width = ImMax(
+        track_w + (m.switch_pressed_track_width - m.switch_track_width) * m.density * press_t,
+        handle_size);
+    const float inset = (track_h - handle_size) * 0.5f;
+    const float travel = ImMax(0.0f, track_width - handle_size - inset * 2.0f);
 
     ImGuiM3DrawContainer(window->DrawList, track_bb, track_rounding, PackU32(on ? track_on_color : track_off_color),
                          PackU32(on ? ImGuiM3Color(ImGuiM3Role_SurfaceTint) : outline_off_color),
@@ -2064,12 +2080,6 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
     ImGuiM3State state = (hovered && held) ? ImGuiM3State_Pressed : hovered ? ImGuiM3State_Hovered : ImGuiM3State_Enabled;
     ImGuiM3DrawStateLayer(window->DrawList, track_bb, track_rounding, on ? ImGuiM3Role_OnPrimary : ImGuiM3Role_OnSurface, state);
 
-    // Handle: 20dp normally, 28dp when pressed, with a spring so it grows.
-    // on and off share the icon handle size so the side padding is identical,
-    // and the inset tracks the vertical centring so all four gaps match
-    const float handle_size = (m.switch_handle_with_icon + (m.switch_pressed_handle - m.switch_handle_with_icon) * press_t) * m.density;
-    const float inset = (track_h - handle_size) * 0.5f;
-    const float travel = track_width - handle_size - inset * 2.0f;
     const ImVec2 handle_center(on ? track_bb.Min.x + inset + handle_size * 0.5f + travel
                                   : track_bb.Min.x + inset + handle_size * 0.5f,
                                track_bb.GetCenter().y);

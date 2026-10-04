@@ -217,9 +217,9 @@ struct ImGuiM3Metrics
     float       switch_track_outline = 2.0f;
     float       switch_handle = 20.0f;
     float       switch_handle_inset = 4.0f;
-    float       switch_handle_with_icon = 24.0f;
+    float       switch_handle_with_icon = 22.0f;
     float       switch_pressed_track_width = 40.0f;
-    float       switch_pressed_handle = 28.0f;
+    float       switch_pressed_handle = 26.0f;
 
     float       checkbox_size = 18.0f;
     float       checkbox_radius = 2.0f;
