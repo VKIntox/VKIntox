@@ -136,3 +136,22 @@ remaining / follow-ups for v0.2.0 (documented, not fixed):
   so panicLayer()->flush() runs with no lock held. storage is still globalLock
   state: prepared before the ring section and published after it. covered by
   vkintox-depth-copy-state-tests (functional + threaded).
+
+UI polish backlog (in commit order, after the overlay-threading work):
+1. tweak slider values: slow the toggle animation to ~1.6x its current
+   duration, keep the bounce but nudge it down, shrink the inner circle for more
+   padding, and clamp the bounce so the circle never leaves its outer pill.
+   subject: [affected_files.cc, affectedfile2.hh] tweak slider values
+2. slide transitions between every nav bar view, including add effects
+3. "are you sure you want to clear all effects from this preset?" confirm on
+   Clear all, with pill-shaped accent buttons (dark text) "Yes" and "No"
+4. popup appear animations, and generally make the overlay more lively
+5. fast background blur for the overlay: 3 passes, size 5, background opacity
+   80%, foreground stays opaque and unblurred. add a BackgroundBlur bool to
+   background surface objects, applied only when BackgroundBlur is on and
+   BackgroundOpacity <= 0.99. size and passes live in a BlurSettings struct.
+   needs direct imgui source changes. optimise the blur heavily.
+6. quick overlay optimisation pass: no freezes, genuinely smooth
+7. remove the "Enter to add..." label from the add-effects search placeholder,
+   since that key does not do that
+
