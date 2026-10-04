@@ -32,6 +32,7 @@
 #include "vendor/imgui/imgui_m3.h"
 #include "overlay/ui_theme.hh"
 #include "overlay/ui_icons.hh"
+#include "overlay/ui_dialog.hh"
 #include "vendor/imgui/backends/imgui_impl_vulkan.h"
 
 namespace VKIntox
@@ -47,31 +48,6 @@ namespace VKIntox
         void overlayTitleHeightConstraint(ImGuiSizeCallbackData* data)
         {
             data->DesiredSize.y = std::max(data->DesiredSize.y, OverlayTitleBarHeight() + 1.0f);
-        }
-
-        // Cubic-bezier timing function, the same shape Hyprland uses for its
-        // window animations: P0=(0,0), P1=(x1,y1), P2=(x2,y2), P3=(1,1). x is the
-        // normalised clock, y is the eased value; y may exceed 1 (x2=1.12 here),
-        // which is the deliberate overshoot. Solved by bisection, so it can never
-        // diverge the way an integrated spring can when frames are uneven.
-        float CubicBezierEase(float x, float x1, float y1, float x2, float y2)
-        {
-            x = ImClamp(x, 0.0f, 1.0f);
-            auto bezier = [](float t, float p1, float p2) {
-                const float u = 1.0f - t;
-                return 3.0f * p1 * t * u * u + 3.0f * p2 * t * t * u + t * t * t;
-            };
-
-            float lo = 0.0f, hi = 1.0f;
-            for (int i = 0; i < 24; ++i)
-            {
-                const float mid = (lo + hi) * 0.5f;
-                if (bezier(mid, x1, x2) < x)
-                    lo = mid;
-                else
-                    hi = mid;
-            }
-            return bezier((lo + hi) * 0.5f, y1, y2);
         }
     }
 
@@ -1632,7 +1608,7 @@ namespace VKIntox
             }
             else
             {
-                viewEase = CubicBezierEase(clock, kBezX1, kBezY1, kBezX2, kBezY2);
+                viewEase = UI::CubicBezierEase(clock, kBezX1, kBezY1, kBezX2, kBezY2);
             }
         }
 

@@ -18,6 +18,11 @@ namespace VKIntox
         // sized for a dialog rather than a full-height form button.
         bool M3DialogButton(const char* label, ImGuiM3ButtonVariant variant, float width = 0.0f);
 
+        // Shared cubic-bezier timing function (P0=(0,0), P3=(1,1)). x is the
+        // normalised clock, y the eased value; solved by bisection so it can
+        // never diverge. Used by both the view slide and the dialog appear.
+        float CubicBezierEase(float x, float x1, float y1, float x2, float y2);
+
         // The width M3DialogButton will take for this label, so a caller can lay
         // actions out (right-align) before drawing them.
         float M3DialogButtonWidth(const char* label);
