@@ -461,7 +461,10 @@ namespace VKIntox
                     if (ImGui::M3Button(queueLabel.c_str(), ImGuiM3Button_Filled, ImVec2(pillW, pillH)))
                         queueEffect(e.type);
                     ImGui::PopID();
+                    // restore the row's layout cursor; the Dummy consumes the
+                    // SetCursorScreenPos so ImGui's boundary check is satisfied
                     ImGui::SetCursorScreenPos(cursorAfterRow);
+                    ImGui::Dummy(ImVec2(0.0f, 0.0f));
 
                     if (hovered)
                     {
