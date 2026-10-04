@@ -1553,9 +1553,10 @@ namespace VKIntox
         // Cross-slide. The outgoing view is drawn stationary and the incoming
         // view is drawn on top of it inside an offset child, so the whole view
         // moves no matter how its own layout places things (which is why the
-        // old cursor-offset approach skipped some views entirely). A local
-        // spring (damping 0.75, stiffness 240) settles in ~340ms with a light
-        // bounce and is frame-rate independent.
+        // old cursor-offset approach skipped some views entirely). A local,
+        // critically damped spring (damping 1.0, stiffness 260) settles in
+        // ~280ms with no overshoot, so it arrives without the little snap an
+        // underdamped spring left at the end.
         static int   viewPrevIndex     = -1;
         static int   viewFromIndex     = -1;
         static int   viewSlideDir      = 1;
@@ -1581,8 +1582,8 @@ namespace VKIntox
         {
             const float dt = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f,
                                      1.0f / 240.0f, 1.0f / 15.0f);
-            constexpr float kStiffness = 240.0f;
-            constexpr float kDamping   = 0.75f;
+            constexpr float kStiffness = 260.0f;
+            constexpr float kDamping   = 1.0f;
             const float omega = ImSqrt(kStiffness);
             const float displacement = viewSlideValue - 1.0f;
             const float acceleration = -kStiffness * displacement - 2.0f * kDamping * omega * viewSlideVelocity;
@@ -1611,14 +1612,21 @@ namespace VKIntox
         }
 
         // Incoming view on top, offset. A zero-padding child is what guarantees
-        // the offset applies even for views that position their own content.
+        // the offset applies even for views that position their own content; its
+        // opaque background makes it slide *over* the outgoing view instead of
+        // showing it through. The style vars are popped right after BeginChild
+        // so popups opened inside the view still get the real window padding.
         ImGui::SetCursorScreenPos(ImVec2(viewPos.x + slideOffset, viewPos.y));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImVec4 viewBg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+        viewBg.w = 1.0f;  // opaque, so the incoming view fully covers the outgoing one
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, viewBg);
         ImGui::BeginChild("##view_slide", viewSize, false,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
         renderView(viewIndex);
         ImGui::EndChild();
-        ImGui::PopStyleVar();
 
         ImGui::PopClipRect();
         ImGui::SetCursorScreenPos(viewPos);
