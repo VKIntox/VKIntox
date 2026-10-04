@@ -1425,7 +1425,8 @@ namespace VKIntox
         ImGui::SetNextWindowSizeConstraints(minSize, maxSize, overlayTitleHeightConstraint);
         // "##..." renders as an empty native title: the bar keeps its drag
         // rect while the brand row below owns the pixels.
-        ImGui::Begin("##vkintox_overlay", nullptr, ImGuiWindowFlags_NoCollapse);
+        ImGui::Begin("##vkintox_overlay", nullptr,
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
 
         const ImVec2 windowPos = ImGui::GetWindowPos();
