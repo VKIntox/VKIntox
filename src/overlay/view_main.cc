@@ -438,6 +438,7 @@ namespace VKIntox
             addEffectsFocusSearch = true;
             insertPosition = -1;  // Append to end
             pendingAddEffects.clear();
+            addEffectsDuplicateCount.clear();
         }
 
         // Destructive action, so confirm it through the shared dialog frame.
@@ -591,6 +592,7 @@ namespace VKIntox
                     inSelectionMode = true;
                     addEffectsFocusSearch = true;
                     pendingAddEffects.clear();
+                    addEffectsDuplicateCount.clear();
                 }
 
                 // Remove effect

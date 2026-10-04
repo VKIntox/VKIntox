@@ -232,6 +232,7 @@ namespace VKIntox
         uint32_t framebufferHeight = 0;
         OverlayState state;
         std::vector<std::pair<std::string, std::string>> pendingAddEffects;  // {instanceName, effectType} to add
+        std::map<std::string, int> addEffectsDuplicateCount;  // effectType -> extra copies to add per queue action
         bool inSelectionMode = false;
         int insertPosition = -1;  // Position to insert effects (-1 = append to end)
         char addEffectsSearch[64] = "";  // Search filter for add effects view
