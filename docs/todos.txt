@@ -137,6 +137,15 @@ remaining / follow-ups for v0.2.0 (documented, not fixed):
   state: prepared before the ring section and published after it. covered by
   vkintox-depth-copy-state-tests (functional + threaded).
 
+overlay threading, remaining:
+- off-thread first compile. the CompileCache already removes repeat compiles and
+  the chain reload is now fence-gated, so the only stall left is the first-ever
+  compile of a shader (adding an effect, or a new shader/extent combo). moving it
+  off-thread means extracting the ~200-line compile path out of
+  ReshadeEffect::createReshadeModule so a worker can warm the cache, plus a
+  cancellation/lifetime design so a worker never touches a destroyed device.
+  not done; the value is one compile, not every interaction.
+
 UI polish backlog (in commit order, after the overlay-threading work):
 1. tweak slider values: slow the toggle animation to ~1.6x its current
    duration, keep the bounce but nudge it down, shrink the inner circle for more
