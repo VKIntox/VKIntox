@@ -138,6 +138,12 @@ namespace VKIntox
         // Owns its own mutex; see DepthCopyState for the lock-order contract.
         DepthCopyState depthCopy;
 
+        // A chain reload requested by the UI, deferred until every swapchain's
+        // in-flight effect submissions have completed. Replaces the global
+        // QueueWaitIdle that used to stall the present thread on every toggle.
+        bool pendingChainReload = false;
+        std::vector<std::string> pendingChainEffects;
+
         // Persistent overlay state that survives swapchain recreation
         std::unique_ptr<OverlayPersistentState> overlayPersistentState;
 

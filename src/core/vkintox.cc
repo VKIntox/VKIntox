@@ -1300,8 +1300,11 @@ namespace VKIntox
     {
         LogicalDevice* logicalDevice = logicalSwapchain->logicalDevice;
 
-        // Wait for GPU to finish
-        logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
+        // the caller has already established that this swapchain's in-flight
+        // effect submissions are done (depthRebuildFencesReady), so there is no
+        // QueueWaitIdle here: freeing command buffers or destroying effect
+        // resources while the GPU still references them is what the fence check
+        // exists to prevent, and a global wait would stall the present thread.
 
         // Clear effects (command buffers will be freed by reallocateCommandBuffers)
         logicalSwapchain->effects.clear();
@@ -2926,6 +2929,33 @@ namespace VKIntox
                 Logger::info("Shader paths changed, effect list refreshed");
             }
 
+            // Deferred chain reload. A rebuild must not free command buffers or
+            // destroy effect resources while the GPU still executes them, but a
+            // global QueueWaitIdle stalls the present thread. So the reload is
+            // armed and run on the first present where every swapchain's
+            // in-flight effect submissions have completed.
+            if (deviceForSettings && deviceForSettings->pendingChainReload)
+            {
+                bool gpuDone = true;
+                for (auto& [_, sc] : swapchainMap)
+                {
+                    if (sc && sc->logicalDevice == deviceForSettings && !sc->fakeImages.empty()
+                        && !depthRebuildFencesReady(deviceForSettings, sc.get()))
+                    {
+                        gpuDone = false;
+                        break;
+                    }
+                }
+
+                if (gpuDone)
+                {
+                    reloadAllSwapchains(deviceForSettings, deviceForSettings->pendingChainEffects);
+                    deviceForSettings->depthReallocPending = false;
+                    deviceForSettings->pendingChainReload = false;
+                    deviceForSettings->pendingChainEffects.clear();
+                }
+            }
+
             if (!initLogged)
             {
                 Logger::info("hot-reload initialized, config: " + config->getConfigFilePath());
@@ -2995,11 +3025,10 @@ namespace VKIntox
                 auto reloadSelectedEffects = [&]() {
                     cachedEffects.initialized = false;
                     cachedParams.dirty = true;
-                    const std::vector<std::string> activeEffects = logicalDevice->imguiOverlay
+                    logicalDevice->pendingChainEffects = logicalDevice->imguiOverlay
                         ? logicalDevice->imguiOverlay->getActiveEffects()
                         : config->getOption<std::vector<std::string>>("effects", {});
-                    reloadAllSwapchains(logicalDevice, activeEffects);
-                    logicalDevice->depthReallocPending = false;
+                    logicalDevice->pendingChainReload = true;
                 };
 
                 // the overlay owns the active profile; the static is only for
@@ -3069,14 +3098,9 @@ namespace VKIntox
                     resizeDebounce.pending = false;
 
                     // Get selected effects from registry (single source of truth)
-                    const auto& selectedEffects = effectRegistry.getSelectedEffects();
-                    for (auto& [_, swapchain] : swapchainMap)
-                    {
-                        if (swapchain->fakeImages.empty())
-                            continue;
-                        reloadEffectsForSwapchain(swapchain.get(), config.get(), selectedEffects);
-                    }
-                    logicalDevice->depthReallocPending = false;
+                    // and arm the fence-gated rebuild instead of rebuilding here.
+                    logicalDevice->pendingChainEffects = effectRegistry.getSelectedEffects();
+                    logicalDevice->pendingChainReload = true;
                 }
             }
 
