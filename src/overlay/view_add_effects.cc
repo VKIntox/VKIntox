@@ -388,7 +388,10 @@ namespace VKIntox
         }
 
         // ---- Results (virtualized) -----------------------------------------
-        const float footerHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+        // Reserve the real footer height: the Cancel/Add row is a pair of M3
+        // buttons, which are taller than the default frame, so measuring with
+        // GetFrameHeightWithSpacing() left the bottom of the pills clipped.
+        const float footerHeight = m.button_height_default * d + ImGui::GetStyle().ItemSpacing.y * 2.0f;
         const float trayHeight = 62.0f * d;
         const float rowH = 40.0f * d;
         ImFont* iconFont = ImGuiM3IconFont();
