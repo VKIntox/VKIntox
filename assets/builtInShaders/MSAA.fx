@@ -27,7 +27,7 @@ uniform float EdgeThreshold <
 > = 0.10;
 
 uniform int SearchSteps <
-    ui_label = "Iterations (search steps)";
+    ui_label = "Search steps";
     ui_type = "slider";
     ui_min = 1; ui_max = 16; ui_step = 1;
     ui_tooltip =
@@ -35,6 +35,16 @@ uniform int SearchSteps <
         "Longer segments get smoother corners, at a small per-pixel cost.\n"
         "8 covers most geometry; 12-16 helps long, shallow silhouettes.";
 > = 8;
+
+uniform int Passes <
+    ui_label = "Passes";
+    ui_type = "slider";
+    ui_min = 1; ui_max = 16; ui_step = 1;
+    ui_tooltip =
+        "How many times the filter runs over each pixel.\n"
+        "1 is a single MLAA pass; more passes re-smooth what is left and\n"
+        "gradually settle as the local contrast drops below the threshold.";
+> = 2;
 
 uniform float BlendStrength <
     ui_label = "Blend strength";
@@ -88,26 +98,31 @@ float3 PS_MSAA(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_T
 {
     const float2 px = ReShade::PixelSize;
     float3 color = tex2D(ReShade::BackBuffer, texcoord).rgb;
-    const float here = MSAALuma(color);
 
-    // four edges, handled independently so a corner can pick up two blends
-    [unroll]
-    for (int e = 0; e < 4; e++)
+    [loop]
+    for (int passIndex = 0; passIndex < Passes; passIndex++)
     {
-        const float2 off = (e == 0) ? float2(0.0, -1.0)
-                         : (e == 1) ? float2(0.0,  1.0)
-                         : (e == 2) ? float2(-1.0, 0.0)
-                                    : float2( 1.0, 0.0);
-        const float2 along = (e < 2) ? float2(1.0, 0.0) : float2(0.0, 1.0);
+        const float here = MSAALuma(color);
 
-        const float neighbour = MSAALuma(tex2D(ReShade::BackBuffer, texcoord + off * px).rgb);
-        if (abs(here - neighbour) <= EdgeThreshold)
-            continue;
+        // four edges, handled independently so a corner can pick up two blends
+        [unroll]
+        for (int e = 0; e < 4; e++)
+        {
+            const float2 off = (e == 0) ? float2(0.0, -1.0)
+                             : (e == 1) ? float2(0.0,  1.0)
+                             : (e == 2) ? float2(-1.0, 0.0)
+                                        : float2( 1.0, 0.0);
+            const float2 along = (e < 2) ? float2(1.0, 0.0) : float2(0.0, 1.0);
 
-        const float2 measured = MSAAMeasure(texcoord, px, off, along, SearchSteps, EdgeThreshold);
-        const float total = measured.x + measured.y + 1.0;
-        const float weight = MSAACoverage(min(measured.x, measured.y), total) * BlendStrength;
-        color = lerp(color, tex2D(ReShade::BackBuffer, texcoord + off * px).rgb, weight);
+            const float neighbour = MSAALuma(tex2D(ReShade::BackBuffer, texcoord + off * px).rgb);
+            if (abs(here - neighbour) <= EdgeThreshold)
+                continue;
+
+            const float2 measured = MSAAMeasure(texcoord, px, off, along, SearchSteps, EdgeThreshold);
+            const float total = measured.x + measured.y + 1.0;
+            const float weight = MSAACoverage(min(measured.x, measured.y), total) * BlendStrength;
+            color = lerp(color, tex2D(ReShade::BackBuffer, texcoord + off * px).rgb, weight);
+        }
     }
 
     return color;
@@ -118,7 +133,8 @@ technique MSAA <
     ui_tooltip =
         "Post-process morphological anti-aliasing. Finds luminance edges and\n"
         "blends only the pixels at the ends of each edge segment, leaving long\n"
-        "straight edges untouched. The search-step count is the iteration cap.";
+        "straight edges untouched. Search steps set how far it looks; passes\n"
+        "set how many times it runs.";
 >
 {
     pass
