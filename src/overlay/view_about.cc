@@ -58,7 +58,7 @@ namespace VKIntox
         const float wrapWidth = ImGui::GetContentRegionAvail().x;
         const float disclaimerHeight = ImGui::CalcTextSize(disclaimer, nullptr, false, wrapWidth).y;
         const float spacing = ImGui::GetStyle().ItemSpacing.y;
-        const float footerHeight = 1.0f + disclaimerHeight + ImGui::GetTextLineHeight() * 2.0f + spacing * 5.0f;
+        const float footerHeight = 1.0f + disclaimerHeight + ImGui::GetTextLineHeight() * 3.0f + spacing * 6.0f;
         const float remaining = ImGui::GetContentRegionAvail().y;
         if (remaining > footerHeight)
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (remaining - footerHeight));
@@ -70,6 +70,7 @@ namespace VKIntox
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
         ImGui::TextDisabled("VKIntox version %s", runtimeVersion());
+        ImGui::TextDisabled("Beta-state software: mildly stable, but not the best.");
         ImGui::TextDisabled("Report issues:");
         ImGui::SameLine();
         ImGui::TextLinkOpenURL("github.com/buwryme/VKIntox/issues", "https://github.com/buwryme/VKIntox/issues");
