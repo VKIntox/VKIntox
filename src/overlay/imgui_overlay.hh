@@ -279,6 +279,7 @@ namespace VKIntox
         // Shader test state
         bool shaderTestRunning = false;
         bool shaderTestComplete = false;
+        uint64_t shaderTestStateVersion = 0;  // overlayStateVersion the finished test ran against
         size_t shaderTestCurrentIndex = 0;
         int shaderTestDuplicateCount = 0;  // Number of duplicate shaders skipped
         std::vector<std::pair<std::string, std::string>> shaderTestQueue;  // {effectName, filePath}

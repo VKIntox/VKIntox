@@ -18,7 +18,7 @@ namespace VKIntox
 {
     void ImGuiOverlay::startShaderTest()
     {
-        if (shaderTestRunning || shaderTestComplete)
+        if (shaderTestRunning || (shaderTestComplete && overlayStateVersion == shaderTestStateVersion))
             return;
 
         // Ensure shader manager paths are loaded
@@ -37,6 +37,8 @@ namespace VKIntox
         shaderTestCurrentIndex = 0;
         shaderTestComplete = false;
         shaderTestDuplicateCount = 0;
+        // the set this run covers; a later overlayStateVersion bump means new shaders
+        shaderTestStateVersion = overlayStateVersion;
 
         // Cache include paths once — avoids re-reading shader_manager.conf per shader
         ShaderManagerConfig smConfig = ConfigSerializer::loadShaderManagerConfig();
@@ -136,10 +138,16 @@ namespace VKIntox
         }
         else
         {
+            // gray out once the finished run still matches the live shader set
+            const bool alreadyTested = shaderTestComplete && overlayStateVersion == shaderTestStateVersion;
+            ImGui::BeginDisabled(alreadyTested);
             if (ImGui::Button("Compile-test shaders"))
                 startShaderTest();
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Test all .fx shaders for compilation errors");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(alreadyTested
+                    ? "Shaders already tested. Install or change shaders to test again."
+                    : "Test all .fx shaders for compilation errors");
         }
 
         // Show test results summary if complete
