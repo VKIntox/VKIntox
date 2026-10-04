@@ -1636,6 +1636,9 @@ namespace VKIntox
             }
         }
 
+        // defer the add-effects search focus until the slide is done
+        viewTransitionActive = viewTransitioning;
+
         const ImVec2 viewPos  = ImGui::GetCursorScreenPos();
         const ImVec2 viewSize = ImGui::GetContentRegionAvail();
         const bool showingFrom = viewTransitioning && viewFromIndex != viewTargetIndex;

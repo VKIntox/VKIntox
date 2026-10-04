@@ -236,6 +236,10 @@ namespace VKIntox
         int insertPosition = -1;  // Position to insert effects (-1 = append to end)
         char addEffectsSearch[64] = "";  // Search filter for add effects view
         bool addEffectsFocusSearch = false;  // Focus the search box on the next frame
+        // True while a view slide is running. The add-effects search focus is
+        // deferred until it is false: focusing mid-slide made ImGui scroll the
+        // window to the focused item, which dragged the nav bar along.
+        bool viewTransitionActive = false;
 
         // Bumped when updateState sees different effect sources, so the
         // add-effects view can cache its entry list instead of rebuilding it

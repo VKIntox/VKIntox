@@ -321,7 +321,9 @@ namespace VKIntox
         }
 
         // ---- Search ---------------------------------------------------------
-        if (addEffectsFocusSearch)
+        // Focus the search box once the slide has settled. Focusing during the
+        // transition made ImGui scroll to the item and dragged the nav bar in.
+        if (addEffectsFocusSearch && !viewTransitionActive)
         {
             ImGui::SetKeyboardFocusHere();
             addEffectsFocusSearch = false;
