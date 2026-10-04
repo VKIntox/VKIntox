@@ -160,7 +160,12 @@ namespace VKIntox
         const size_t maxEffectsLimit = static_cast<size_t>(settingsManager.getMaxEffects());
         const size_t currentCount = selectedEffects.size();
         const size_t pendingCount = pendingAddEffects.size();
-        const bool atLimit = currentCount + pendingCount >= maxEffectsLimit;
+        // removals free slots, so they count against the limit too
+        size_t removedPresent = 0;
+        for (const auto& removed : addEffectsRemoved)
+            if (std::find(selectedEffects.begin(), selectedEffects.end(), removed) != selectedEffects.end())
+                removedPresent++;
+        const bool atLimit = currentCount - removedPresent + pendingCount >= maxEffectsLimit;
 
         auto isNameUsed = [&](const std::string& name) {
             if (std::find(selectedEffects.begin(), selectedEffects.end(), name) != selectedEffects.end())
@@ -579,7 +584,7 @@ namespace VKIntox
                         ImGui::EndDisabled();
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         {
-                            ImGui::SetTooltip("Remove a duplicate copy");
+                            ImGui::SetTooltip("De-increment duplicate entry count");
                             overControl = true;
                         }
                         ImGui::PopID();
@@ -591,14 +596,16 @@ namespace VKIntox
 
                         ImGui::SetCursorScreenPos(ImVec2(plusX, controlY));
                         ImGui::PushID(2);
+                        ImGui::BeginDisabled(atLimit);
                         if (ImGui::M3Button(Icon::AddUtf8, ImGuiM3Button_Filled, ImVec2(stepSize, stepSize)))
                         {
                             addEffectsDuplicateCount[e.type] = std::min(99, dupCount + 1);
                             toggleQueued(e.type, true);
                         }
-                        if (ImGui::IsItemHovered())
+                        ImGui::EndDisabled();
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         {
-                            ImGui::SetTooltip("Add a duplicate copy");
+                            ImGui::SetTooltip("Increment duplicate entry count");
                             overControl = true;
                         }
                         ImGui::PopID();
