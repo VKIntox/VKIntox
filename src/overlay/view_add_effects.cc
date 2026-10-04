@@ -460,9 +460,6 @@ namespace VKIntox
                                                             : ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
                     const ImGuiM3State st = (hovered && held) ? ImGuiM3State_Pressed : hovered ? ImGuiM3State_Hovered : ImGuiM3State_Enabled;
                     ImGuiM3DrawStateLayer(dl, bb, r, added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_OnSurface, st);
-                    if (i == highlight && !hovered)
-                        dl->AddRect(ImVec2(bb.Min.x + d, bb.Min.y + d), ImVec2(bb.Max.x - d, bb.Max.y - d),
-                                    ImGuiM3ColorU32(ImGuiM3Role_Primary), pill, 0, 2.0f * d);
 
                     if (iconFont)
                         ImGuiM3DrawIcon(dl, effectIconFor(e.type), ImRect(ImVec2(bb.Min.x + 16.0f * d, bb.Min.y), ImVec2(bb.Min.x + 44.0f * d, bb.Max.y)),
