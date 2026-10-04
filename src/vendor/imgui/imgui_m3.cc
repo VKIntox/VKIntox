@@ -2655,11 +2655,11 @@ void ImGui::M3ThemeEditor()
     ImGui::SameLine();
     if (M3Button("Text", ImGuiM3Button_Text, ImVec2(0, 0))) {}
 
-    bool sw = true;
+    static bool sw = true;
     if (M3Switch("Switch", &sw))
         MarkItemEdited(0);
     ImGui::SameLine();
-    bool chip = true;
+    static bool chip = true;
     M3Chip("Chip", &chip);
     ImGui::SameLine();
     M3StatusChip("ERROR", ImGuiM3Role_Error);

@@ -462,15 +462,25 @@ namespace VKIntox
                     if (medium)
                         ImGui::PopFont();
 
-                    // queue pill: accent fill with on-accent text, flips to a
-                    // checkmark once the effect is queued
-                    const float pillW = 96.0f * d;
-                    const float pillH = 28.0f * d;
-                    ImGui::SetCursorScreenPos(ImVec2(bb.Max.x - pillW - 10.0f * d, bb.Min.y + (rowH - pillH) * 0.5f));
+                    // queue switch: on queues the effect, off removes it again
+                    const ImGuiM3Metrics& rowMetrics = ImGuiM3GetMetrics();
+                    const float switchW = rowMetrics.switch_track_width * d;
+                    const float switchH = rowMetrics.list_item_height_1 * d;
+                    bool queued = added;
+                    ImGui::SetCursorScreenPos(ImVec2(bb.Max.x - switchW - 14.0f * d, bb.Min.y + (rowH - switchH) * 0.5f));
                     ImGui::PushID(1);
-                    const std::string queueLabel = added ? std::string(Icon::CheckUtf8) + "  Queued" : "Queue";
-                    if (ImGui::M3Button(queueLabel.c_str(), ImGuiM3Button_Filled, ImVec2(pillW, pillH)))
-                        queueEffect(e.type);
+                    if (ImGui::M3SwitchWithID("", "##queue", &queued))
+                    {
+                        if (queued)
+                            queueEffect(e.type);
+                        else
+                        {
+                            auto pending = std::find_if(pendingAddEffects.begin(), pendingAddEffects.end(),
+                                                        [&](const auto& p) { return p.second == e.type; });
+                            if (pending != pendingAddEffects.end())
+                                pendingAddEffects.erase(pending);
+                        }
+                    }
                     ImGui::PopID();
                     // restore the row's layout cursor; the Dummy consumes the
                     // SetCursorScreenPos so ImGui's boundary check is satisfied
