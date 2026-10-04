@@ -53,7 +53,7 @@ namespace VKIntox::Icon
     // Content / effect kinds.
     constexpr ImWchar Speed          = 0xE9E4;
     constexpr ImWchar Bolt           = 0xEA0B;
-    constexpr ImWchar Joystick       = 0xF5EE;
+    constexpr ImWchar Joystick       = 0xEA28;
     constexpr ImWchar Science        = 0xEA4B;
     constexpr ImWchar Build          = 0xE869;
     constexpr ImWchar Extension      = 0xE87B;
@@ -118,7 +118,7 @@ namespace VKIntox::Icon
     constexpr const char* PlayArrowUtf8     = "\xEE\x80\xB7";
     constexpr const char* SpeedUtf8         = "\xEE\xA7\xA4";
     constexpr const char* BoltUtf8          = "\xEE\xA8\x8B";
-    constexpr const char* JoystickUtf8      = "\xEF\x97\xAE";
+    constexpr const char* JoystickUtf8      = "\xEE\xA8\xA8";
     constexpr const char* ScienceUtf8       = "\xEE\xA9\x8B";
     constexpr const char* BuildUtf8         = "\xEE\xA1\xA9";
     constexpr const char* ExtensionUtf8     = "\xEE\xA1\xBB";
