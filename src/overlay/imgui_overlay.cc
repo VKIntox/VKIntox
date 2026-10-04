@@ -1988,9 +1988,11 @@ namespace VKIntox
         }
         const bool closeRequested = buttonHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         // The titlebar rides the window's own draw list, not the foreground one,
-        // so popups opened over it (dropdowns, dialogs) draw above it. The sliding
-        // views are clipped to the content region, so they never cover it.
+        // so popups opened over it draw above it. The window's content clip
+        // excludes the title bar, so widen the clip to the whole window while
+        // the bar is drawn, then restore it.
         ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImGui::PushClipRect(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y), false);
 
         // brand row: icon pinned to the leading edge, wordmark centred on the
         // bar independently of it.
@@ -2047,6 +2049,7 @@ namespace VKIntox
             drawList->AddLine(ImVec2(buttonCenter.x + crossInset, buttonCenter.y - crossInset),
                               ImVec2(buttonCenter.x - crossInset, buttonCenter.y + crossInset), crossColor, crossThickness);
         }
+        ImGui::PopClipRect();
 
         // Clamp position after the window is created (prevents dragging offscreen).
         // the keep-on-screen margin scales with the game window too.
