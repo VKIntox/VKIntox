@@ -359,6 +359,17 @@ namespace VKIntox
             for (const auto& package : addEffectsPackages)
                 tab(package.c_str(), package);
             ImGui::TextDisabled("%d result%s", static_cast<int>(entries.size()), entries.size() == 1 ? "" : "s");
+
+            // scroll the tab row with the mouse. a vertical wheel drives the
+            // horizontal scroll; when a device reports both axes, prefer the
+            // horizontal one so the two never stack.
+            if (ImGui::IsWindowHovered())
+            {
+                const ImGuiIO& io = ImGui::GetIO();
+                const float wheel = io.MouseWheelH != 0.0f ? io.MouseWheelH : io.MouseWheel;
+                if (wheel != 0.0f)
+                    ImGui::SetScrollX(ImGui::GetScrollX() - wheel * 48.0f * d);
+            }
             ImGui::EndChild();
         }
 
