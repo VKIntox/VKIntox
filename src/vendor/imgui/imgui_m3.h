@@ -422,6 +422,12 @@ IMGUI_API float ImGuiM3SpringStepSpatialSlow(ImGuiID id, float target);
 IMGUI_API float ImGuiM3SpringStepEffectsFast(ImGuiID id, float target);
 IMGUI_API float ImGuiM3SpringStepEffectsDefault(ImGuiID id, float target);
 IMGUI_API float ImGuiM3SpringStepEffectsSlow(ImGuiID id, float target);
+
+// Button press morph, 0 at rest and 1 while `held`. A direct exponential tween
+// rather than the shared spring: a button's press is short, and the spring's
+// first-call/frame-timing behaviour meant the corner change never showed up
+// reliably. Reaches ~0.9 in ~140ms and snaps back on release.
+IMGUI_API float ImGuiM3PressMorph(ImGuiID id, bool held);
 // Drops every live spring. Called at the end of each frame.
 IMGUI_API void  ImGuiM3ClearSprings();
 

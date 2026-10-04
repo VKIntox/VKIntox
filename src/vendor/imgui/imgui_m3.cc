@@ -1501,6 +1501,20 @@ float ImGuiM3SpringStepEffectsSlow(ImGuiID id, float target)
     return SpringStep(id, target, m.spring_effects_slow_damping, m.spring_effects_slow_stiffness);
 }
 
+float ImGuiM3PressMorph(ImGuiID id, bool held)
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const float dt = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f,
+                             1.0f / 240.0f, 1.0f / 15.0f);
+    const float target = held ? 1.0f : 0.0f;
+    float value = window->StateStorage.GetFloat(id, 0.0f);
+    value += (target - value) * ImMin(1.0f, dt * 16.0f);
+    if (ImAbs(value - target) < 0.002f)
+        value = target;
+    window->StateStorage.SetFloat(id, value);
+    return value;
+}
+
 // Named font weights.
 
 static ImFont* g_font_regular = nullptr;
@@ -1969,12 +1983,11 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     const bool pressed = ButtonBehavior(bb, id, &hovered, &held);
     RenderNavCursor(bb, id);
 
-    // corners morph corner-full → corner-small while pressed. a fast spring so a
-    // normal click reaches the small radius and springs back visibly; driven off
-    // `held` alone so the state cannot be dropped mid-press.
+    // corners morph corner-full → corner-small while pressed. a direct press
+    // tween so a normal click reaches the small radius and springs back visibly.
     const float rest_radius = ImGuiM3Radius(ImGuiM3Shape_Full);
     const float press_radius = ImGuiM3Radius(ImGuiM3Shape_Small);
-    const float morph = ImGuiM3SpringStepSpatialFast(id ^ 0x42544F, held ? 1.0f : 0.0f);
+    const float morph = ImGuiM3PressMorph(id ^ 0x42544F, held);
     const float radius = ImMin(rest_radius + (press_radius - rest_radius) * morph, ImMin(size.x, size.y) * 0.5f);
     const ImGuiM3ShapeRounding rounding{ radius, radius, radius, radius };
 

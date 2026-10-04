@@ -798,10 +798,9 @@ bool ImGui::ButtonEx(const char* label, const ImVec2& size_arg, ImGuiButtonFlags
     // is `primary`, the label `on-primary`, the state layer inherits the label
     // colour, and the corners morph from `corner-full` to `corner-small` while
     // pressed — the shape-morphing move that defines the expressive update.
-    // ImGui::M3Button() covers the other four flavours. The morph runs on the
-    // fast spatial spring off `held` alone, so an ordinary click actually shows
-    // it instead of settling before the press ends.
-    const float morph = ImGuiM3SpringStepSpatialFast(id ^ 0x42544E, held ? 1.0f : 0.0f);
+    // ImGui::M3Button() covers the other four flavours. The morph is a direct
+    // press tween off `held`, so an ordinary click actually shows it.
+    const float morph = ImGuiM3PressMorph(id ^ 0x42544E, held);
     const float rest_radius = ImGuiM3PillRadius(size, ImGuiM3Radius(ImGuiM3Shape_Full));
     const float press_radius = ImGuiM3Radius(ImGuiM3Shape_Small);
     const float radius = rest_radius + (press_radius - rest_radius) * morph;
