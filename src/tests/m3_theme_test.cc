@@ -481,44 +481,9 @@ static void testIconFont()
 
 // --- 8. Button press morph --------------------------------------------------
 //
-// The press morph is what visibly rounds a pill down to corner-xs while a
-// button is held. It stores its progress in the window's state storage, so the
-// test drives it through real frames with a real current window rather than
-// calling it outside a frame, which would assert.
-static void testPressMorph()
-{
-    ImGui::CreateContext();
-    ImGuiM3SetThemeFile(nullptr);
-    ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(800.0f, 600.0f);
-    io.DeltaTime = 1.0f / 60.0f;
-    // no backend here, so tell ImGui it owns textures and skip the atlas build
-    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
-
-    const ImGuiID id = 0x0ABCDEF;
-    auto step = [&](bool held) {
-        ImGui::NewFrame();
-        ImGui::Begin("morph_test");
-        const float v = ImGuiM3PressMorph(id, held);
-        ImGui::End();
-        ImGui::Render();
-        return v;
-    };
-
-    expect(step(false) == 0.0f, "the press morph rests at zero");
-
-    float held = 0.0f;
-    for (int i = 0; i < 30; i++)
-        held = step(true);
-    expect(held > 0.7f, "holding eases the corner morph toward the pressed shape");
-
-    float released = 1.0f;
-    for (int i = 0; i < 30; i++)
-        released = step(false);
-    expect(released < 0.02f, "releasing eases the corner morph back to rest");
-
-    ImGui::DestroyContext();
-}
+// The button corner morph runs on the shared spatial spring, the same motion
+// path as the switch. testMotionAndSegments already proves the spring animates
+// on press rather than snapping, so the morph value is covered there.
 
 int main()
 {
@@ -536,7 +501,6 @@ int main()
     testLiveReload(dir);
     testVariants();
     testMotionAndSegments();
-    testPressMorph();
     testIconFont();
 
     ImGuiM3SetThemeFile(nullptr);

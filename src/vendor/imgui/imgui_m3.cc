@@ -1501,33 +1501,6 @@ float ImGuiM3SpringStepEffectsSlow(ImGuiID id, float target)
     return SpringStep(id, target, m.spring_effects_slow_damping, m.spring_effects_slow_stiffness);
 }
 
-float ImGuiM3PressMorph(ImGuiID id, bool held)
-{
-    // Its own map rather than the window's state storage: ImGui also stores
-    // per-widget state there under hashed ids, and a key collision made the
-    // morph read a default every frame and sit frozen at a hair past rest.
-    // One float of linear progress per button, eased for display.
-    static constexpr float kMorphSeconds = 0.45f;
-    static std::unordered_map<ImGuiID, float> s_progress;
-
-    const float dt = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f,
-                             1.0f / 240.0f, 1.0f / 10.0f);
-    const float target = held ? 1.0f : 0.0f;
-
-    float progress = 0.0f;
-    if (const auto it = s_progress.find(id); it != s_progress.end())
-        progress = it->second;
-
-    const float step = dt / kMorphSeconds;
-    progress = (progress < target) ? ImMin(target, progress + step)
-                                   : ImMax(target, progress - step);
-    s_progress[id] = progress;
-
-    // smoothstep: gentle at both ends, so the corner reads as moving rather
-    // than snapping on the first held frame
-    return progress * progress * (3.0f - 2.0f * progress);
-}
-
 // Named font weights.
 
 static ImFont* g_font_regular = nullptr;
@@ -1996,11 +1969,11 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     const bool pressed = ButtonBehavior(bb, id, &hovered, &held);
     RenderNavCursor(bb, id);
 
-    // corners morph corner-full → corner-small while pressed. a direct press
-    // tween so a normal click reaches the small radius and springs back visibly.
+    // corners morph corner-full → corner-small while pressed, on the expressive
+    // spatial spring (same motion path as the switch).
     const float rest_radius = ImGuiM3Radius(ImGuiM3Shape_Full);
     const float press_radius = ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
-    const float morph = ImGuiM3PressMorph(id ^ 0x42544F, held);
+    const float morph = ImGuiM3SpringStepSpatialSlow(id ^ 0x42544F, held ? 1.0f : 0.0f);
     const float radius = ImMin(rest_radius + (press_radius - rest_radius) * morph, ImMin(size.x, size.y) * 0.5f);
     const ImGuiM3ShapeRounding rounding{ radius, radius, radius, radius };
 
