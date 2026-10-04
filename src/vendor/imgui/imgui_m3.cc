@@ -2476,7 +2476,17 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
             bool hovered, held;
             const bool pressed = ButtonBehavior(bb, seg_id, &hovered, &held);
             const bool is_selected = (i == *selected);
-            const ImGuiM3ShapeRounding rounding = ImGuiM3ConnectedSegmentRounding(bb.GetSize(), i, count);
+            ImGuiM3ShapeRounding rounding = ImGuiM3ConnectedSegmentRounding(bb.GetSize(), i, count);
+
+            // the same press morph a standalone button gets, so every pill-shaped
+            // control in the overlay rounds down while held
+            const float seg_morph = ImGuiM3SpringStepSpatialSlow(seg_id ^ 0x434F4E47, held ? 1.0f : 0.0f);
+            const float seg_press = ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
+            auto morph_corner = [&](float c) { return c + (ImMin(c, seg_press) - c) * seg_morph; };
+            rounding.tl = morph_corner(rounding.tl);
+            rounding.tr = morph_corner(rounding.tr);
+            rounding.br = morph_corner(rounding.br);
+            rounding.bl = morph_corner(rounding.bl);
 
             // selected segments use secondary-container; the rest rely on the 1dp outline.
             if (is_selected)

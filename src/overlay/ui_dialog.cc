@@ -122,6 +122,22 @@ namespace VKIntox
             const float ease = AppearEase(appear, now);
             const float alpha = ImClamp(ease, 0.0f, 1.0f);
 
+            // Keep the settled dialog inside its viewport, whatever size it grew
+            // to. The deferred-open call sites clamp against a fixed size that no
+            // longer matches the auto-sized dialog, so clamp again against the
+            // real one; this is what stops popups settling half off an edge.
+            {
+                const ImVec2 sz = window->Size;
+                const ImGuiViewport* vp = window->Viewport ? window->Viewport : ImGui::GetMainViewport();
+                if (sz.x > 0.0f && sz.y > 0.0f && vp)
+                {
+                    const float maxX = ImMax(vp->Pos.x, vp->Pos.x + vp->Size.x - sz.x);
+                    const float maxY = ImMax(vp->Pos.y, vp->Pos.y + vp->Size.y - sz.y);
+                    appear.baseX = ImClamp(appear.baseX, vp->Pos.x, maxX);
+                    appear.baseY = ImClamp(appear.baseY, vp->Pos.y, maxY);
+                }
+            }
+
             // slide the whole window (its own background is drawn from this
             // position next frame, the content moves with the cursor now)
             ImGui::SetWindowPos(ImVec2(appear.baseX, appear.baseY + kAppearDropDp * m.density * (1.0f - ease)));
