@@ -1525,6 +1525,50 @@ namespace VKIntox
         constexpr int kViewCount = (int)(sizeof(kViewLabels) / sizeof(kViewLabels[0]));
         ImGui::M3ConnectedButtonGroup("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons);
 
+        // Slide transition between views. The content is offset horizontally,
+        // clipped to the content region, until it settles, so a tab switch or
+        // entering the add-effects view reads as motion rather than a swap.
+        // Direction follows the view index: forward comes from the right, back
+        // from the left.
+        auto contentIndex = [&]() -> int {
+            if (activeView != 0)
+                return activeView + 2;
+            if (inSelectionMode)    return 1;
+            if (inConfigManageMode) return 2;
+            return 0;
+        };
+
+        static int   viewPrevIndex = -1;
+        static int   viewSlideDir  = 1;
+        static float viewSlideT    = 1.0f;
+        constexpr float kViewSlideSeconds = 0.22f;
+
+        const int viewIndex = contentIndex();
+        if (viewIndex != viewPrevIndex)
+        {
+            if (viewPrevIndex >= 0)
+            {
+                viewSlideDir = (viewIndex > viewPrevIndex) ? 1 : -1;
+                viewSlideT = 0.0f;
+            }
+            viewPrevIndex = viewIndex;
+        }
+
+        float viewOffset = 0.0f;
+        if (viewSlideT < 1.0f)
+        {
+            const float dt = ImClamp(ImGui::GetIO().DeltaTime, 0.0f, 0.1f);
+            viewSlideT = ImMin(1.0f, viewSlideT + dt / kViewSlideSeconds);
+            const float inv = 1.0f - viewSlideT;
+            const float eased = 1.0f - inv * inv * inv;  // decelerate
+            viewOffset = (1.0f - eased) * static_cast<float>(viewSlideDir) * ImGui::GetContentRegionAvail().x;
+        }
+
+        const ImVec2 viewClipMin = ImGui::GetCursorScreenPos();
+        const ImVec2 viewClipAvail = ImGui::GetContentRegionAvail();
+        ImGui::PushClipRect(viewClipMin, ImVec2(viewClipMin.x + viewClipAvail.x, viewClipMin.y + viewClipAvail.y), true);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + viewOffset);
+
         switch (activeView)
         {
         case 0:
@@ -1553,6 +1597,8 @@ namespace VKIntox
         default:
             break;
         }
+
+        ImGui::PopClipRect();
 
         ImGui::End();  // VKIntox Overlay
 
