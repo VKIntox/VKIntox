@@ -31,6 +31,7 @@ namespace VKIntox
         {
             const char*          label;
             ImGuiM3ButtonVariant variant;
+            bool                 disabled = false;
         };
 
         // Draws actions right-aligned in the current dialog, in the order given,

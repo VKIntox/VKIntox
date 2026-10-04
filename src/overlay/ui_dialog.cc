@@ -154,8 +154,12 @@ namespace VKIntox
 
         void EndM3Dialog()
         {
+            // The alpha var is pushed after BeginPopup, so it has to come off
+            // before EndPopup: ImGui records the style-var stack depth when the
+            // window begins and asserts it again when it ends.
+            ImGui::PopStyleVar();    // alpha
             ImGui::EndPopup();
-            ImGui::PopStyleVar(3);   // alpha, rounding, padding
+            ImGui::PopStyleVar(2);   // rounding, padding
             ImGui::PopStyleColor();  // popup background tint
         }
 
@@ -200,8 +204,12 @@ namespace VKIntox
             {
                 if (i > 0)
                     ImGui::SameLine();
+                if (actions[i].disabled)
+                    ImGui::BeginDisabled();
                 if (M3DialogButton(actions[i].label, actions[i].variant, widths[i]))
                     clicked = i;
+                if (actions[i].disabled)
+                    ImGui::EndDisabled();
             }
             return clicked;
         }

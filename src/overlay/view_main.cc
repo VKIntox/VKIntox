@@ -270,15 +270,20 @@ namespace VKIntox
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Import a ReShade .ini preset");
-            if (ImGui::BeginPopup("NewShaderProfilePopup"))
+            if (UI::BeginM3Dialog("NewShaderProfilePopup", "New shader INI preset"))
             {
                 static char newShaderProfileName[64] = "";
-                ImGui::Text("New shader INI profile:");
-                ImGui::SetNextItemWidth(150);
+                ImGui::TextDisabled("Name");
+                ImGui::SetNextItemWidth(240.0f);
                 ImGui::InputText("##newshaderprofilename", newShaderProfileName, sizeof(newShaderProfileName));
-                ImGui::SameLine();
-                ImGui::BeginDisabled(newShaderProfileName[0] == '\0');
-                if (ImGui::Button("Create"))
+                ImGui::Spacing();
+                ImGui::Spacing();
+                const UI::M3DialogAction actions[] = {
+                    {"Cancel", ImGuiM3Button_Outlined, false},
+                    {"Create", ImGuiM3Button_Filled, newShaderProfileName[0] == '\0'},
+                };
+                const int action = UI::M3DialogActions(actions, 2);
+                if (action == 1)
                 {
                     if (!autoSaveProfile(true))
                         pushToast(LogLevel::Error, "Could not save the active shader profile.");
@@ -288,13 +293,13 @@ namespace VKIntox
                         switchShaderProfile(newShaderProfileName);
                         refreshShaderProfiles();
                         newShaderProfileName[0] = '\0';
-                        ImGui::CloseCurrentPopup();
                     }
                     else
                         pushToast(LogLevel::Error, "Could not create the shader profile.");
                 }
-                ImGui::EndDisabled();
-                ImGui::EndPopup();
+                if (action >= 0)
+                    ImGui::CloseCurrentPopup();
+                UI::EndM3Dialog();
             }
 
         }
