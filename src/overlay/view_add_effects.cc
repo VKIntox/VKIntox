@@ -321,6 +321,17 @@ namespace VKIntox
             ImGui::TextDisabled("at position %d", insertPosition);
         }
 
+        // ---- Breadcrumb -----------------------------------------------------
+        // circle back button, flush with the search bar it shortens
+        if (ImGui::M3IconButton(Icon::ChevronLeftUtf8, "Back to effects", ImGuiM3Button_Filled))
+        {
+            pendingAddEffects.clear();
+            insertPosition = -1;
+            inSelectionMode = false;
+            addEffectsSearch[0] = '\0';
+        }
+        ImGui::SameLine();
+
         // ---- Search ---------------------------------------------------------
         // Focus the search box once the slide has settled. Focusing during the
         // transition made ImGui scroll to the item and dragged the nav bar in.
