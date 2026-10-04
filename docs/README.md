@@ -165,7 +165,7 @@ verify active drivers with `flatpak --gl-drivers`. host and flatpak nvidia runti
 -   **freezes:** restart sober once or twice. catalog freezes are expected.
 
 > [!NOTE]
-> wayland and x11 are both supported. on x11 (including xwayland) the overlay holds an active input grab while it is open; if the compositor does not honour xwayland's keyboard-grab protocol, the game can still receive keys while the overlay is up.
+> wayland and x11 are both supported. on x11 (including xwayland) the overlay holds an active input grab while it is open; if the compositor does not honour xwayland's keyboard-grab protocol, the game can still receive keys while the overlay is up. games that don't route through an abstractor like SDL or GLFW may handle input in ways the overlay can't intercept, so input blocking can stop working.
 
 ## credits
 
