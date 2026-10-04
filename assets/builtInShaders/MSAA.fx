@@ -99,29 +99,45 @@ float3 PS_MSAA(float4 position : SV_Position, float2 texcoord : TEXCOORD) : SV_T
     const float2 px = ReShade::PixelSize;
     float3 color = tex2D(ReShade::BackBuffer, texcoord).rgb;
 
+    // Edge geometry and blend weights read only the source image, so they are
+    // measured once and reused; extra passes then cost a lerp each.
+    float3 neighbourColor[4];
+    float  neighbourLuma[4];
+    float  edgeWeight[4];
+    bool   edgeActive[4];
+
+    const float sourceLuma = MSAALuma(color);
+    [unroll]
+    for (int e = 0; e < 4; e++)
+    {
+        const float2 off = (e == 0) ? float2(0.0, -1.0)
+                         : (e == 1) ? float2(0.0,  1.0)
+                         : (e == 2) ? float2(-1.0, 0.0)
+                                    : float2( 1.0, 0.0);
+        const float2 along = (e < 2) ? float2(1.0, 0.0) : float2(0.0, 1.0);
+
+        neighbourColor[e] = tex2D(ReShade::BackBuffer, texcoord + off * px).rgb;
+        neighbourLuma[e] = MSAALuma(neighbourColor[e]);
+        edgeActive[e] = abs(sourceLuma - neighbourLuma[e]) > EdgeThreshold;
+
+        const float2 measured = MSAAMeasure(texcoord, px, off, along, SearchSteps, EdgeThreshold);
+        const float total = measured.x + measured.y + 1.0;
+        edgeWeight[e] = MSAACoverage(min(measured.x, measured.y), total) * BlendStrength;
+    }
+
+    // Each pass re-blends from the unchanged neighbours, so a pass only bites
+    // while the local contrast is still over the threshold. That makes later
+    // passes taper off instead of washing the edge out.
     [loop]
     for (int passIndex = 0; passIndex < Passes; passIndex++)
     {
         const float here = MSAALuma(color);
-
-        // four edges, handled independently so a corner can pick up two blends
         [unroll]
         for (int e = 0; e < 4; e++)
         {
-            const float2 off = (e == 0) ? float2(0.0, -1.0)
-                             : (e == 1) ? float2(0.0,  1.0)
-                             : (e == 2) ? float2(-1.0, 0.0)
-                                        : float2( 1.0, 0.0);
-            const float2 along = (e < 2) ? float2(1.0, 0.0) : float2(0.0, 1.0);
-
-            const float neighbour = MSAALuma(tex2D(ReShade::BackBuffer, texcoord + off * px).rgb);
-            if (abs(here - neighbour) <= EdgeThreshold)
+            if (!edgeActive[e] || abs(here - neighbourLuma[e]) <= EdgeThreshold)
                 continue;
-
-            const float2 measured = MSAAMeasure(texcoord, px, off, along, SearchSteps, EdgeThreshold);
-            const float total = measured.x + measured.y + 1.0;
-            const float weight = MSAACoverage(min(measured.x, measured.y), total) * BlendStrength;
-            color = lerp(color, tex2D(ReShade::BackBuffer, texcoord + off * px).rgb, weight);
+            color = lerp(color, neighbourColor[e], edgeWeight[e]);
         }
     }
 
