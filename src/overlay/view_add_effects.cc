@@ -358,7 +358,6 @@ namespace VKIntox
             tab("All", std::string());
             for (const auto& package : addEffectsPackages)
                 tab(package.c_str(), package);
-            ImGui::TextDisabled("%d result%s", static_cast<int>(entries.size()), entries.size() == 1 ? "" : "s");
 
             // scroll the tab row with the mouse. a vertical wheel drives the
             // horizontal scroll; when a device reports both axes, prefer the
@@ -371,6 +370,10 @@ namespace VKIntox
                     ImGui::SetScrollX(ImGui::GetScrollX() - wheel * 48.0f * d);
             }
             ImGui::EndChild();
+
+            // outside the scrolling child: a second line inside it made the
+            // horizontal scrollbar fight the (auto) vertical one for width.
+            ImGui::TextDisabled("%d result%s", static_cast<int>(entries.size()), entries.size() == 1 ? "" : "s");
         }
 
         // Recents (only when browsing, not searching).
@@ -405,7 +408,8 @@ namespace VKIntox
         ImFont* iconFont = ImGuiM3IconFont();
         ImFont* medium = ImGuiM3FontMedium();
 
-        ImGui::BeginChild("##results", ImVec2(0, -footerHeight - trayHeight), true);
+        ImGui::BeginChild("##results", ImVec2(0, -footerHeight - trayHeight), true,
+                          ImGuiWindowFlags_AlwaysVerticalScrollbar);
         if (rowCount == 0)
         {
             ImGui::Spacing();
