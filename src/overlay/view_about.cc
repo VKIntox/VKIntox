@@ -52,11 +52,22 @@ namespace VKIntox
         ImGui::M3CardEnd();
 
         ImGui::Spacing();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("This project uses a design heavily inspired by Google's Material 3/Material You. Not affiliated with or endorsed by Google.");
-        ImGui::PopTextWrapPos();
 
-        // build footer: the version again, plus the issue tracker.
+        // pin the footer to the bottom of the view, with a separator above it
+        const char* disclaimer = "This project uses a design heavily inspired by Google's Material 3/Material You. Not affiliated with or endorsed by Google.";
+        const float wrapWidth = ImGui::GetContentRegionAvail().x;
+        const float disclaimerHeight = ImGui::CalcTextSize(disclaimer, nullptr, false, wrapWidth).y;
+        const float spacing = ImGui::GetStyle().ItemSpacing.y;
+        const float footerHeight = 1.0f + disclaimerHeight + ImGui::GetTextLineHeight() * 2.0f + spacing * 5.0f;
+        const float remaining = ImGui::GetContentRegionAvail().y;
+        if (remaining > footerHeight)
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (remaining - footerHeight));
+
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", disclaimer);
+        ImGui::PopTextWrapPos();
         ImGui::Spacing();
         ImGui::TextDisabled("VKIntox version %s", runtimeVersion());
         ImGui::TextDisabled("Report issues:");
