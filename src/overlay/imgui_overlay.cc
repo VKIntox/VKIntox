@@ -1525,11 +1525,9 @@ namespace VKIntox
         constexpr int kViewCount = (int)(sizeof(kViewLabels) / sizeof(kViewLabels[0]));
         ImGui::M3ConnectedButtonGroup("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons);
 
-        // Slide transition between views. The content is offset horizontally,
-        // clipped to the content region, until it settles, so a tab switch or
-        // entering the add-effects view reads as motion rather than a swap.
-        // Direction follows the view index: forward comes from the right, back
-        // from the left.
+        // View key: top-level tabs are 3..7, and the Effects tab expands into 0
+        // (main), 1 (add effects) and 2 (config manage) so entering and leaving
+        // those sub-views slides too.
         auto contentIndex = [&]() -> int {
             if (activeView != 0)
                 return activeView + 2;
@@ -1537,68 +1535,93 @@ namespace VKIntox
             if (inConfigManageMode) return 2;
             return 0;
         };
+        auto renderView = [&](int key) {
+            switch (key)
+            {
+            case 0: renderMainView(keyboard); break;
+            case 1: renderAddEffectsView(); break;
+            case 2: renderConfigManagerView(); break;
+            case 3: renderShaderManagerView(); break;
+            case 4: renderSettingsView(keyboard); break;
+            case 5: renderAdvancedView(); break;
+            case 6: renderDiagnosticsView(); break;
+            case 7: renderAboutView(); break;
+            default: break;
+            }
+        };
 
-        static int   viewPrevIndex = -1;
-        static int   viewSlideDir  = 1;
-        static float viewSlideT    = 1.0f;
-        constexpr float kViewSlideSeconds = 0.22f;
+        // Cross-slide. The outgoing view is drawn stationary and the incoming
+        // view is drawn on top of it inside an offset child, so the whole view
+        // moves no matter how its own layout places things (which is why the
+        // old cursor-offset approach skipped some views entirely). A local
+        // spring (damping 0.75, stiffness 240) settles in ~340ms with a light
+        // bounce and is frame-rate independent.
+        static int   viewPrevIndex     = -1;
+        static int   viewFromIndex     = -1;
+        static int   viewSlideDir      = 1;
+        static float viewSlideValue    = 1.0f;
+        static float viewSlideVelocity = 0.0f;
+        static bool  viewTransitioning = false;
 
         const int viewIndex = contentIndex();
         if (viewIndex != viewPrevIndex)
         {
             if (viewPrevIndex >= 0)
             {
+                viewFromIndex = viewPrevIndex;
                 viewSlideDir = (viewIndex > viewPrevIndex) ? 1 : -1;
-                viewSlideT = 0.0f;
+                viewSlideValue = 0.0f;
+                viewSlideVelocity = 0.0f;
+                viewTransitioning = true;
             }
             viewPrevIndex = viewIndex;
         }
 
-        float viewOffset = 0.0f;
-        if (viewSlideT < 1.0f)
+        if (viewTransitioning)
         {
-            const float dt = ImClamp(ImGui::GetIO().DeltaTime, 0.0f, 0.1f);
-            viewSlideT = ImMin(1.0f, viewSlideT + dt / kViewSlideSeconds);
-            const float inv = 1.0f - viewSlideT;
-            const float eased = 1.0f - inv * inv * inv;  // decelerate
-            viewOffset = (1.0f - eased) * static_cast<float>(viewSlideDir) * ImGui::GetContentRegionAvail().x;
+            const float dt = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f,
+                                     1.0f / 240.0f, 1.0f / 15.0f);
+            constexpr float kStiffness = 240.0f;
+            constexpr float kDamping   = 0.75f;
+            const float omega = ImSqrt(kStiffness);
+            const float displacement = viewSlideValue - 1.0f;
+            const float acceleration = -kStiffness * displacement - 2.0f * kDamping * omega * viewSlideVelocity;
+            viewSlideVelocity += acceleration * dt;
+            viewSlideValue += viewSlideVelocity * dt;
+            if (ImAbs(displacement) < 0.001f && ImAbs(viewSlideVelocity) < 0.001f)
+            {
+                viewSlideValue = 1.0f;
+                viewSlideVelocity = 0.0f;
+                viewTransitioning = false;
+            }
         }
 
-        const ImVec2 viewClipMin = ImGui::GetCursorScreenPos();
-        const ImVec2 viewClipAvail = ImGui::GetContentRegionAvail();
-        ImGui::PushClipRect(viewClipMin, ImVec2(viewClipMin.x + viewClipAvail.x, viewClipMin.y + viewClipAvail.y), true);
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + viewOffset);
+        const ImVec2 viewPos  = ImGui::GetCursorScreenPos();
+        const ImVec2 viewSize = ImGui::GetContentRegionAvail();
+        const float slideOffset = (1.0f - viewSlideValue) * static_cast<float>(viewSlideDir) * viewSize.x;
 
-        switch (activeView)
+        // Clip the whole strip to the content region so a sliding view can never
+        // draw over the nav or the title bar.
+        ImGui::PushClipRect(viewPos, ImVec2(viewPos.x + viewSize.x, viewPos.y + viewSize.y), true);
+
+        if (viewTransitioning && viewFromIndex >= 0 && viewFromIndex != viewIndex)
         {
-        case 0:
-            if (inSelectionMode)
-                renderAddEffectsView();
-            else if (inConfigManageMode)
-                renderConfigManagerView();
-            else
-                renderMainView(keyboard);
-            break;
-        case 1:
-            renderShaderManagerView();
-            break;
-        case 2:
-            renderSettingsView(keyboard);
-            break;
-        case 3:
-            renderAdvancedView();
-            break;
-        case 4:
-            renderDiagnosticsView();
-            break;
-        case 5:
-            renderAboutView();
-            break;
-        default:
-            break;
+            ImGui::SetCursorScreenPos(viewPos);
+            renderView(viewFromIndex);
         }
+
+        // Incoming view on top, offset. A zero-padding child is what guarantees
+        // the offset applies even for views that position their own content.
+        ImGui::SetCursorScreenPos(ImVec2(viewPos.x + slideOffset, viewPos.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::BeginChild("##view_slide", viewSize, false,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        renderView(viewIndex);
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
 
         ImGui::PopClipRect();
+        ImGui::SetCursorScreenPos(viewPos);
 
         ImGui::End();  // VKIntox Overlay
 
