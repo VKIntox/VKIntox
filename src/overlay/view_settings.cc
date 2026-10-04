@@ -147,7 +147,9 @@ namespace VKIntox
         ImGui::SameLine(160.0f);
         ImGui::SetNextItemWidth(120);
         int maxEffectsVal = settingsManager.getMaxEffects();
-        if (ImGui::InputInt("##maxEffects", &maxEffectsVal))
+        // step 0 hides InputInt's inline +/- buttons: the M3 frame padding makes
+        // them huge, which squeezed the value field down to an unreadable sliver.
+        if (ImGui::InputInt("##maxEffects", &maxEffectsVal, 0, 0))
         {
             maxEffectsVal = std::clamp(maxEffectsVal, 1, 200);
             settingsManager.setMaxEffects(maxEffectsVal);
