@@ -480,7 +480,7 @@ IMGUI_API ImGuiM3Role ImGuiM3SurfaceContainerForElevation(ImGuiM3Role role, int 
 // M3 widgets layered on top of core ImGui.
 namespace ImGui
 {
-    IMGUI_API bool M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg = ImVec2(0, 0));
+    IMGUI_API bool M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg = ImVec2(0, 0), bool strong_label = false);
     IMGUI_API bool M3IconButton(const char* glyph, const char* tooltip, ImGuiM3ButtonVariant variant = ImGuiM3Button_Text);
     IMGUI_API bool M3Switch(const char* label, bool* v);
     IMGUI_API bool M3SwitchWithID(const char* label, const char* id, bool* v);

@@ -1940,7 +1940,7 @@ namespace
     int CardDepth = 0;
 }
 
-bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg)
+bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg, bool strong_label)
 {
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = GetCurrentWindow();
@@ -1986,10 +1986,15 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     ImGuiM3DrawStateLayer(window->DrawList, bb, rounding, paint.layer_role, state);
 
     PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(paint.label_role));
-    ImFont* medium = ImGuiM3FontMedium();
-    if (medium)
-        PushFont(medium, GetFontSize());
-    const ImVec2 weighted_label_size = medium ? CalcTextSize(label, NULL, true) : label_size;
+    // Dialog actions read a step stronger than the default medium: M3's
+    // label-large at a touch more size, bold when the caller asks for it.
+    ImFont* label_font = strong_label ? ImGuiM3FontBold() : ImGuiM3FontMedium();
+    if (!label_font)
+        label_font = ImGuiM3FontMedium();
+    const float label_scale = strong_label ? 1.05f : 1.0f;
+    if (label_font)
+        PushFont(label_font, GetFontSize() * label_scale);
+    const ImVec2 weighted_label_size = label_font ? CalcTextSize(label, NULL, true) : label_size;
     // a lone icon glyph is ink-centred in the square; text labels use the normal
     // centred/clipped layout.
     ImVec2 ink_center;
@@ -1997,7 +2002,7 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
         RenderText(ImVec2(bb.GetCenter().x - ink_center.x, bb.GetCenter().y - ink_center.y), label);
     else
         RenderTextClipped(bb.Min + ImVec2(m.button_padding_x * m.density, 0.0f), bb.Max - ImVec2(m.button_padding_x * m.density, 0.0f), label, NULL, &weighted_label_size, ImVec2(0.5f, 0.5f), &bb);
-    if (medium)
+    if (label_font)
         PopFont();
     PopStyleColor();
 

@@ -1,6 +1,7 @@
 #include "../field_editor.hh"
 #include "../../../vendor/imgui/imgui.h"
 #include "../../../vendor/imgui/imgui_internal.h"
+#include "../../ui_dialog.hh"
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -65,34 +66,31 @@ namespace VKIntox
                 const ImVec2 popupSize = ImVec2(320.0f, 190.0f);
                 ImGui::SetNextWindowPos(customValuePopupPosition(
                     popupPosition, viewport->Pos, viewport->Size, popupSize), ImGuiCond_Appearing);
-                ImGui::SetNextWindowSize(popupSize, ImGuiCond_Appearing);
                 ImGui::OpenPopup(modalId);
                 popupOpenedThisFrame = true;
             }
 
             // === Render custom value popup for THIS parameter only ===
-            if (activeModalParam == paramAddr && 
-                !popupOpenedThisFrame && ImGui::BeginPopup(modalId))
+            if (activeModalParam == paramAddr &&
+                !popupOpenedThisFrame && UI::BeginM3Dialog(modalId, ("Custom value: " + p.label).c_str()))
             {
-                ImGui::Text("Custom value: %s", p.label.c_str());
-                ImGui::Separator();
                 ImGui::TextDisabled("Current range: [%.4g, %.4g]", p.minValue, p.maxValue);
                 ImGui::TextDisabled("(values outside range are allowed)");
                 ImGui::Spacing();
-                
+
                 ImGui::SetNextItemWidth(220.0f);
                 if (focusCustomValueInput)
                 {
                     ImGui::SetKeyboardFocusHere();
                     focusCustomValueInput = false;
                 }
-                bool submit = ImGui::InputText(inputId, customValueBuf, 
+                bool submit = ImGui::InputText(inputId, customValueBuf,
                     sizeof(customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue);
 
                 ImGui::Spacing();
-                bool ok = ImGui::Button("OK", ImVec2(100, 0));
+                bool ok = UI::M3DialogButton("OK", ImGuiM3Button_Filled);
                 ImGui::SameLine();
-                bool cancel = ImGui::Button("Cancel", ImVec2(100, 0));
+                bool cancel = UI::M3DialogButton("Cancel", ImGuiM3Button_Outlined);
 
                 // Handle submission
                 if (submit || ok)
@@ -113,8 +111,8 @@ namespace VKIntox
                     ImGui::CloseCurrentPopup();
                     activeModalParam = nullptr;  // Clear active state
                 }
-                
-                ImGui::EndPopup();
+
+                UI::EndM3Dialog();
             }
 
             return changed;

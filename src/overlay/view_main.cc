@@ -6,9 +6,11 @@
 #include "logger.hh"
 #include "overlay/ui_theme.hh"
 #include "overlay/ui_icons.hh"
+#include "overlay/ui_dialog.hh"
 #include "util.hh"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -173,6 +175,10 @@ namespace VKIntox
             ImGui::SameLine();
             ImGui::SetNextItemWidth(150);
             const char* shaderLabel = activeShaderProfileName.empty() ? "None" : activeShaderProfileName.c_str();
+            // cap the dropdown height so a long preset list scrolls instead of
+            // running off the bottom of the overlay.
+            ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
+                                                ImVec2(FLT_MAX, 280.0f * ImGuiM3GetMetrics().density));
             if (ImGui::BeginCombo("##shaderprofile", shaderLabel))
             {
                 for (const auto& profile : shaderProfiles)
@@ -308,13 +314,16 @@ namespace VKIntox
             ImGui::OpenPopup("##clear_all_confirm");
         ImGui::EndDisabled();
 
-        // Destructive action, so confirm it. Popups are submitted every frame,
-        // so this sits beside the button that opens it.
-        if (ImGui::BeginPopup("##clear_all_confirm"))
+        // Destructive action, so confirm it through the shared dialog frame.
+        const std::string clearPresetName = !activeShaderProfileName.empty() ? activeShaderProfileName : activeProfileName;
+        if (UI::BeginM3Dialog("##clear_all_confirm", "Are you sure you want to clear all effects from this preset?"))
         {
-            ImGui::TextWrapped("Are you sure you want to clear all effects from this preset?");
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 380.0f * ImGuiM3GetMetrics().density);
+            ImGui::TextUnformatted(("This preset, \"" + clearPresetName + "\", will be deleted. This can't be reverted.").c_str());
+            ImGui::PopTextWrapPos();
             ImGui::Spacing();
-            if (ImGui::M3Button("Yes", ImGuiM3Button_Filled))
+            ImGui::Spacing();
+            if (UI::M3DialogButton("Yes, I'm sure", ImGuiM3Button_Destructive))
             {
                 selectedEffects.clear();
                 effectRegistry->clearSelectedEffects();
@@ -325,9 +334,9 @@ namespace VKIntox
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::M3Button("No", ImGuiM3Button_Filled))
+            if (UI::M3DialogButton("No", ImGuiM3Button_Outlined))
                 ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+            UI::EndM3Dialog();
         }
         ImGui::Separator();
 

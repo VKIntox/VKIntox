@@ -39,6 +39,7 @@ overlay_src = [
     'overlay/view_diagnostics.cc',
     'overlay/view_about.cc',
     'overlay/view_settings.cc',
+    'overlay/ui_dialog.cc',
     'overlay/view_shader_manager.cc',
     'overlay/view_shader_test.cc',
     'overlay/view_main.cc',

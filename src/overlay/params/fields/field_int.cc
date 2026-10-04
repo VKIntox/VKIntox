@@ -1,6 +1,7 @@
 #include "../field_editor.hh"
 #include "../../../vendor/imgui/imgui.h"
 #include "../../../vendor/imgui/imgui_internal.h"
+#include "../../ui_dialog.hh"
 #include <cstring>
 #include <cstdio>
 #include <string>
@@ -89,18 +90,17 @@ namespace VKIntox
                 const ImVec2 popupSize = ImVec2(320.0f, 190.0f);
                 ImGui::SetNextWindowPos(customValuePopupPosition(
                     popupPosition, viewport->Pos, viewport->Size, popupSize), ImGuiCond_Appearing);
-                ImGui::SetNextWindowSize(popupSize, ImGuiCond_Appearing);
+                ImGui::SetNextWindowPos(customValuePopupPosition(
+                    popupPosition, viewport->Pos, viewport->Size, popupSize), ImGuiCond_Appearing);
                 ImGui::OpenPopup(modalId);
                 popupOpenedThisFrame = true;
             }
 
             // === Render custom value popup (only for slider mode) ===
-            if (p.items.empty() && 
+            if (p.items.empty() &&
                 activeModalParam == paramAddr &&
-                !popupOpenedThisFrame && ImGui::BeginPopup(modalId))
+                !popupOpenedThisFrame && UI::BeginM3Dialog(modalId, ("Custom value: " + p.label).c_str()))
             {
-                ImGui::Text("Custom value: %s", p.label.c_str());
-                ImGui::Separator();
                 ImGui::TextDisabled("Current range: [%d, %d]", p.minValue, p.maxValue);
                 ImGui::TextDisabled("(values outside range are allowed)");
                 ImGui::Spacing();
@@ -115,9 +115,9 @@ namespace VKIntox
                     sizeof(customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue);
 
                 ImGui::Spacing();
-                bool ok = ImGui::Button("OK", ImVec2(100, 0));
+                bool ok = UI::M3DialogButton("OK", ImGuiM3Button_Filled);
                 ImGui::SameLine();
-                bool cancel = ImGui::Button("Cancel", ImVec2(100, 0));
+                bool cancel = UI::M3DialogButton("Cancel", ImGuiM3Button_Outlined);
 
                 if (submit || ok)
                 {
@@ -137,7 +137,7 @@ namespace VKIntox
                     activeModalParam = nullptr;
                 }
 
-                ImGui::EndPopup();
+                UI::EndM3Dialog();
             }
 
             return changed;
