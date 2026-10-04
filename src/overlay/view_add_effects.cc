@@ -418,7 +418,10 @@ namespace VKIntox
                     // clamp vs a zero avail width: InvisibleButton asserts on a zero axis
                     const float width = std::max(ImGui::GetContentRegionAvail().x, 1.0f);
                     const ImRect bb(pos, ImVec2(pos.x + width, pos.y + rowH));
+                    // the queue pill sits on top of the row button
+                    ImGui::SetNextItemAllowOverlap();
                     ImGui::InvisibleButton("##row", ImVec2(width, rowH - 2.0f));
+                    const ImVec2 cursorAfterRow = ImGui::GetCursorScreenPos();
                     const bool hovered = ImGui::IsItemHovered();
                     const bool held = ImGui::IsItemActive();
                     const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
@@ -442,22 +445,23 @@ namespace VKIntox
                     if (medium)
                         ImGui::PushFont(medium, ImGui::GetFontSize());
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_OnSurface));
-                    ImGui::RenderTextClipped(ImVec2(bb.Min.x + 50.0f * d, bb.Min.y), ImVec2(bb.Max.x - 150.0f * d, bb.Max.y),
+                    ImGui::RenderTextClipped(ImVec2(bb.Min.x + 50.0f * d, bb.Min.y), ImVec2(bb.Max.x - 120.0f * d, bb.Max.y),
                                              e.type.c_str(), NULL, NULL, ImVec2(0.0f, 0.5f), &bb);
                     ImGui::PopStyleColor();
                     if (medium)
                         ImGui::PopFont();
 
-                    const std::string groupLabel = e.group == 0 ? "config" : "reshade";
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
-                    ImGui::RenderTextClipped(ImVec2(bb.Max.x - 150.0f * d, bb.Min.y), ImVec2(bb.Max.x - 40.0f * d, bb.Max.y),
-                                             groupLabel.c_str(), NULL, NULL, ImVec2(1.0f, 0.5f), &bb);
-                    ImGui::PopStyleColor();
-
-                    if (iconFont)
-                        ImGuiM3DrawIcon(dl, added ? Icon::CheckCircleUtf8 : Icon::AddUtf8,
-                                        ImRect(ImVec2(bb.Max.x - 40.0f * d, bb.Min.y), ImVec2(bb.Max.x - 12.0f * d, bb.Max.y)),
-                                        20.0f * d, ImGuiM3ColorU32(added ? ImGuiM3Role_Tertiary : ImGuiM3Role_Primary));
+                    // queue pill: accent fill with on-accent text, flips to a
+                    // checkmark once the effect is queued
+                    const float pillW = 96.0f * d;
+                    const float pillH = 28.0f * d;
+                    ImGui::SetCursorScreenPos(ImVec2(bb.Max.x - pillW - 10.0f * d, bb.Min.y + (rowH - pillH) * 0.5f));
+                    ImGui::PushID(1);
+                    const std::string queueLabel = added ? std::string(Icon::CheckUtf8) + "  Queued" : "Queue";
+                    if (ImGui::M3Button(queueLabel.c_str(), ImGuiM3Button_Filled, ImVec2(pillW, pillH)))
+                        queueEffect(e.type);
+                    ImGui::PopID();
+                    ImGui::SetCursorScreenPos(cursorAfterRow);
 
                     if (hovered)
                     {
