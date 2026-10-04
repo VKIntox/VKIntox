@@ -145,7 +145,7 @@ namespace VKIntox
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        const std::string rescanLabel = std::string(Icon::RefreshUtf8) + "  Rescan All";
+        const std::string rescanLabel = std::string(Icon::RefreshUtf8) + "  Rescan all";
         if (ImGui::Button(rescanLabel.c_str()))
         {
             std::set<std::string> shaderSet, textureSet;
@@ -195,7 +195,7 @@ namespace VKIntox
         if (ImGui::TreeNode("Shader Paths"))
         {
             if (shaderMgrShaderPaths.empty())
-                ImGui::TextDisabled("None - click Rescan All");
+                ImGui::TextDisabled("None - click Rescan all");
             else
             {
                 int removeShaderIdx = -1;
@@ -221,7 +221,7 @@ namespace VKIntox
         if (ImGui::TreeNode("Texture Paths"))
         {
             if (shaderMgrTexturePaths.empty())
-                ImGui::TextDisabled("None - click Rescan All");
+                ImGui::TextDisabled("None - click Rescan all");
             else
             {
                 int removeTextureIdx = -1;

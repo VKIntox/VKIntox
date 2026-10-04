@@ -303,7 +303,7 @@ namespace VKIntox
         ImGui::Spacing();
         if (!depthInfo.candidates.empty())
         {
-            ImGui::M3CardBegin("adv_buffers", "Tracked Depth Buffers", Icon::GridViewUtf8);
+            ImGui::M3CardBegin("adv_buffers", "Reported depth buffers", Icon::GridViewUtf8);
             if (ImGui::BeginTable("##depth_tbl", 5,
                                   ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg,
                                   ImVec2(0, 0)))
@@ -389,7 +389,7 @@ namespace VKIntox
 
         // --- Depth decoding ---
         ImGui::Spacing();
-        ImGui::M3CardBegin("adv_decode", "Depth Decoding", Icon::ContrastUtf8);
+        ImGui::M3CardBegin("adv_decode", "Depth resolving", Icon::ContrastUtf8);
 
         const char* depthModeNames[] = {
             "Luminance/Red (standard)",
@@ -465,7 +465,7 @@ namespace VKIntox
 
         // --- Capture method ---
         ImGui::Spacing();
-        ImGui::M3CardBegin("adv_capture", "Capture Method", Icon::BoltUtf8);
+        ImGui::M3CardBegin("adv_capture", "Depth capture method", Icon::BoltUtf8);
         int dcm = settingsManager.getDepthCaptureMethod();
         if (ImGui::RadioButton("Off (legacy resolve only)##dcm0", dcm == 0))
         { settingsManager.setDepthCaptureMethod(0); markSettingsDirty(); }
@@ -511,7 +511,7 @@ namespace VKIntox
 
         // --- Footer ---
         ImGui::Spacing();
-        const std::string redetectLabel = std::string(Icon::RefreshUtf8) + "  Force Re-detect";
+        const std::string redetectLabel = std::string(Icon::RefreshUtf8) + "  Force reload depth buffers";
         if (ImGui::Button(redetectLabel.c_str()))
         {
             std::lock_guard<std::mutex> l(globalLock);

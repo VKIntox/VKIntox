@@ -123,7 +123,7 @@ namespace VKIntox
 
     void ImGuiOverlay::renderShaderTestSection()
     {
-        // Test All Shaders button
+        // Compile-test shaders button
         ImGui::Spacing();
         if (shaderTestRunning)
         {
@@ -136,7 +136,7 @@ namespace VKIntox
         }
         else
         {
-            if (ImGui::Button("Test All Shaders"))
+            if (ImGui::Button("Compile-test shaders"))
                 startShaderTest();
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Test all .fx shaders for compilation errors");
