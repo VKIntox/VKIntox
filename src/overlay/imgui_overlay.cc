@@ -48,6 +48,31 @@ namespace VKIntox
         {
             data->DesiredSize.y = std::max(data->DesiredSize.y, OverlayTitleBarHeight() + 1.0f);
         }
+
+        // Cubic-bezier timing function, the same shape Hyprland uses for its
+        // window animations: P0=(0,0), P1=(x1,y1), P2=(x2,y2), P3=(1,1). x is the
+        // normalised clock, y is the eased value; y may exceed 1 (x2=1.12 here),
+        // which is the deliberate overshoot. Solved by bisection, so it can never
+        // diverge the way an integrated spring can when frames are uneven.
+        float CubicBezierEase(float x, float x1, float y1, float x2, float y2)
+        {
+            x = ImClamp(x, 0.0f, 1.0f);
+            auto bezier = [](float t, float p1, float p2) {
+                const float u = 1.0f - t;
+                return 3.0f * p1 * t * u * u + 3.0f * p2 * t * t * u + t * t * t;
+            };
+
+            float lo = 0.0f, hi = 1.0f;
+            for (int i = 0; i < 24; ++i)
+            {
+                const float mid = (lo + hi) * 0.5f;
+                if (bezier(mid, x1, x2) < x)
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            return bezier((lo + hi) * 0.5f, y1, y2);
+        }
     }
 
     // No-op dummy for Vulkan functions ImGui requests but VKIntox doesn't intercept.
@@ -1552,60 +1577,69 @@ namespace VKIntox
 
         // Cross-slide. The outgoing view is drawn stationary and the incoming
         // view is drawn on top of it inside an offset child, so the whole view
-        // moves no matter how its own layout places things (which is why the
-        // old cursor-offset approach skipped some views entirely). A local,
-        // critically damped spring (damping 1.0, stiffness 260) settles in
-        // ~280ms with no overshoot, so it arrives without the little snap an
-        // underdamped spring left at the end.
-        static int   viewPrevIndex     = -1;
-        static int   viewFromIndex     = -1;
-        static int   viewSlideDir      = 1;
-        static float viewSlideValue    = 1.0f;
-        static float viewSlideVelocity = 0.0f;
-        static bool  viewTransitioning = false;
+        // moves no matter how its own layout places things. The motion is a
+        // fixed-duration cubic bezier (the Hyprland curve) sampled from a start
+        // timestamp, so it is deterministic: no frame-time integration, and no
+        // spring that tightens or bounces depending on how the frames land.
+        constexpr float kViewSlideSeconds = 0.30f;
+        constexpr float kBezX1 = 0.05f, kBezY1 = 0.90f;
+        constexpr float kBezX2 = 0.10f, kBezY2 = 1.12f;
+
+        static int    viewLastIndex     = -1;  // last observed target key
+        static int    viewSettledIndex  = 0;   // last fully shown key
+        static int    viewTargetIndex   = 0;   // key being shown / slid to
+        static int    viewFromIndex     = 0;   // key sliding out
+        static int    viewSlideDir      = 1;
+        static bool   viewTransitioning = false;
+        static double viewSlideStart    = 0.0;
 
         const int viewIndex = contentIndex();
-        if (viewIndex != viewPrevIndex)
+        if (viewIndex != viewLastIndex)
         {
-            if (viewPrevIndex >= 0)
+            if (viewLastIndex >= 0)
             {
-                viewFromIndex = viewPrevIndex;
-                viewSlideDir = (viewIndex > viewPrevIndex) ? 1 : -1;
-                viewSlideValue = 0.0f;
-                viewSlideVelocity = 0.0f;
-                viewTransitioning = true;
+                // Always slide from the last settled view. Rapid re-targeting
+                // just restarts settled -> newest instead of composing two
+                // half-finished transitions, which is what made fast switching
+                // glitchy.
+                viewFromIndex     = viewSettledIndex;
+                viewTargetIndex   = viewIndex;
+                viewTransitioning = (viewFromIndex != viewTargetIndex);
+                viewSlideDir      = (viewIndex > viewSettledIndex) ? 1 : -1;
+                viewSlideStart    = ImGui::GetTime();
             }
-            viewPrevIndex = viewIndex;
+            else
+            {
+                viewSettledIndex = viewIndex;
+                viewTargetIndex  = viewIndex;
+            }
+            viewLastIndex = viewIndex;
         }
 
+        float viewEase = 1.0f;
         if (viewTransitioning)
         {
-            const float dt = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f,
-                                     1.0f / 240.0f, 1.0f / 15.0f);
-            constexpr float kStiffness = 260.0f;
-            constexpr float kDamping   = 1.0f;
-            const float omega = ImSqrt(kStiffness);
-            const float displacement = viewSlideValue - 1.0f;
-            const float acceleration = -kStiffness * displacement - 2.0f * kDamping * omega * viewSlideVelocity;
-            viewSlideVelocity += acceleration * dt;
-            viewSlideValue += viewSlideVelocity * dt;
-            if (ImAbs(displacement) < 0.001f && ImAbs(viewSlideVelocity) < 0.001f)
+            const float clock = static_cast<float>((ImGui::GetTime() - viewSlideStart) / kViewSlideSeconds);
+            if (clock >= 1.0f)
             {
-                viewSlideValue = 1.0f;
-                viewSlideVelocity = 0.0f;
                 viewTransitioning = false;
+                viewSettledIndex = viewTargetIndex;
+            }
+            else
+            {
+                viewEase = CubicBezierEase(clock, kBezX1, kBezY1, kBezX2, kBezY2);
             }
         }
 
         const ImVec2 viewPos  = ImGui::GetCursorScreenPos();
         const ImVec2 viewSize = ImGui::GetContentRegionAvail();
-        const float slideOffset = (1.0f - viewSlideValue) * static_cast<float>(viewSlideDir) * viewSize.x;
+        const float slideOffset = (1.0f - viewEase) * static_cast<float>(viewSlideDir) * viewSize.x;
 
         // Clip the whole strip to the content region so a sliding view can never
         // draw over the nav or the title bar.
         ImGui::PushClipRect(viewPos, ImVec2(viewPos.x + viewSize.x, viewPos.y + viewSize.y), true);
 
-        if (viewTransitioning && viewFromIndex >= 0 && viewFromIndex != viewIndex)
+        if (viewTransitioning && viewFromIndex != viewTargetIndex)
         {
             ImGui::SetCursorScreenPos(viewPos);
             renderView(viewFromIndex);
@@ -1625,7 +1659,7 @@ namespace VKIntox
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
-        renderView(viewIndex);
+        renderView(viewTargetIndex);
         ImGui::EndChild();
 
         ImGui::PopClipRect();
