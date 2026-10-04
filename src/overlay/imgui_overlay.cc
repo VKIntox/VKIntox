@@ -10,6 +10,7 @@
 #include "keyboard_input.hh"
 #include "input_blocker.hh"
 #include "config_serializer.hh"
+#include "async_writer.hh"
 #include "image.hh"
 #include "memory.hh"
 #include "overlay/vkintox_icon_png.hh"
@@ -19,10 +20,12 @@
 #include "wayland_input_common.hh"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <fstream>
 #include <filesystem>
+#include <memory>
 
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/imgui_internal.h"
@@ -304,6 +307,10 @@ namespace VKIntox
         if ((profileDirty || paramsDirty) && (!activeProfilePath.empty() || !activeShaderProfilePath.empty()))
             autoSaveProfile();
 
+        // the auto-save is queued on the writer thread; make sure it lands before
+        // the layer tears down rather than racing process exit.
+        AsyncWriter::instance().waitForIdle();
+
         logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
 
         // Clean up Wayland resources before destroying the event queue
@@ -427,7 +434,7 @@ namespace VKIntox
 
         // save the outgoing profile while it is still active, then clear the
         // dirty flags so render()'s auto-save can't clobber the new path.
-        if (!autoSaveProfile())
+        if (!autoSaveProfile(true))
             return false;
 
         setActiveShaderProfile(profileName);
@@ -736,7 +743,7 @@ namespace VKIntox
         profileDirty = false;
     }
 
-    bool ImGuiOverlay::autoSaveProfile()
+    bool ImGuiOverlay::autoSaveProfile(bool block)
     {
         if (!effectRegistry)
             return false;
@@ -750,26 +757,18 @@ namespace VKIntox
         std::vector<PreprocessorDefinition> allDefs;
         collectSaveData(effects, disabledEffects, params, effectPaths, allDefs, disabledEffectParams);
 
-        bool configSaved = true;
-        if (!activeProfilePath.empty())
-        {
-            // .conf carries the ReShade definitions only; values live in the
-            // .ini so a sparse preset can't inherit stale ones.
-            std::map<std::string, std::string> instancePaths = effectPaths;
-            for (const auto& [name, path] : effectPaths)
-            {
-                if (std::filesystem::path(path).extension() == ".fx")
-                    instancePaths[name] = std::filesystem::path(path).filename().string();
-            }
-            configSaved = ConfigSerializer::saveToPath(activeProfilePath, {}, {}, {},
-                                                       instancePaths, {});
-        }
+        // Snapshot the registry-derived data here: the write runs on the writer
+        // thread and must not touch state the present thread mutates. EffectConfig
+        // owns unique_ptrs and cannot be copied, so everything the job needs is
+        // flattened into plain values now.
+        const std::string profilePath = activeProfilePath;
+        const std::string shaderPath = activeShaderProfilePath;
 
-        bool shaderSaved = true;
-        if (!activeShaderProfilePath.empty())
+        std::set<std::string> disabledFiles;
+        std::vector<std::string> enabledTechniques;
+        std::vector<std::string> techniqueSorting;
+        if (!shaderPath.empty())
         {
-            std::vector<ConfigParam> shaderParams = params;
-            std::set<std::string> disabledFiles;
             const auto& allEffects = effectRegistry->getAllEffects();
             for (const auto& effectName : disabledEffects)
             {
@@ -779,34 +778,6 @@ namespace VKIntox
                 if (effect != allEffects.end() && !effect->filePath.empty())
                     disabledFiles.insert(std::filesystem::path(effect->filePath).filename().string());
             }
-            shaderParams.erase(std::remove_if(shaderParams.begin(), shaderParams.end(),
-                [&disabledFiles, &effectPaths](const ConfigParam& param) {
-                    const auto path = effectPaths.find(param.effectName);
-                    return path != effectPaths.end() &&
-                        disabledFiles.count(std::filesystem::path(path->second).filename().string()) != 0;
-                }),
-                shaderParams.end());
-            disabledEffectParams.erase(std::remove_if(disabledEffectParams.begin(), disabledEffectParams.end(),
-                [&disabledFiles, &effectPaths](const ConfigParam& param) {
-                    const auto path = effectPaths.find(param.effectName);
-                    return path != effectPaths.end() &&
-                        disabledFiles.count(std::filesystem::path(path->second).filename().string()) == 0;
-                }),
-                disabledEffectParams.end());
-            for (const auto& def : allDefs)
-            {
-                ConfigParam param{def.effectName, "@" + def.name, def.value};
-                shaderParams.push_back(std::move(param));
-            }
-            std::set<std::pair<std::string, std::string>> enabledParamKeys;
-            for (const auto& param : shaderParams)
-                enabledParamKeys.emplace(param.effectName, param.paramName);
-            disabledEffectParams.erase(std::remove_if(disabledEffectParams.begin(), disabledEffectParams.end(),
-                [&enabledParamKeys](const ConfigParam& param) {
-                    return enabledParamKeys.count({param.effectName, param.paramName}) != 0;
-                }), disabledEffectParams.end());
-            std::vector<std::string> enabledTechniques;
-            std::vector<std::string> techniqueSorting;
             const auto& selected = effectRegistry->getSelectedEffects();
             for (const auto& name : selected)
             {
@@ -824,18 +795,81 @@ namespace VKIntox
                         enabledTechniques.push_back(entry);
                 }
             }
-            shaderSaved = ConfigSerializer::saveShaderProfile(activeShaderProfilePath, shaderParams, effects, disabledEffects,
-                                                               effectPaths, enabledTechniques, techniqueSorting,
-                                                               disabledEffectParams);
         }
 
-        if (shaderSaved && configSaved)
+        // the job records whether the write succeeded so a blocking caller can
+        // still fail the operation; an async caller only sees the log line.
+        auto ok = std::make_shared<std::atomic<bool>>(true);
+
+        AsyncWriter::instance().submit(
+            [profilePath, shaderPath, effects, disabledEffects, params, effectPaths,
+             allDefs, disabledEffectParams, disabledFiles, enabledTechniques, techniqueSorting, ok]() mutable
+            {
+                bool configSaved = true;
+                if (!profilePath.empty())
+                {
+                    // .conf carries the ReShade definitions only; values live in the
+                    // .ini so a sparse preset can't inherit stale ones.
+                    std::map<std::string, std::string> instancePaths = effectPaths;
+                    for (const auto& [name, path] : effectPaths)
+                    {
+                        if (std::filesystem::path(path).extension() == ".fx")
+                            instancePaths[name] = std::filesystem::path(path).filename().string();
+                    }
+                    configSaved = ConfigSerializer::saveToPath(profilePath, {}, {}, {},
+                                                               instancePaths, {});
+                }
+
+                bool shaderSaved = true;
+                if (!shaderPath.empty())
+                {
+                    std::vector<ConfigParam> shaderParams = params;
+                    shaderParams.erase(std::remove_if(shaderParams.begin(), shaderParams.end(),
+                        [&disabledFiles, &effectPaths](const ConfigParam& param) {
+                            const auto path = effectPaths.find(param.effectName);
+                            return path != effectPaths.end() &&
+                                disabledFiles.count(std::filesystem::path(path->second).filename().string()) != 0;
+                        }),
+                        shaderParams.end());
+                    disabledEffectParams.erase(std::remove_if(disabledEffectParams.begin(), disabledEffectParams.end(),
+                        [&disabledFiles, &effectPaths](const ConfigParam& param) {
+                            const auto path = effectPaths.find(param.effectName);
+                            return path != effectPaths.end() &&
+                                disabledFiles.count(std::filesystem::path(path->second).filename().string()) == 0;
+                        }),
+                        disabledEffectParams.end());
+                    for (const auto& def : allDefs)
+                    {
+                        ConfigParam param{def.effectName, "@" + def.name, def.value};
+                        shaderParams.push_back(std::move(param));
+                    }
+                    std::set<std::pair<std::string, std::string>> enabledParamKeys;
+                    for (const auto& param : shaderParams)
+                        enabledParamKeys.emplace(param.effectName, param.paramName);
+                    disabledEffectParams.erase(std::remove_if(disabledEffectParams.begin(), disabledEffectParams.end(),
+                        [&enabledParamKeys](const ConfigParam& param) {
+                            return enabledParamKeys.count({param.effectName, param.paramName}) != 0;
+                        }), disabledEffectParams.end());
+                    shaderSaved = ConfigSerializer::saveShaderProfile(shaderPath, shaderParams, effects, disabledEffects,
+                                                                       effectPaths, enabledTechniques, techniqueSorting,
+                                                                       disabledEffectParams);
+                }
+
+                if (shaderSaved && configSaved)
+                    Logger::debug("Auto-saved profile: " + profilePath);
+                else
+                    Logger::err("Auto-save failed for profile: " + profilePath);
+                ok->store(shaderSaved && configSaved, std::memory_order_relaxed);
+            });
+
+        // the write is queued; mark clean now so the debounce does not re-arm.
+        profileDirty = false;
+        if (block)
         {
-            profileDirty = false;
-            if (!activeProfilePath.empty())
-                Logger::debug("Auto-saved profile: " + activeProfilePath);
+            AsyncWriter::instance().waitForIdle();
+            return ok->load(std::memory_order_relaxed);
         }
-        return shaderSaved && configSaved;
+        return true;
     }
 
     void ImGuiOverlay::setSelectedEffects(const std::vector<std::string>& effects,

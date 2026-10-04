@@ -55,6 +55,7 @@ overlay_src = [
 VKIntox_src = [
     'core/vkintox.cc',
     'core/vkintox_depth.cc',
+    'core/async_writer.cc',
     'render/buffer.cc',
     'render/command_buffer.cc',
     'render/vk_handle.cc',
@@ -288,6 +289,17 @@ compile_cache_tests = executable('vkintox-compile-cache-tests',
     dependencies : [threads_dep],
     include_directories : [effects_inc, source_inc])
 test('compile cache', compile_cache_tests)
+
+# AsyncWriter is what keeps profile/settings writes off the present thread. Its
+# FIFO order and idle barrier are the contract, and its thread lifetime is the
+# part a mistake would crash on, so it is exercised headless.
+async_writer_tests = executable('vkintox-async-writer-tests',
+    'core/async_writer_test.cc',
+    'core/async_writer.cc',
+    'core/logger.cc',
+    dependencies : [threads_dep],
+    include_directories : [core_inc, source_inc])
+test('async writer', async_writer_tests)
 
 vkintox_run = configure_file(
     input: '../scripts/vkintox-run.in',

@@ -334,7 +334,7 @@ namespace VKIntox
         std::string activeProfileName;    // Active profile ("default", "performance", etc.)
         std::string activeProfilePath;    // Full path to active profile file
         bool profileDirty = false;        // True when changes need saving
-        bool autoSaveProfile();           // Save current state to active profile
+        bool autoSaveProfile(bool block = false);  // Save current state to active profile
         void collectSaveData(            // Shared helper for save operations
             std::vector<std::string>& effects,
             std::vector<std::string>& disabledEffects,

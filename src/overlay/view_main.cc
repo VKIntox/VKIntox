@@ -246,7 +246,7 @@ namespace VKIntox
                 ImGui::BeginDisabled(newShaderProfileName[0] == '\0');
                 if (ImGui::Button("Create"))
                 {
-                    if (!autoSaveProfile())
+                    if (!autoSaveProfile(true))
                         pushToast(LogLevel::Error, "Could not save the active shader profile.");
                     else if (ConfigSerializer::createShaderProfile(activeGameName, newShaderProfileName,
                                                                    activeShaderProfileName))
@@ -676,7 +676,7 @@ namespace VKIntox
 
         // save the outgoing profile, then activate the import. refresh can
         // already select the new name, so the reload is queued here directly.
-        const bool saved = autoSaveProfile();
+        const bool saved = autoSaveProfile(true);
         refreshShaderProfiles();
         setActiveShaderProfile(imported);
         pendingShaderProfilePath = activeShaderProfilePath;
