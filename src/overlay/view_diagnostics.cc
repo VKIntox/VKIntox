@@ -309,6 +309,21 @@ namespace VKIntox
         static std::string detectedGameName;
         static std::string autoDetectedConfig;
 
+        // Sampling runs every overlay frame from launch, not just while the tab
+        // is open, so the graph and FPS are already populated the first time the
+        // user opens Diagnostics.
+        static bool g_diagInitialized = false;
+        static std::string g_diagResolvedSlot;
+        static std::chrono::steady_clock::time_point g_lastGpuSampleTime = std::chrono::steady_clock::now();
+        static std::chrono::steady_clock::time_point g_fpsWindowStart = std::chrono::steady_clock::now();
+        static int   g_fpsFrameCount = 0;
+        static float g_dispFps = 0.0f;
+        static float g_dispFps1Low = 0.0f;
+        static float g_dispGpuUsage = -1.0f;
+        static float g_dispVramUsed = 0.0f, g_dispVramTotal = 0.0f;
+        static float g_dispGttUsed = 0.0f, g_dispGttTotal = 0.0f;
+        static bool  g_dispHasVram = false, g_dispHasGtt = false;
+
         // Read a single value from sysfs
         template<typename T>
         bool readSysfs(const std::string& path, T& value)
@@ -427,23 +442,22 @@ namespace VKIntox
         }
     }
 
-    void ImGuiOverlay::renderDiagnosticsView()
+    void ImGuiOverlay::sampleDiagnostics()
     {
-        // Initialize on first call
-        static bool initialized = false;
-        // re-resolve when the device changes, not just once: the DRM scan is
-        // keyed on the PCI slot the game is actually running on
-        static std::string resolvedSlot;
-        if (!initialized || resolvedSlot != deviceInfo.gpuPciSlot)
+        const auto now = std::chrono::steady_clock::now();
+
+        if (!g_diagInitialized || g_diagResolvedSlot != deviceInfo.gpuPciSlot)
         {
-            if (initialized)
+            if (g_diagInitialized)
                 Logger::info("Diagnostics: GPU changed to " + deviceInfo.gpuName + ", re-resolving");
             gpuInfo = findGpu(deviceInfo);
-            resolvedSlot = deviceInfo.gpuPciSlot;
+            g_diagResolvedSlot = deviceInfo.gpuPciSlot;
             detectedGameName = ConfigSerializer::detectGameName();
             autoDetectedConfig = ConfigSerializer::autoDetectConfig();
-            lastFrameTime = std::chrono::steady_clock::now();
-            initialized = true;
+            lastFrameTime = now;
+            g_fpsWindowStart = now;
+            g_fpsFrameCount = 0;
+            g_diagInitialized = true;
 
             if (gpuInfo.vendor != GpuVendor::Unknown)
                 Logger::info("Diagnostics: Found " + gpuInfo.vendorName + " GPU at " + gpuInfo.drmCardPath);
@@ -451,32 +465,34 @@ namespace VKIntox
                 Logger::info("Diagnostics: No supported GPU found");
         }
 
-        // this view only runs while its tab is open. catch the open edge so a
-        // stale timestamp from a previous visit doesn't spike the first frame.
-        static bool wasOpen = false;
-        const bool justOpened = !wasOpen;
-        wasOpen = true;
-
-        // Calculate frame time
-        auto now = std::chrono::steady_clock::now();
-        float frameTimeMs = std::chrono::duration<float, std::milli>(now - lastFrameTime).count();
+        // measured every overlay frame from launch, not only while the tab is open
+        const float frameTimeMs = std::chrono::duration<float, std::milli>(now - lastFrameTime).count();
         lastFrameTime = now;
-        if (justOpened)
-            frameTimeMs = 0.0f;  // no meaningful delta across a tab switch
-
-        // Only record if reasonable (avoid spikes from tab switching)
         if (frameTimeMs > 0.1f && frameTimeMs < 500.0f)
             frameTimeHistory.push(frameTimeMs);
+
+        g_fpsFrameCount++;
+        const double windowSeconds = std::chrono::duration<double>(now - g_fpsWindowStart).count();
+        if (windowSeconds >= 1.0)
+        {
+            g_dispFps = static_cast<float>(g_fpsFrameCount) / static_cast<float>(windowSeconds);
+            g_dispFps1Low = frameTimeHistory.max() > 0.0f ? 1000.0f / frameTimeHistory.max() : 0.0f;
+            g_dispGpuUsage = gpuInfo.hasGpuUsage ? getGpuUsage() : -1.0f;
+            g_dispHasVram = getVramUsage(g_dispVramUsed, g_dispVramTotal);
+            g_dispHasGtt = getGttUsage(g_dispGttUsed, g_dispGttTotal);
+            // keep the leftover rather than snapping to exactly 1.0s, which under-counts.
+            g_fpsWindowStart += std::chrono::milliseconds(static_cast<int64_t>(windowSeconds * 1000.0));
+            g_fpsFrameCount = 0;
+        }
 
         // Sample GPU stats at a fixed wall-clock interval (~200ms) so overhead
         // stays constant regardless of frame rate (not "every 10 frames" which
         // would over-poll at high FPS and under-poll at low FPS).
-        static auto lastGpuSampleTime = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastGpuSampleTime).count() >= 200)
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - g_lastGpuSampleTime).count() >= 200)
         {
-            lastGpuSampleTime = now;
+            g_lastGpuSampleTime = now;
 
-            float gpuUsage = getGpuUsage();
+            const float gpuUsage = getGpuUsage();
             if (gpuUsage >= 0)
                 gpuUsageHistory.push(gpuUsage);
 
@@ -488,41 +504,16 @@ namespace VKIntox
             if (getGttUsage(gttUsed, gttTotal))
                 gttUsageHistory.push((gttUsed / gttTotal) * 100.0f);
         }
+    }
 
+    void ImGuiOverlay::renderDiagnosticsView()
+    {
         ImGui::BeginChild("DiagnosticsContent", ImVec2(0, 0), false);
 
-        // FPS counts frames per wall-clock second. 1000/avg() over the 300-frame
-        // history lagged badly and reported the past, not the present. carry the
-        // leftover into the next window so the seconds don't drift.
-        static float dispFps = 0.0f;
-        static float dispFps1Low = 0.0f;
-        static float dispGpuUsage = -1.0f;
-        static float dispVramUsed = 0.0f, dispVramTotal = 0.0f;
-        static float dispGttUsed = 0.0f, dispGttTotal = 0.0f;
-        static bool dispHasVram = false, dispHasGtt = false;
-        static int   fpsFrameCount = 0;
-        static std::chrono::steady_clock::time_point fpsWindowStart = now;
-        if (justOpened)
-        {
-            // fresh window on open, so the first second is real.
-            fpsWindowStart = now;
-            fpsFrameCount = 0;
-        }
-        fpsFrameCount++;
-        const double windowSeconds = std::chrono::duration<double>(now - fpsWindowStart).count();
-        if (windowSeconds >= 1.0)
-        {
-            dispFps = static_cast<float>(fpsFrameCount) / static_cast<float>(windowSeconds);
-            dispFps1Low = frameTimeHistory.max() > 0.0f ? 1000.0f / frameTimeHistory.max() : 0.0f;
-            dispGpuUsage = gpuInfo.hasGpuUsage ? getGpuUsage() : -1.0f;
-            dispHasVram = getVramUsage(dispVramUsed, dispVramTotal);
-            dispHasGtt = getGttUsage(dispGttUsed, dispGttTotal);
-            // keep the leftover rather than snapping to exactly 1.0s, which under-counts.
-            fpsWindowStart += std::chrono::milliseconds(static_cast<int64_t>(windowSeconds * 1000.0));
-            fpsFrameCount = 0;
-        }
-        const float fps = dispFps;
-        const float fps1Low = dispFps1Low;
+        // FPS is sampled every frame in sampleDiagnostics(); this view only reads
+        // the latest values, so opening the tab shows real history, not zeros.
+        const float fps = g_dispFps;
+        const float fps1Low = g_dispFps1Low;
 
         // --- Performance ---
         ImGui::M3CardBegin("diag_perf", "Performance", Icon::SpeedUtf8);
@@ -573,7 +564,7 @@ namespace VKIntox
 
             if (gpuInfo.vendor != GpuVendor::Unknown && gpuInfo.hasGpuUsage)
             {
-                if (dispGpuUsage >= 0)
+                if (g_dispGpuUsage >= 0)
                 {
                     const char* usageLabel = (gpuInfo.vendor == GpuVendor::Intel) ? "GPU Frequency" : "GPU Usage";
                     drawGraph(usageLabel, "##gpuusage", gpuUsageHistory, 0.0f, 100.0f, "%.0f%%", UI::GraphColor(1));
@@ -583,21 +574,21 @@ namespace VKIntox
                 }
             }
 
-            if (dispHasVram)
+            if (g_dispHasVram)
             {
-                ImGui::Text("VRAM: %.0f / %.0f MB", dispVramUsed, dispVramTotal);
-                ImGui::ProgressBar(dispVramUsed / dispVramTotal, ImVec2(-1, 0));
+                ImGui::Text("VRAM: %.0f / %.0f MB", g_dispVramUsed, g_dispVramTotal);
+                ImGui::ProgressBar(g_dispVramUsed / g_dispVramTotal, ImVec2(-1, 0));
                 ImGui::Spacing();
             }
 
-            if (dispHasGtt)
+            if (g_dispHasGtt)
             {
-                ImGui::Text("GTT (shared): %.0f / %.0f MB", dispGttUsed, dispGttTotal);
-                ImGui::ProgressBar(dispGttUsed / dispGttTotal, ImVec2(-1, 0));
+                ImGui::Text("GTT (shared): %.0f / %.0f MB", g_dispGttUsed, g_dispGttTotal);
+                ImGui::ProgressBar(g_dispGttUsed / g_dispGttTotal, ImVec2(-1, 0));
                 ImGui::Spacing();
                 drawGraph("Memory Usage", "##gttusage", gttUsageHistory, 0.0f, 100.0f, "%.0f%%", UI::GraphColor(2));
             }
-            else if (dispHasVram)
+            else if (g_dispHasVram)
             {
                 drawGraph("VRAM Usage", "##vramusage", vramUsageHistory, 0.0f, 100.0f, "%.0f%%", UI::GraphColor(2));
             }

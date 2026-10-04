@@ -1542,6 +1542,10 @@ namespace VKIntox
         gatherDepthInfo();
         applyDepthPinRequests();
 
+        // Frame time, FPS and GPU stats are sampled from launch, not from the
+        // first time the Diagnostics tab happens to be opened.
+        sampleDiagnostics();
+
         // top nav is a connected button group: pill ends, modest shared edges,
         // 2dp inner padding. one control, not five floating tabs. the selected
         // segment swaps to secondary-container and gains weight.

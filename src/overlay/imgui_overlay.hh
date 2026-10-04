@@ -197,6 +197,9 @@ namespace VKIntox
         void renderMainView(const KeyboardState& keyboard);
         void importShaderPreset(const std::string& sourcePath);
         void renderDiagnosticsView();
+        // Samples frame time, FPS and GPU stats. Called every overlay frame, not
+        // just while the Diagnostics tab is open, so the tab has real history.
+        void sampleDiagnostics();
         void renderAboutView();
         void renderDebugWindow();  // Debug window with effect registry and log data
         void renderAdvancedView();  // Depth buffer switching (Advanced tab)
