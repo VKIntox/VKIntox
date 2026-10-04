@@ -216,11 +216,15 @@ namespace VKIntox
                 if (UI::BeginM3Dialog("##delete_shader_profile", "Delete this shader preset?"))
                 {
                     ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 380.0f * ImGuiM3GetMetrics().density);
-                    ImGui::TextUnformatted(("This preset, \"" + deleteProfileTarget + "\", will be deleted. This can't be reverted.").c_str());
+                    ImGui::TextUnformatted(("This preset, \"" + deleteProfileTarget + "\", will be deleted. This can't be undone.").c_str());
                     ImGui::PopTextWrapPos();
                     ImGui::Spacing();
                     ImGui::Spacing();
-                    if (UI::M3DialogButton("Yes, I'm sure", ImGuiM3Button_Destructive))
+                    const UI::M3DialogAction actions[] = {
+                        {"No, keep", ImGuiM3Button_Outlined},
+                        {"Yes, I'm sure", ImGuiM3Button_Destructive},
+                    };
+                    if (UI::M3DialogActions(actions, 2) == 1)
                     {
                         if (!ConfigSerializer::deleteShaderProfile(activeGameName, deleteProfileTarget))
                             pushToast(LogLevel::Error, "Could not delete the shader profile.");
@@ -250,9 +254,6 @@ namespace VKIntox
                         }
                         ImGui::CloseCurrentPopup();
                     }
-                    ImGui::SameLine();
-                    if (UI::M3DialogButton("No", ImGuiM3Button_Outlined))
-                        ImGui::CloseCurrentPopup();
                     UI::EndM3Dialog();
                 }
             }
@@ -344,11 +345,15 @@ namespace VKIntox
         if (UI::BeginM3Dialog("##clear_all_confirm", "Are you sure you want to clear all effects from this preset?"))
         {
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 380.0f * ImGuiM3GetMetrics().density);
-            ImGui::TextUnformatted(("This preset, \"" + clearPresetName + "\", will be deleted. This can't be reverted.").c_str());
+            ImGui::TextUnformatted(("This preset, \"" + clearPresetName + "\", will have its effects cleared. This can't be undone.").c_str());
             ImGui::PopTextWrapPos();
             ImGui::Spacing();
             ImGui::Spacing();
-            if (UI::M3DialogButton("Yes, I'm sure", ImGuiM3Button_Destructive))
+            const UI::M3DialogAction actions[] = {
+                {"No, keep", ImGuiM3Button_Outlined},
+                {"Yes, I'm sure", ImGuiM3Button_Destructive},
+            };
+            if (UI::M3DialogActions(actions, 2) == 1)
             {
                 selectedEffects.clear();
                 effectRegistry->clearSelectedEffects();
@@ -358,9 +363,6 @@ namespace VKIntox
                 profileDirty = true;
                 ImGui::CloseCurrentPopup();
             }
-            ImGui::SameLine();
-            if (UI::M3DialogButton("No", ImGuiM3Button_Outlined))
-                ImGui::CloseCurrentPopup();
             UI::EndM3Dialog();
         }
         ImGui::Separator();

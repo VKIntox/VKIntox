@@ -17,6 +17,22 @@ namespace VKIntox
         // Dialog footer action: pill-shaped and a step stronger than M3Button,
         // sized for a dialog rather than a full-height form button.
         bool M3DialogButton(const char* label, ImGuiM3ButtonVariant variant, float width = 0.0f);
+
+        // The width M3DialogButton will take for this label, so a caller can lay
+        // actions out (right-align) before drawing them.
+        float M3DialogButtonWidth(const char* label);
+
+        struct M3DialogAction
+        {
+            const char*          label;
+            ImGuiM3ButtonVariant variant;
+        };
+
+        // Draws actions right-aligned in the current dialog, in the order given,
+        // with the normal item spacing between them. Returns the index clicked,
+        // or -1. Right-aligning here keeps the leading margin identical to the
+        // trailing one instead of the actions hugging the left edge.
+        int M3DialogActions(const M3DialogAction* actions, int count);
     }
 } // namespace VKIntox
 

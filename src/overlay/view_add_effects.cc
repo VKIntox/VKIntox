@@ -376,10 +376,18 @@ namespace VKIntox
         // Recents (only when browsing, not searching).
         if (!hasSearch && !recent.empty())
         {
-            ImGui::TextDisabled("Recent:");
+            ImFont* recentFont = ImGuiM3FontMedium();
+            if (recentFont)
+                ImGui::PushFont(recentFont, ImGui::GetFontSize() * 0.85f);
+            ImGui::TextDisabled("Recent");
+            if (recentFont)
+                ImGui::PopFont();
+            bool firstRecent = true;
             for (const std::string& r : recent)
             {
-                ImGui::SameLine();
+                if (!firstRecent)
+                    ImGui::SameLine();
+                firstRecent = false;
                 ImGui::PushID(r.c_str());
                 if (ImGui::M3Button(r.c_str(), ImGuiM3Button_Outlined, ImVec2(0, 26.0f * d)))
                     queueEffect(r);

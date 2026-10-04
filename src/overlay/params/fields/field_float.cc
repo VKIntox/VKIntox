@@ -88,9 +88,13 @@ namespace VKIntox
                     sizeof(customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue);
 
                 ImGui::Spacing();
-                bool ok = UI::M3DialogButton("OK", ImGuiM3Button_Filled);
-                ImGui::SameLine();
-                bool cancel = UI::M3DialogButton("Cancel", ImGuiM3Button_Outlined);
+                const UI::M3DialogAction actions[] = {
+                    {"Cancel", ImGuiM3Button_Outlined},
+                    {"OK", ImGuiM3Button_Filled},
+                };
+                const int action = UI::M3DialogActions(actions, 2);
+                const bool ok = (action == 1);
+                const bool cancel = (action == 0);
 
                 // Handle submission
                 if (submit || ok)
