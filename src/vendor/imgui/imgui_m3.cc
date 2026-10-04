@@ -2065,8 +2065,10 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
     ImGuiM3DrawStateLayer(window->DrawList, track_bb, track_rounding, on ? ImGuiM3Role_OnPrimary : ImGuiM3Role_OnSurface, state);
 
     // Handle: 20dp normally, 28dp when pressed, with a spring so it grows.
-    const float handle_size = (m.switch_handle + (m.switch_pressed_handle - m.switch_handle) * press_t) * m.density;
-    const float inset = m.switch_handle_inset * m.density;
+    // on and off share the icon handle size so the side padding is identical,
+    // and the inset tracks the vertical centring so all four gaps match
+    const float handle_size = (m.switch_handle_with_icon + (m.switch_pressed_handle - m.switch_handle_with_icon) * press_t) * m.density;
+    const float inset = (track_h - handle_size) * 0.5f;
     const float travel = track_width - handle_size - inset * 2.0f;
     const ImVec2 handle_center(on ? track_bb.Min.x + inset + handle_size * 0.5f + travel
                                   : track_bb.Min.x + inset + handle_size * 0.5f,
