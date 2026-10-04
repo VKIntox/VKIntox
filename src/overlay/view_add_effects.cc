@@ -245,6 +245,13 @@ namespace VKIntox
                     if (!e.package.empty())
                         packages.insert(e.package);
                 addEffectsPackages.assign(packages.begin(), packages.end());
+                // VKIntox's own shaders lead the tab row; the rest stay alphabetical
+                std::sort(addEffectsPackages.begin(), addEffectsPackages.end(),
+                          [](const std::string& a, const std::string& b) {
+                              if ((a == "VKIntox") != (b == "VKIntox"))
+                                  return a == "VKIntox";
+                              return a < b;
+                          });
             }
 
             // a tab can vanish when the install changes; fall back to All
