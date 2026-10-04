@@ -1826,24 +1826,27 @@ void ImGuiM3DrawElevation(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeR
     level = clampInt(0, 5, level);
     if (level == 0)
         return;
-    const ImU32 shadow = PackU32(WithAlpha(ImGuiM3Color(ImGuiM3Role_Shadow), m.key_shadow_opacity));
-    const ImU32 ambient = PackU32(WithAlpha(ImGuiM3Color(ImGuiM3Role_Shadow), m.ambient_shadow_opacity));
+    const ImVec4 shadow_color = ImGuiM3Color(ImGuiM3Role_Shadow);
+    const float key_y = m.key_shadow_y[level];
+    const float ambient_y = m.ambient_shadow_y[level];
+    const float spread = 3.0f + m.ambient_shadow_spread[level];
+    const float total_alpha = ImMin(1.0f, m.key_shadow_opacity + m.ambient_shadow_opacity);
 
-    // no blur in ImGui, so each shadow layer becomes one offset rect behind the
-    // container.
-    for (int pass = 0; pass < 2; pass++)
+    // no blur in ImGui, so stack rounded rects that grow outward while fading.
+    // a single offset rect reads as a hard band; the stack reads as a soft M3
+    // shadow, densest at the card edge and gone by the outer bound.
+    const int steps = 6;
+    for (int step = steps; step >= 1; --step)
     {
-        // arrays are indexed by elevation level, not by render pass.
-        const int idx = level;
-        const float spread = pass == 0 ? 0.0f : m.ambient_shadow_spread[idx] * 0.5f;
-        const float dy = pass == 0 ? m.key_shadow_y[idx] : m.ambient_shadow_y[idx];
-        ImRect r(bb.Min + ImVec2(-spread, dy), bb.Max + ImVec2(spread, dy));
+        const float t = static_cast<float>(step) / static_cast<float>(steps);
+        const float grow = spread * t;
+        const float dy = ambient_y * t + key_y * (1.0f - t);
+        ImRect r(ImVec2(bb.Min.x - grow, bb.Min.y - grow + dy),
+                 ImVec2(bb.Max.x + grow, bb.Max.y + grow + dy));
         ImGuiM3ShapeRounding rr = rounding;
-        if (spread > 0.0f)
-        {
-            rr.tl += spread; rr.tr += spread; rr.br += spread; rr.bl += spread;
-        }
-        ImGuiM3PathRoundedRect(draw_list, r, rr, pass == 0 ? shadow : ambient);
+        rr.tl += grow; rr.tr += grow; rr.br += grow; rr.bl += grow;
+        const float alpha = total_alpha * (1.0f - t) * 0.45f;
+        ImGuiM3PathRoundedRect(draw_list, r, rr, PackU32(WithAlpha(shadow_color, alpha)));
     }
 }
 
@@ -2642,15 +2645,15 @@ void ImGui::M3ThemeEditor()
 
     // component showcase
     M3SectionHeader("Components");
-    if (ImGui::Button("Filled", ImVec2(0, 0))) {}
+    if (M3Button("Filled", ImGuiM3Button_Filled, ImVec2(0, 0))) {}
     ImGui::SameLine();
-    if (ImGui::Button("Tonal", ImVec2(0, 0))) {}
+    if (M3Button("Tonal", ImGuiM3Button_Tonal, ImVec2(0, 0))) {}
     ImGui::SameLine();
-    if (ImGui::Button("Elevated", ImVec2(0, 0))) {}
+    if (M3Button("Elevated", ImGuiM3Button_Elevated, ImVec2(0, 0))) {}
     ImGui::SameLine();
-    if (ImGui::Button("Outlined", ImVec2(0, 0))) {}
+    if (M3Button("Outlined", ImGuiM3Button_Outlined, ImVec2(0, 0))) {}
     ImGui::SameLine();
-    if (ImGui::Button("Text", ImVec2(0, 0))) {}
+    if (M3Button("Text", ImGuiM3Button_Text, ImVec2(0, 0))) {}
 
     bool sw = true;
     if (M3Switch("Switch", &sw))
