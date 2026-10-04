@@ -330,9 +330,9 @@ namespace VKIntox
             const ImVec2 prevPad = ImGui::GetStyle().FramePadding;
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(38.0f * d, prevPad.y));
             ImGui::SetNextItemWidth(-1);
-            const bool submitted = ImGui::InputTextWithHint("##search", "Search effects (type to filter, Enter to add)...",
-                                                            addEffectsSearch, sizeof(addEffectsSearch),
-                                                            ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::InputTextWithHint("##search", "Search effects (type to filter)...",
+                                     addEffectsSearch, sizeof(addEffectsSearch),
+                                     ImGuiInputTextFlags_AutoSelectAll);
             const ImVec2 fmin = ImGui::GetItemRectMin();
             const ImVec2 fmax = ImGui::GetItemRectMax();
             ImFont* iconFont = ImGuiM3IconFont();
@@ -341,8 +341,6 @@ namespace VKIntox
                                 ImRect(ImVec2(fmin.x + 8.0f * d, fmin.y), ImVec2(fmin.x + 30.0f * d, fmax.y)),
                                 18.0f * d, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
             ImGui::PopStyleVar();
-            if (submitted && rowCount > 0 && rows[highlight].entry >= 0)
-                queueEffect(entries[rows[highlight].entry].type);
         }
 
         // Package tabs: All plus one per installed effect package, in a
@@ -521,7 +519,7 @@ namespace VKIntox
         ImGui::BeginChild("##queued", ImVec2(0, trayHeight), true);
         if (pendingAddEffects.empty())
         {
-            ImGui::TextDisabled("Queued effects appear here. Click a result or press Enter to queue it.");
+            ImGui::TextDisabled("Queued effects appear here. Click a result to queue it.");
         }
         else
         {
@@ -586,8 +584,6 @@ namespace VKIntox
             highlight = 0;
         }
         ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::TextDisabled("Enter queues the highlighted result");
     }
 
 } // namespace VKIntox
