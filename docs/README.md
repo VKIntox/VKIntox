@@ -9,7 +9,7 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 [![version](https://img.shields.io/badge/version-0.2.0--experimental-blueviolet?style=flat-square)](#)
 [![license](https://img.shields.io/badge/license-zlib-2e8b57?style=flat-square)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-linux-555555?style=flat-square)](#)
-[![status](https://img.shields.io/badge/status-experimental-orange?style=flat-square)](#)
+[![CI](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml)
 
 </div>
 
@@ -78,8 +78,8 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 
 **overlay**
 
--   **material 3 expressive ui:** the overlay is a from-scratch material 3 implementation that patches the vendored dear imgui directly. real m3 widgets (filled/tonal/outlined buttons, switches, sliders, chips, progress, cards), an animated press morph, elevation, and slide-and-fade transitions between views.
--   **theme editor:** pick a seed colour, variant (expressive, tonal-spot, vibrant, neutral, monochrome, fidelity, content), contrast and light/dark; edit every colour role; tune density and corner scale; and browse a live widget gallery. changes write to `theme.colors` and hot-reload.
+-   **material 3 ui:** the overlay is a from-scratch material 3 implementation that patches the vendored dear imgui directly. real m3 widgets (filled/tonal/outlined buttons, switches, sliders, chips, progress, cards), an animated press morph, elevation, and slide-and-fade transitions between views.
+-   **theme editor:** pick a seed colour, variant (expressive, tonal-spot, vibrant, neutral, monochrome, fidelity, content), contrast and light/dark; edit every colour role; tune density and corner scale; and browse a live widget gallery. changes write to `theme.colors` and hot-reload. **matugen is supported with hot reloading!**
 -   **backdrop blur:** the frame behind the overlay is captured, downsampled, and blurred with a separable gaussian on ping-pong targets before the ui is drawn over it. the theme editor exposes the blur toggle, background opacity, size, and pass count (1–10). the foreground stays sharp, and nothing is recorded while the blur is off or the background is opaque.
 -   **window:** resizable and movable, anchored to the game framebuffer, with right-click title drag, a close button, and an about tab that reports the version compiled into the library.
 
@@ -91,7 +91,7 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 -   **add effects:** a dedicated view with a back breadcrumb, package tabs (all / vkintox / every installed pack), ranked search, recents, keyboard navigation, and a per-effect duplicate stepper (`-` count `+`) that stops at the max-effects limit.
 -   **shader presets:** create (inherits the active preset), rename, delete behind a confirm, and import a reshade `.ini` through the desktop portal, with an in-overlay browser as the fallback.
 -   **shader manager:** compile-test every discovered shader, grey the test out once the installed set is unchanged, and flag which shaders need a depth buffer.
--   **built-in shaders:** a from-scratch morphological msaa shader (search steps, passes, edge threshold, blend strength) that ships as its own `vkintox` package. the sweetfx `cas` is used from that package rather than duplicated.
+-   **built-in shaders:** a from-scratch morphological msaa shader (search steps, passes, edge threshold, blend strength) that ships as its own `vkintox` package.
 -   **per-app profiles:** one config per detected game, shown by name and a joystick icon.
 
 **diagnostics**
@@ -128,9 +128,6 @@ vkintox intercepts vulkan swapchain calls as a layer between the game and the dr
 -   **settings:** changing in-game graphics quality often causes crashes.
 -   **wine:** games using dxvk/vkd3d might break, and anti-cheat could get you moderated.
 -   **flatpak layer updates:** a reboot can be needed after re-installing or updating the layer for flatpak targets (remote and local builds alike). it may also apply to native system installs.
-
-> [!NOTE]
-> upgrading from v1.0.2? back up your `.conf` files first. auto-migration to `.ini` (native reshade format) can fail and malform values, and the migration logic is slated for removal: this issue is wontfix.
 
 ### troubleshooting
 
@@ -176,12 +173,10 @@ thanks to **slobodaapl** (vkshade), **dadschoorse** (vkbasalt), **daaboulex** (w
 
 ---
 
-> experimental software. not yet stable; use responsibly.
+> beta-stage software; not fully stable, use carefully.
 
 <div align="center">
 
-made with ♡ by [buwryme](https://github.com/buwryme)
-
-for inquiries, contact hello@buwryy.net
+maintained with ♡ by [buwryme](https://github.com/buwryme)
 
 </div>
