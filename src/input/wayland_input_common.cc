@@ -1,11 +1,14 @@
 #include "wayland_input_common.hh"
 #include "wayland_display.hh"
+#include "input_blocker.hh"
 #include "logger.hh"
 
 #include <atomic>
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 #include <poll.h>
+#include <vector>
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -36,11 +39,9 @@ namespace VKIntox
     static int inputBufferHeight = 0;
     static float inputSurfaceX = 0.0f;
     static float inputSurfaceY = 0.0f;
-    static float inputRectX = 0.0f;
-    static float inputRectY = 0.0f;
-    static float inputRectW = 0.0f;
-    static float inputRectH = 0.0f;
-    static bool inputRectValid = false;
+    // last published rect set, so an unchanged overlay doesn't churn the
+    // compositor every frame
+    static std::vector<InputRect> inputSurfaceRects;
 
     // Frame-level dispatch deduplication — tracks a monotonic counter so
     // multiple callers (getMouseState, getKeyboardState, isKeyPressed×N)
@@ -263,24 +264,24 @@ namespace VKIntox
         return inputSurfaceY;
     }
 
-    void setWaylandInputSurfaceRect(float x, float y, float width, float height)
+    void setWaylandInputSurfaceRects(const InputRect* rects, int count)
     {
         if (!inputSurface)
             return;
 
-        // the overlay calls this every frame; only churn the compositor when the
-        // hitbox actually moves or resizes.
-        if (inputRectValid && x == inputRectX && y == inputRectY &&
-            width == inputRectW && height == inputRectH)
-            return;
-        inputRectX = x;
-        inputRectY = y;
-        inputRectW = width;
-        inputRectH = height;
-        inputRectValid = true;
+        std::vector<InputRect> valid;
+        valid.reserve(count > 0 ? static_cast<size_t>(count) : 0);
+        for (int i = 0; i < count; ++i)
+        {
+            if (rects[i].width > 0.0f && rects[i].height > 0.0f)
+                valid.push_back(rects[i]);
+        }
 
-        inputSurfaceX = x;
-        inputSurfaceY = y;
+        // the overlay calls this every frame; only churn the compositor when the
+        // hitbox set actually changes.
+        if (valid == inputSurfaceRects)
+            return;
+        inputSurfaceRects = valid;
 
         // a region is immutable once handed to set_input_region, so rebuild it.
         if (inputRegion)
@@ -289,8 +290,10 @@ namespace VKIntox
         if (!inputRegion)
             return;
 
-        if (width <= 0.0f || height <= 0.0f)
+        if (valid.empty())
         {
+            inputSurfaceX = 0.0f;
+            inputSurfaceY = 0.0f;
             wl_surface_set_input_region(inputSurface, inputRegion); // empty => pass-through
             wl_surface_commit(inputSurface);
             if (wl_display* display = getWaylandDisplay())
@@ -298,13 +301,34 @@ namespace VKIntox
             return;
         }
 
-        const int w = static_cast<int>(width);
-        const int h = static_cast<int>(height);
-        if (!ensureInputBuffer(w, h))
+        // the capture surface is one rectangle, so cover the bounding box of
+        // every hitbox and add each one to the region. popups stick out past the
+        // main window, and this is what keeps them from leaking to the game.
+        float minX = valid[0].x, minY = valid[0].y;
+        float maxX = valid[0].x + valid[0].width, maxY = valid[0].y + valid[0].height;
+        for (const InputRect& r : valid)
+        {
+            minX = std::min(minX, r.x);
+            minY = std::min(minY, r.y);
+            maxX = std::max(maxX, r.x + r.width);
+            maxY = std::max(maxY, r.y + r.height);
+        }
+
+        const int w = static_cast<int>(maxX - minX);
+        const int h = static_cast<int>(maxY - minY);
+        if (w <= 0 || h <= 0 || !ensureInputBuffer(w, h))
             return;
 
-        wl_region_add(inputRegion, 0, 0, w, h);
-        wl_subsurface_set_position(inputSubsurface, static_cast<int>(x), static_cast<int>(y));
+        inputSurfaceX = minX;
+        inputSurfaceY = minY;
+
+        for (const InputRect& r : valid)
+        {
+            wl_region_add(inputRegion,
+                          static_cast<int>(r.x - minX), static_cast<int>(r.y - minY),
+                          static_cast<int>(r.width), static_cast<int>(r.height));
+        }
+        wl_subsurface_set_position(inputSubsurface, static_cast<int>(minX), static_cast<int>(minY));
         wl_surface_set_input_region(inputSurface, inputRegion);
         wl_surface_attach(inputSurface, inputBuffer, 0, 0);
         wl_surface_commit(inputSurface);

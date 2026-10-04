@@ -10,6 +10,8 @@ namespace VKIntox
         float y = 0.0f;
         float width = 0.0f;
         float height = 0.0f;
+
+        bool operator==(const InputRect&) const = default;
     };
 
     // Call once at startup with the config value.

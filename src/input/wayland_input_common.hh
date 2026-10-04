@@ -2,6 +2,8 @@
 
 #include <wayland-client.h>
 
+#include "input_blocker.hh"
+
 namespace VKIntox
 {
     // Shared Wayland input state — single wl_seat and event queue used by both
@@ -40,10 +42,11 @@ namespace VKIntox
     float getWaylandInputSurfaceX();
     float getWaylandInputSurfaceY();
 
-    // Position/size the capture surface in the parent's surface coordinates.
-    // Pass width or height <= 0 to disable it (empty input region), letting the
-    // pointer pass through to the game.
-    void setWaylandInputSurfaceRect(float x, float y, float width, float height);
+    // Position/size the capture surface to cover every hitbox in the list and
+    // set its input region to the union, so popups that stick out past the main
+    // window are captured too. Pass nullptr/0 to disable it (empty region),
+    // letting the pointer pass through to the game.
+    void setWaylandInputSurfaceRects(const InputRect* rects, int count);
 
     // Call once at the start of each frame to allow a fresh dispatch.
     // Without this, dispatchWaylandInputEvents() deduplicates within a frame.

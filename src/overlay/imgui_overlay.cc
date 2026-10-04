@@ -1186,7 +1186,7 @@ namespace VKIntox
             frameInputRects.clear();
             setInputRects(nullptr, 0);
             setInputBlocked(false);
-            setWaylandInputSurfaceRect(0.0f, 0.0f, 0.0f, 0.0f);
+            setWaylandInputSurfaceRects(nullptr, 0);
             return VK_NULL_HANDLE;
         }
 
@@ -1342,7 +1342,7 @@ namespace VKIntox
             // toasts render on their own so fatal errors stay visible
             renderToasts();
             // main window is gone; only toasts remain, so free the pointer.
-            setWaylandInputSurfaceRect(0.0f, 0.0f, 0.0f, 0.0f);
+            setWaylandInputSurfaceRects(nullptr, 0);
             publishOverlayInput();
             ImGui::Render();
 
@@ -1507,7 +1507,6 @@ namespace VKIntox
         if (clamped)
             ImGui::SetWindowPos(winPos);
         frameInputRects.push_back(InputRect{winPos.x, winPos.y, winSize.x, winSize.y});
-        setWaylandInputSurfaceRect(winPos.x, winPos.y, winSize.x, winSize.y);
 
         // Process shader test (one per frame) regardless of active tab
         processShaderTest();
@@ -1710,6 +1709,10 @@ namespace VKIntox
                 frameInputRects.push_back(InputRect{w->Pos.x, w->Pos.y, w->Size.x, w->Size.y});
             }
         }
+
+        // the capture surface has to cover the same rects, or a popup sticking
+        // out past the main window won't withhold anything
+        setWaylandInputSurfaceRects(frameInputRects.data(), static_cast<int>(frameInputRects.size()));
 
         publishOverlayInput();
         ImGui::Render();
