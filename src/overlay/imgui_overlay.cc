@@ -2204,8 +2204,18 @@ namespace VKIntox
         };
 
         // Clip the strip to the content region so an animating view can never
-        // draw over the nav or the title bar.
-        ImGui::PushClipRect(viewPos, ImVec2(viewPos.x + viewSize.x, viewPos.y + viewSize.y), true);
+        // draw over the nav or the title bar. The position bezier overshoots
+        // slightly, so pad the side the incoming view crosses; otherwise the
+        // overshoot slices the content's edge against the clip.
+        float padLeft = 0.0f, padRight = 0.0f;
+        if (showingFrom)
+        {
+            const float pad = (travel < 0.0f ? -travel : travel) * 0.15f;
+            if (viewSlideDir > 0) padLeft = pad;
+            else                  padRight = pad;
+        }
+        ImGui::PushClipRect(ImVec2(viewPos.x - padLeft, viewPos.y),
+                            ImVec2(viewPos.x + viewSize.x + padRight, viewPos.y + viewSize.y), true);
 
         if (showingFrom && alphaOut > 0.01f)
             renderSlidingView(viewFromIndex, "##view_slide_out", offsetOut, alphaOut);
