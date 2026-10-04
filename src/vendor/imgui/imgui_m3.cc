@@ -1516,36 +1516,37 @@ ImFont* ImGuiM3FontExtraBold() { return g_font_extra_bold ? g_font_extra_bold : 
 
 // Material Symbols icon face.
 
-bool ImGuiM3LoadIconFont(const char* path, float size_px)
+bool ImGuiM3LoadIconFont(const char* path, float size_px, const ImWchar* ranges)
 {
     if (!path || !ImGui::GetCurrentContext())
         return false;
-    // the subset lives in the Private Use Area, so one range covers it.
-    static const ImWchar icon_ranges[] = {0xE000, 0xF8FF, 0};
+    // icons live in the Private Use Area; callers pass the exact subset they use
+    // so a full font does not build every PUA glyph into the atlas
+    static const ImWchar all_icon_ranges[] = {0xE000, 0xF8FF, 0};
     ImFontConfig cfg;
     cfg.PixelSnapH = true;
     cfg.OversampleH = 2;
     cfg.OversampleV = 2;
-    g_icon_font = ImGui::GetIO().Fonts->AddFontFromFileTTF(path, size_px, &cfg, icon_ranges);
+    g_icon_font = ImGui::GetIO().Fonts->AddFontFromFileTTF(path, size_px, &cfg, ranges ? ranges : all_icon_ranges);
     return g_icon_font != nullptr;
 }
 
 ImFont* ImGuiM3IconFont() { return g_icon_font; }
 
-bool ImGuiM3MergeIconFont(const char* path, float size_px)
+bool ImGuiM3MergeIconFont(const char* path, float size_px, const ImWchar* ranges)
 {
     if (!path || !ImGui::GetCurrentContext())
         return false;
     ImFontAtlas* atlas = ImGui::GetIO().Fonts;
     if (atlas->Fonts.Size == 0)
         return false;
-    static const ImWchar icon_ranges[] = {0xE000, 0xF8FF, 0};
+    static const ImWchar all_icon_ranges[] = {0xE000, 0xF8FF, 0};
     ImFontConfig cfg;
     cfg.MergeMode = true;
     cfg.PixelSnapH = true;
     cfg.OversampleH = 2;
     cfg.OversampleV = 2;
-    return atlas->AddFontFromFileTTF(path, size_px, &cfg, icon_ranges) != nullptr;
+    return atlas->AddFontFromFileTTF(path, size_px, &cfg, ranges ? ranges : all_icon_ranges) != nullptr;
 }
 
 // Easing curves.

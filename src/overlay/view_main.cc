@@ -227,7 +227,7 @@ namespace VKIntox
             }
             ImGui::SameLine();
             ImGui::BeginDisabled(fileDialogPending() || presetBrowser.IsOpened());
-            const std::string importProfileLabel = std::string(Icon::FolderOpenUtf8) + "##importshaderprofile";
+            const std::string importProfileLabel = std::string(Icon::UploadUtf8) + "##importshaderprofile";
             if (ImGui::Button(importProfileLabel.c_str()))
             {
                 if (!startOpenFileDialog("Import ReShade preset", {"*.ini"}))

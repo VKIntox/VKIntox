@@ -226,9 +226,9 @@ namespace VKIntox
         fontCfg.OversampleV = 1;
         fontCfg.PixelSnapH = true;
 
-        // Material Symbols subset: merged into every text face for inline
-        // codepoints, plus a standalone 24px face for M3Icon and the nav.
-        const std::string iconFontPath = findFont("MaterialSymbolsRounded-subset.ttf");
+        // Material Symbols: merged into every text face for inline codepoints,
+        // plus a standalone 24px face for M3Icon and the nav.
+        const std::string iconFontPath = findFont("MaterialSymbolsRounded.ttf");
         const bool haveIconFont = !iconFontPath.empty();
 
         if (regularPath)
@@ -240,7 +240,7 @@ namespace VKIntox
             {
                 ImFont* face = io.Fonts->AddFontFromFileTTF(path, kBodyMediumSize, &fontCfg);
                 if (face && haveIconFont)
-                    ImGuiM3MergeIconFont(iconFontPath.c_str(), kBodyMediumSize);
+                    ImGuiM3MergeIconFont(iconFontPath.c_str(), kBodyMediumSize, Icon::GlyphRanges());
                 return face;
             };
 
@@ -271,14 +271,14 @@ namespace VKIntox
 
         if (haveIconFont)
         {
-            if (ImGuiM3LoadIconFont(iconFontPath.c_str(), 24.0f))
-                Logger::info("ImGui: loaded Material Symbols icon subset");
+            if (ImGuiM3LoadIconFont(iconFontPath.c_str(), 24.0f, Icon::GlyphRanges()))
+                Logger::info("ImGui: loaded Material Symbols icon font");
             else
-                Logger::warn("ImGui: Material Symbols subset could not be parsed");
+                Logger::warn("ImGui: Material Symbols font could not be parsed");
         }
         else
         {
-            Logger::warn("ImGui: Material Symbols subset not found - icons disabled");
+            Logger::warn("ImGui: Material Symbols font not found - icons disabled");
         }
 
         // frame padding needs the real font metrics, so re-apply now.

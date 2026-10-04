@@ -1,17 +1,18 @@
 #ifndef UI_ICONS_HPP_INCLUDED
 #define UI_ICONS_HPP_INCLUDED
 
-// Codepoints for the Material Symbols Rounded subset shipped in
-// assets/font/MaterialSymbolsRounded-subset.ttf.
+// Codepoints for the Material Symbols Rounded face shipped in
+// assets/font/MaterialSymbolsRounded.ttf.
 //
-// The full Material Symbols font is ~15 MB of variable outlines; the subset
-// carries only the glyphs below (all in the Private Use Area), and the overlay
-// loads it as its own ImGui font so icons can be drawn at any size. Add a name
-// here and regenerate the subset when a new icon is needed:
+// The shipped file is the upstream variable font instanced to a static regular
+// (wght=400 FILL=0 GRAD=0 opsz=24), so it carries every icon. The overlay loads
+// it as its own ImGui font but rasterises only the codepoints listed below,
+// because building all 4000+ Private Use Area glyphs into the atlas would cost
+// tens of MB and a slow startup. Add a name here and to GlyphRanges when a new
+// icon is needed; no subset has to be regenerated.
 //
-//   fonttools varLib.instancer MaterialSymbolsRounded[FILL,...].ttf \
-//       wght=400 FILL=0 GRAD=0 opsz=24 -o inst.ttf
-//   pyftsubset inst.ttf --glyphs=<names> -o MaterialSymbolsRounded-subset.ttf
+//   fonttools varLib.instancer 'MaterialSymbolsRounded[FILL,GRAD,opsz,wght].ttf' \
+//       wght=400 FILL=0 GRAD=0 opsz=24 -o assets/font/MaterialSymbolsRounded.ttf
 
 #include "vendor/imgui/imgui_m3.h"
 
@@ -35,6 +36,7 @@ namespace VKIntox::Icon
     constexpr ImWchar Refresh        = 0xE5D5;
     constexpr ImWchar Save           = 0xE161;
     constexpr ImWchar FolderOpen     = 0xE2C8;
+    constexpr ImWchar Upload         = 0xE2C6;  // Import preset
     constexpr ImWchar Check          = 0xE5CA;
     constexpr ImWchar CheckCircle    = 0xE86C;
     constexpr ImWchar Cancel         = 0xE5C9;
@@ -92,6 +94,7 @@ namespace VKIntox::Icon
     constexpr const char* RefreshUtf8       = "\xEE\x97\x95";
     constexpr const char* SaveUtf8          = "\xEE\x85\xA1";
     constexpr const char* FolderOpenUtf8    = "\xEE\x8B\x88";
+    constexpr const char* UploadUtf8        = "\xEE\x8B\x86";
     constexpr const char* CheckUtf8         = "\xEE\x97\x8A";
     constexpr const char* CheckCircleUtf8   = "\xEE\xA1\xAC";
     constexpr const char* CancelUtf8        = "\xEE\x97\x89";
@@ -129,6 +132,24 @@ namespace VKIntox::Icon
     constexpr const char* StarUtf8          = "\xEE\xA0\xB8";
     constexpr const char* DarkModeUtf8      = "\xEE\x94\x9C";
     constexpr const char* LightModeUtf8     = "\xEE\x94\x98";
+
+    // Codepoints the icon face should rasterise. Must list every Icon used in
+    // the overlay; it is the glyph range handed to the font loader.
+    inline const ImWchar* GlyphRanges()
+    {
+        static const ImWchar ranges[] = {
+            AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport,
+            Add, Close, Search, Delete, ExpandMore, ChevronRight, Refresh, Save,
+            FolderOpen, Upload, Check, CheckCircle, Cancel, Warning, Error, Info,
+            Visibility, VisibilityOff, Power, PlayArrow,
+            Speed, Bolt, Science, Build, Extension, Brush, Image, Layers, Texture,
+            BlurOn, Grain, Colorize, Contrast, Straighten, Memory, Terminal, Code,
+            Movie, VideoSettings, List, GridView, DragIndicator, MoreVert, FilterAlt,
+            Star, DarkMode, LightMode,
+            0,
+        };
+        return ranges;
+    }
 }
 
 #endif // UI_ICONS_HPP_INCLUDED

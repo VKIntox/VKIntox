@@ -447,15 +447,15 @@ static void testMotionAndSegments()
     ImGui::DestroyContext();
 }
 
-// Loads the shipped Material Symbols subset and confirms a known icon resolves
-// to a rasterised glyph. The full font is never committed; this guards the
-// subset against a bad regeneration.
+// Loads the shipped Material Symbols font and confirms a known icon resolves to
+// a rasterised glyph. The font is committed, so this guards it against a bad
+// instancing or a broken cmap.
 static void testIconFont()
 {
     const char* candidates[] = {
-        "assets/font/MaterialSymbolsRounded-subset.ttf",
-        "../assets/font/MaterialSymbolsRounded-subset.ttf",
-        "../../assets/font/MaterialSymbolsRounded-subset.ttf",
+        "assets/font/MaterialSymbolsRounded.ttf",
+        "../assets/font/MaterialSymbolsRounded.ttf",
+        "../../assets/font/MaterialSymbolsRounded.ttf",
     };
     const char* found = nullptr;
     for (const char* c : candidates)
@@ -465,13 +465,16 @@ static void testIconFont()
     }
     if (!found)
     {
-        std::printf("SKIP: Material Symbols subset not found next to the build\n");
+        std::printf("SKIP: Material Symbols font not found next to the build\n");
         return;
     }
 
+    // one glyph is enough to prove the face parses; rasterising the whole PUA
+    // range here would just make the test slow
+    static const ImWchar test_ranges[] = {0xE5CA, 0xE5CA, 0};
     ImGui::CreateContext();
     ImGui::GetIO().DisplaySize = ImVec2(800.0f, 600.0f);
-    expect(ImGuiM3LoadIconFont(found, 24.0f), "icon subset loads into the atlas");
+    expect(ImGuiM3LoadIconFont(found, 24.0f, test_ranges), "icon font loads into the atlas");
     expect(ImGuiM3IconFont() != nullptr, "icon font is exposed");
     ImGui::DestroyContext();
 }

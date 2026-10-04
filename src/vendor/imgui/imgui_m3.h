@@ -370,11 +370,11 @@ IMGUI_API ImFont*             ImGuiM3FontExtraBold();
 // Font indices are unstable with MergeMode entries, so faces arrive by pointer.
 IMGUI_API void                ImGuiM3SetTextFonts(ImFont* regular, ImFont* medium, ImFont* bold, ImFont* extra_bold);
 
-// Adds the Material Symbols subset as its own atlas face; call before the atlas
-// is built.
-IMGUI_API bool                ImGuiM3LoadIconFont(const char* path, float size_px);
-// Merges the icon subset into the last-added face for inline icon glyphs.
-IMGUI_API bool                ImGuiM3MergeIconFont(const char* path, float size_px);
+// Adds the Material Symbols font as its own atlas face; call before the atlas
+// is built. ranges selects which codepoints to rasterise (null = all of the PUA).
+IMGUI_API bool                ImGuiM3LoadIconFont(const char* path, float size_px, const ImWchar* ranges = nullptr);
+// Merges the icon font into the last-added face for inline icon glyphs.
+IMGUI_API bool                ImGuiM3MergeIconFont(const char* path, float size_px, const ImWchar* ranges = nullptr);
 IMGUI_API ImFont*             ImGuiM3IconFont();
 IMGUI_API bool                ImGuiM3IsDark();
 IMGUI_API ImU32               ImGuiM3SourceColor();
