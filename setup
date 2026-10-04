@@ -277,6 +277,36 @@ mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$FONT_DIR"
 cp "$SCRIPT_DIR/VERSION" "$APP_CONFIG/version"
 ok "created config dirs"
 
+# seed the depth inversion default for the target: sober's depth buffer reads
+# inverted, everything else does not. written at install time so a fresh config
+# is right out of the box, and rewritten to the target default on a re-run.
+DEPTH_INVERT=false
+[[ "$APP_ID" == "org.vinegarhq.Sober" ]] && DEPTH_INVERT=true
+python3 - "$APP_CONFIG/VKIntox.conf" "$DEPTH_INVERT" <<'PYEOF'
+import os, re, sys
+path, want = sys.argv[1], sys.argv[2]
+lines = []
+if os.path.exists(path):
+    with open(path, "r", encoding="utf-8-sig") as f:
+        lines = f.read().splitlines()
+out = []
+replaced = False
+for line in lines:
+    if re.match(r"\s*depthInvert\s*=", line):
+        out.append(f"depthInvert = {want}")
+        replaced = True
+    else:
+        out.append(line)
+if not replaced:
+    if out and out[-1].strip():
+        out.append("")
+    out.append("# depthInvert: invert depth values (flips near/far planes)")
+    out.append(f"depthInvert = {want}")
+with open(path, "w", encoding="utf-8") as f:
+    f.write("\n".join(out) + "\n")
+PYEOF
+say "depth inversion default: $DEPTH_INVERT"
+
 # the overlay loads the whole M3 set: regular plus the three emphasized weights,
 # the Material Symbols font for icons, and font.ttf as the legacy regular
 # fallback. scripts/setup mirrors this list.
