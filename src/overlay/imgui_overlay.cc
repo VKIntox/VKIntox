@@ -11,8 +11,14 @@
 #include "input_blocker.hh"
 #include "config_serializer.hh"
 #include "async_writer.hh"
+#include "shader_sources.hh"
 #include "image.hh"
 #include "memory.hh"
+#include "renderpass.hh"
+#include "shader.hh"
+#include "graphics_pipeline.hh"
+#include "descriptor_set.hh"
+#include "framebuffer.hh"
 #include "overlay/vkintox_icon_png.hh"
 #include "stb_image.h"
 #include "wayland_display.hh"
@@ -49,6 +55,22 @@ namespace VKIntox
         {
             data->DesiredSize.y = std::max(data->DesiredSize.y, OverlayTitleBarHeight() + 1.0f);
         }
+
+        // Backdrop blur tuning. Capture at half resolution, then run a separable
+        // Gaussian with a fixed 9-tap kernel. Each "pass" is a horizontal draw
+        // followed by a vertical draw, so the ping-pong always lands back in
+        // image[0] and the sampled texture never depends on the pass parity.
+        constexpr uint32_t kBlurDownsample = 2;
+        constexpr float    kBlurSigma = 2.0f;
+
+        // Matches the push_constant block in overlay_blur.frag.glsl exactly.
+        struct BlurPushConstants
+        {
+            float directionX;
+            float directionY;
+            float sigma;
+            float padding;  // matches the shader's std430 padding
+        };
     }
 
     // No-op dummy for Vulkan functions ImGui requests but VKIntox doesn't intercept.
@@ -323,6 +345,10 @@ namespace VKIntox
 
         if (titleIconDescriptor != VK_NULL_HANDLE)
             ImGui_ImplVulkan_RemoveTexture(titleIconDescriptor);
+
+        // Blur descriptors have to go back to ImGui's pool too before the backend
+        // shuts down; the device handles go through the deferred queue below.
+        releaseBlurResources(true);
 
         // The ImGui teardown stays inline and runs first, because it releases
         // ImGui's own references to the descriptor pool and the title icon
@@ -1175,7 +1201,494 @@ namespace VKIntox
         Logger::debug("ImGui Vulkan backend initialized");
     }
 
-    VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImageView imageView, uint32_t width, uint32_t height)
+    bool ImGuiOverlay::ensureBlurResources(uint32_t width, uint32_t height)
+    {
+        if (!logicalDevice || !backendInitialized || width == 0 || height == 0)
+            return false;
+
+        const uint32_t targetWidth  = std::max(1u, width / kBlurDownsample);
+        const uint32_t targetHeight = std::max(1u, height / kBlurDownsample);
+        if (blurReady && blurWidth == targetWidth && blurHeight == targetHeight)
+            return true;
+
+        // Rebuilding destroys objects the GPU may still be reading. Wait on every
+        // overlay fence, including sibling swapchain images, so nothing in flight
+        // references them. If one never signals, keep the old resources: a stale
+        // blur resolution is far better than a use-after-free.
+        for (VkFence fence : commandBufferFences)
+        {
+            if (fence == VK_NULL_HANDLE)
+                continue;
+            if (logicalDevice->vkd.WaitForFences(logicalDevice->device, 1, &fence, VK_TRUE, 1'000'000'000ull) != VK_SUCCESS)
+            {
+                Logger::warn("overlay blur: fence wait before resize failed; keeping previous resources");
+                return blurReady;
+            }
+        }
+
+        releaseBlurResources(false);
+
+        auto& vkd = logicalDevice->vkd;
+        const VkDevice dev = logicalDevice->device;
+        blurWidth  = targetWidth;
+        blurHeight = targetHeight;
+        bool ok = true;
+
+        // A capture needs the swapchain format to be blittable and filterable.
+        // If it is not, the whole feature is unavailable and we fall back to the
+        // flat translucent surface rather than record an invalid blit.
+        {
+            VkFormatProperties formatProps{};
+            logicalDevice->vki.GetPhysicalDeviceFormatProperties(logicalDevice->physicalDevice, swapchainFormat, &formatProps);
+            const VkFormatFeatureFlags features = formatProps.optimalTilingFeatures;
+            const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+            if ((features & required) != required)
+            {
+                Logger::warn("overlay blur: swapchain format lacks blit support; blur disabled");
+                blurWidth  = 0;
+                blurHeight = 0;
+                return false;
+            }
+            blurFilter = (features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+        }
+
+        // Offscreen render pass. DONT_CARE because every pass overwrites the whole
+        // attachment. Its external dependencies make a prior sample of the target
+        // (write-after-read) and a prior write (write-after-write) safe without a
+        // separate barrier before every pass.
+        {
+            VkAttachmentDescription attachment{};
+            attachment.format         = swapchainFormat;
+            attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+            attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+            attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+            attachment.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkAttachmentReference colorRef{};
+            colorRef.attachment = 0;
+            colorRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            VkSubpassDescription subpass{};
+            subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.colorAttachmentCount = 1;
+            subpass.pColorAttachments    = &colorRef;
+
+            VkSubpassDependency deps[2]{};
+            deps[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+            deps[0].dstSubpass    = 0;
+            deps[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            deps[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            deps[1].srcSubpass    = 0;
+            deps[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+            deps[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            deps[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+            VkRenderPassCreateInfo info{};
+            info.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+            info.attachmentCount = 1;
+            info.pAttachments    = &attachment;
+            info.subpassCount    = 1;
+            info.pSubpasses      = &subpass;
+            info.dependencyCount = 2;
+            info.pDependencies   = deps;
+            ok = vkd.CreateRenderPass(dev, &info, nullptr, &blurRenderPass) == VK_SUCCESS;
+        }
+
+        if (ok)
+        {
+            blurSetLayout = createImageSamplerDescriptorSetLayout(logicalDevice, 1u);
+            if (blurSetLayout == VK_NULL_HANDLE)
+                ok = false;
+        }
+
+        if (ok)
+        {
+            VkDescriptorPoolSize poolSize{};
+            poolSize.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            poolSize.descriptorCount = imageCount * 2u;
+            blurPool = createDescriptorPool(logicalDevice, {poolSize});
+            if (blurPool == VK_NULL_HANDLE)
+                ok = false;
+        }
+
+        if (ok)
+        {
+            VkSamplerCreateInfo info{};
+            info.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            info.magFilter    = VK_FILTER_LINEAR;
+            info.minFilter    = VK_FILTER_LINEAR;
+            info.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            info.maxLod       = 0.0f;
+            ok = vkd.CreateSampler(dev, &info, nullptr, &blurSampler) == VK_SUCCESS;
+        }
+
+        if (ok)
+        {
+            VkPushConstantRange range{};
+            range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            range.offset     = 0;
+            range.size       = sizeof(BlurPushConstants);
+            blurPipelineLayout = createGraphicsPipelineLayout(logicalDevice, {blurSetLayout}, {range});
+            if (blurPipelineLayout == VK_NULL_HANDLE)
+                ok = false;
+        }
+
+        if (ok)
+        {
+            VkShaderModule vert = VK_NULL_HANDLE;
+            VkShaderModule frag = VK_NULL_HANDLE;
+            createShaderModule(logicalDevice, full_screen_triangle_vert, &vert);
+            createShaderModule(logicalDevice, overlay_blur_frag, &frag);
+            if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE)
+            {
+                ok = false;
+            }
+            else
+            {
+                VkExtent2D extent{blurWidth, blurHeight};
+                blurPipeline = createGraphicsPipeline(logicalDevice, vert, nullptr, "main", frag, nullptr, "main",
+                                                      extent, blurRenderPass, blurPipelineLayout);
+                if (blurPipeline == VK_NULL_HANDLE)
+                    ok = false;
+            }
+            if (frag != VK_NULL_HANDLE) vkd.DestroyShaderModule(dev, frag, nullptr);
+            if (vert != VK_NULL_HANDLE) vkd.DestroyShaderModule(dev, vert, nullptr);
+        }
+
+        if (ok)
+        {
+            // One image, its device memory and its view. Both ping-pong targets
+            // share this so the per-image block below stays symmetric.
+            auto createImage = [&](VkImage& image, VkDeviceMemory& memory, VkImageView& view) -> bool {
+                VkImageCreateInfo ci{};
+                ci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+                ci.imageType     = VK_IMAGE_TYPE_2D;
+                ci.format        = swapchainFormat;
+                ci.extent        = {blurWidth, blurHeight, 1};
+                ci.mipLevels     = 1;
+                ci.arrayLayers   = 1;
+                ci.samples       = VK_SAMPLE_COUNT_1_BIT;
+                ci.tiling        = VK_IMAGE_TILING_OPTIMAL;
+                ci.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+                ci.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+                ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                if (vkd.CreateImage(dev, &ci, nullptr, &image) != VK_SUCCESS)
+                    return false;
+                VkMemoryRequirements req{};
+                vkd.GetImageMemoryRequirements(dev, image, &req);
+                VkMemoryAllocateInfo ai{};
+                ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                ai.allocationSize  = req.size;
+                ai.memoryTypeIndex = findMemoryTypeIndex(logicalDevice, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                if (vkd.AllocateMemory(dev, &ai, nullptr, &memory) != VK_SUCCESS)
+                    return false;
+                if (vkd.BindImageMemory(dev, image, memory, 0) != VK_SUCCESS)
+                    return false;
+                VkImageViewCreateInfo vi{};
+                vi.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                vi.image                           = image;
+                vi.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+                vi.format                          = swapchainFormat;
+                vi.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+                vi.subresourceRange.baseMipLevel   = 0;
+                vi.subresourceRange.levelCount     = 1;
+                vi.subresourceRange.baseArrayLayer = 0;
+                vi.subresourceRange.layerCount     = 1;
+                return vkd.CreateImageView(dev, &vi, nullptr, &view) == VK_SUCCESS;
+            };
+
+            // Sample set for a blur source. The layout is declared read-only so
+            // it matches the render pass's final layout, unlike the shared helper
+            // which hardcodes GENERAL.
+            auto writeSourceSet = [&](VkDescriptorSet& set, VkImageView view) -> bool {
+                VkDescriptorSetAllocateInfo ai{};
+                ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+                ai.descriptorPool     = blurPool;
+                ai.descriptorSetCount = 1;
+                ai.pSetLayouts        = &blurSetLayout;
+                if (vkd.AllocateDescriptorSets(dev, &ai, &set) != VK_SUCCESS)
+                    return false;
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.sampler     = blurSampler;
+                imageInfo.imageView   = view;
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                VkWriteDescriptorSet write{};
+                write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet          = set;
+                write.dstBinding      = 0;
+                write.descriptorCount = 1;
+                write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.pImageInfo      = &imageInfo;
+                vkd.UpdateDescriptorSets(dev, 1, &write, 0, nullptr);
+                return true;
+            };
+
+            blurResources.resize(imageCount);
+            for (uint32_t i = 0; i < imageCount && ok; ++i)
+            {
+                BlurResources& r = blurResources[i];
+                for (int s = 0; s < 2 && ok; ++s)
+                {
+                    if (!createImage(r.image[s], r.memory[s], r.view[s]))
+                    {
+                        ok = false;
+                        break;
+                    }
+
+                    VkFramebufferCreateInfo fi{};
+                    fi.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                    fi.renderPass      = blurRenderPass;
+                    fi.attachmentCount = 1;
+                    fi.pAttachments    = &r.view[s];
+                    fi.width           = blurWidth;
+                    fi.height          = blurHeight;
+                    fi.layers          = 1;
+                    if (vkd.CreateFramebuffer(dev, &fi, nullptr, &r.framebuffer[s]) != VK_SUCCESS)
+                    {
+                        ok = false;
+                        break;
+                    }
+
+                    if (!writeSourceSet(r.sourceSet[s], r.view[s]))
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+
+                if (!ok)
+                    break;
+
+                // image[0] is always the final ping-pong result, so it is the one
+                // the overlay draws.
+                r.imguiTexture = ImGui_ImplVulkan_AddTexture(blurSampler, r.view[0],
+                                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                if (r.imguiTexture == VK_NULL_HANDLE)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+
+        if (!ok)
+        {
+            releaseBlurResources(false);
+            return false;
+        }
+
+        blurReady = true;
+        Logger::debug("overlay blur resources ready at " + std::to_string(blurWidth) + "x" + std::to_string(blurHeight));
+        return true;
+    }
+
+    void ImGuiOverlay::releaseBlurResources(bool deferred)
+    {
+        if (!logicalDevice)
+            return;
+
+        auto& vkd = logicalDevice->vkd;
+        const VkDevice dev = logicalDevice->device;
+
+        // ImGui owns these descriptor sets and pulls them from its own pool, so
+        // they must go back before ImGui_ImplVulkan_Shutdown no matter how the
+        // device handles below are released.
+        for (auto& r : blurResources)
+        {
+            if (r.imguiTexture != VK_NULL_HANDLE && backendInitialized)
+                ImGui_ImplVulkan_RemoveTexture(r.imguiTexture);
+            r.imguiTexture = VK_NULL_HANDLE;
+        }
+
+        if (deferred)
+        {
+            auto& queue = DeferredDestroyQueue::instance();
+            for (auto& r : blurResources)
+            {
+                for (int s = 0; s < 2; ++s)
+                {
+                    if (r.image[s] != VK_NULL_HANDLE)
+                        queue.push(DestroyPhase::Resource, [vkd, dev, h = r.image[s]] { vkd.DestroyImage(dev, h, nullptr); });
+                    if (r.view[s] != VK_NULL_HANDLE)
+                        queue.push(DestroyPhase::Resource, [vkd, dev, h = r.view[s]] { vkd.DestroyImageView(dev, h, nullptr); });
+                    if (r.framebuffer[s] != VK_NULL_HANDLE)
+                        queue.push(DestroyPhase::RenderPass, [vkd, dev, h = r.framebuffer[s]] { vkd.DestroyFramebuffer(dev, h, nullptr); });
+                    if (r.memory[s] != VK_NULL_HANDLE)
+                        queue.push(DestroyPhase::Memory, [vkd, dev, h = r.memory[s]] { vkd.FreeMemory(dev, h, nullptr); });
+                }
+            }
+            if (blurPipeline != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Pipeline, [vkd, dev, h = blurPipeline] { vkd.DestroyPipeline(dev, h, nullptr); });
+            if (blurRenderPass != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::RenderPass, [vkd, dev, h = blurRenderPass] { vkd.DestroyRenderPass(dev, h, nullptr); });
+            if (blurPool != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Descriptor, [vkd, dev, h = blurPool] { vkd.DestroyDescriptorPool(dev, h, nullptr); });
+            if (blurPipelineLayout != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Layout, [vkd, dev, h = blurPipelineLayout] { vkd.DestroyPipelineLayout(dev, h, nullptr); });
+            if (blurSetLayout != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Layout, [vkd, dev, h = blurSetLayout] { vkd.DestroyDescriptorSetLayout(dev, h, nullptr); });
+            if (blurSampler != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, dev, h = blurSampler] { vkd.DestroySampler(dev, h, nullptr); });
+        }
+        else
+        {
+            for (auto& r : blurResources)
+            {
+                for (int s = 0; s < 2; ++s)
+                {
+                    if (r.framebuffer[s] != VK_NULL_HANDLE) { vkd.DestroyFramebuffer(dev, r.framebuffer[s], nullptr); r.framebuffer[s] = VK_NULL_HANDLE; }
+                    if (r.view[s] != VK_NULL_HANDLE)        { vkd.DestroyImageView(dev, r.view[s], nullptr); r.view[s] = VK_NULL_HANDLE; }
+                    if (r.image[s] != VK_NULL_HANDLE)       { vkd.DestroyImage(dev, r.image[s], nullptr); r.image[s] = VK_NULL_HANDLE; }
+                    if (r.memory[s] != VK_NULL_HANDLE)      { vkd.FreeMemory(dev, r.memory[s], nullptr); r.memory[s] = VK_NULL_HANDLE; }
+                }
+            }
+            if (blurPipeline != VK_NULL_HANDLE)       { vkd.DestroyPipeline(dev, blurPipeline, nullptr); blurPipeline = VK_NULL_HANDLE; }
+            if (blurRenderPass != VK_NULL_HANDLE)     { vkd.DestroyRenderPass(dev, blurRenderPass, nullptr); blurRenderPass = VK_NULL_HANDLE; }
+            if (blurPool != VK_NULL_HANDLE)           { vkd.DestroyDescriptorPool(dev, blurPool, nullptr); blurPool = VK_NULL_HANDLE; }
+            if (blurPipelineLayout != VK_NULL_HANDLE) { vkd.DestroyPipelineLayout(dev, blurPipelineLayout, nullptr); blurPipelineLayout = VK_NULL_HANDLE; }
+            if (blurSetLayout != VK_NULL_HANDLE)      { vkd.DestroyDescriptorSetLayout(dev, blurSetLayout, nullptr); blurSetLayout = VK_NULL_HANDLE; }
+            if (blurSampler != VK_NULL_HANDLE)        { vkd.DestroySampler(dev, blurSampler, nullptr); blurSampler = VK_NULL_HANDLE; }
+        }
+
+        blurResources.clear();
+        blurReady = false;
+        blurWidth = 0;
+        blurHeight = 0;
+    }
+
+    void ImGuiOverlay::recordBlur(VkCommandBuffer cmd, uint32_t imageIndex, VkImage sourceImage,
+                                  uint32_t sourceWidth, uint32_t sourceHeight)
+    {
+        if (!blurReady || imageIndex >= blurResources.size())
+            return;
+        BlurResources& r = blurResources[imageIndex];
+        if (r.image[0] == VK_NULL_HANDLE || r.image[1] == VK_NULL_HANDLE)
+            return;
+
+        auto& vkd = logicalDevice->vkd;
+
+        VkImageMemoryBarrier barrier{};
+        barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel   = 0;
+        barrier.subresourceRange.levelCount     = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount     = 1;
+
+        // Swapchain: PRESENT_SRC -> TRANSFER_SRC for the capture blit. PRESENT_SRC
+        // is not a legal blit source layout, so this transition is mandatory.
+        barrier.image         = sourceImage;
+        barrier.oldLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkd.CmdPipelineBarrier(cmd,
+                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        // Capture target: discard the previous frame's contents and ready it for
+        // the blit. UNDEFINED is safe because the blit overwrites it entirely.
+        barrier.image         = r.image[0];
+        barrier.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkd.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        VkImageBlit region{};
+        region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.srcSubresource.mipLevel       = 0;
+        region.srcSubresource.baseArrayLayer = 0;
+        region.srcSubresource.layerCount     = 1;
+        region.srcOffsets[0] = {0, 0, 0};
+        region.srcOffsets[1] = {static_cast<int32_t>(sourceWidth), static_cast<int32_t>(sourceHeight), 1};
+        region.dstSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.dstSubresource.mipLevel       = 0;
+        region.dstSubresource.baseArrayLayer = 0;
+        region.dstSubresource.layerCount     = 1;
+        region.dstOffsets[0] = {0, 0, 0};
+        region.dstOffsets[1] = {static_cast<int32_t>(blurWidth), static_cast<int32_t>(blurHeight), 1};
+        vkd.CmdBlitImage(cmd, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         r.image[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         1, &region, blurFilter);
+
+        // Capture is now readable by the first blur pass.
+        barrier.image         = r.image[0];
+        barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkd.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                               0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        // Swapchain back to PRESENT_SRC for the ImGui render pass, whose
+        // attachment declares that as its initial layout.
+        barrier.image         = sourceImage;
+        barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        vkd.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                               0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        const ImGuiM3BlurSettings& settings = ImGuiM3GetBlurSettings();
+        int passes = settings.passes;
+        if (passes < 1)  passes = 1;
+        if (passes > 10) passes = 10;
+        // Half the configured size as pixel spacing: a 5-wide kernel on each side
+        // of a 9-tap read, repeated, reads as a generous radius rather than a
+        // hard band.
+        const float radius = std::max(0.0f, settings.size) * 0.5f;
+        const float sigma  = kBlurSigma;
+
+        auto recordPass = [&](VkFramebuffer framebuffer, VkDescriptorSet source, const BlurPushConstants& pc) {
+            VkRenderPassBeginInfo rp{};
+            rp.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rp.renderPass        = blurRenderPass;
+            rp.framebuffer       = framebuffer;
+            rp.renderArea.offset = {0, 0};
+            rp.renderArea.extent = {blurWidth, blurHeight};
+            vkd.CmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+            vkd.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blurPipeline);
+            vkd.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blurPipelineLayout, 0, 1, &source, 0, nullptr);
+            vkd.CmdPushConstants(cmd, blurPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+            vkd.CmdDraw(cmd, 3, 1, 0, 0);
+            vkd.CmdEndRenderPass(cmd);
+        };
+
+        // Horizontal into image[1], then vertical back into image[0]. Pairs keep
+        // the final image fixed at image[0] regardless of `passes` parity, so the
+        // ImGui texture registered above never has to be rebuilt.
+        for (int p = 0; p < passes; ++p)
+        {
+            BlurPushConstants pc{};
+            pc.directionX = radius / static_cast<float>(blurWidth);
+            pc.directionY = 0.0f;
+            pc.sigma      = sigma;
+            recordPass(r.framebuffer[1], r.sourceSet[0], pc);
+
+            pc.directionX = 0.0f;
+            pc.directionY = radius / static_cast<float>(blurHeight);
+            pc.sigma      = sigma;
+            recordPass(r.framebuffer[0], r.sourceSet[1], pc);
+        }
+    }
+
+    VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height)
     {
         // Render even when the main overlay is hidden if there are pending
         // toast notifications — fatal errors must stay visible to the user.
@@ -1198,6 +1711,21 @@ namespace VKIntox
         // Store current resolution for VRAM estimates in settings
         currentWidth = width;
         currentHeight = height;
+
+        // Backdrop blur. Resolve the settings once per frame; the struct lives in
+        // the theme, so the editor and the persisted `.colors` file drive this
+        // directly. blurActive stays false on any failure and the caller then
+        // falls back to the flat translucent surface.
+        ImGuiM3BlurSettings&    blurSettings     = ImGuiM3GetBlurSettings();
+        ImGuiM3BackgroundObject& backgroundObject = ImGuiM3GetBackgroundObject();
+        const float backgroundOpacity = std::clamp(blurSettings.background_opacity, 0.0f, 1.0f);
+        const bool  blurRequested = blurSettings.blur && backgroundObject.BackgroundBlur && backgroundOpacity <= 0.99f;
+        bool        blurActive    = false;
+        if (visible && blurRequested)
+        {
+            ensureBlurResources(width, height);
+            blurActive = blurReady && imageIndex < blurResources.size();
+        }
 
         // Wait for previous use of this command buffer to complete.
         // Adaptive timeout: 4x the measured frame time (generous margin for GPU
@@ -1399,6 +1927,10 @@ namespace VKIntox
         const float previousFramePaddingY = ImGui::GetStyle().FramePadding.y;
         ImGui::GetStyle().FramePadding.y = std::max(0.0f, (OverlayTitleBarHeight() - ImGui::GetFontSize()) * 0.5f);
         ImGui::SetNextWindowSizeConstraints(minSize, maxSize, overlayTitleHeightConstraint);
+        // The shell surface is translucent by BackgroundOpacity over the game
+        // frame (and over the blurred backdrop when blur is active). The content
+        // child stays transparent so the tint is applied exactly once.
+        ImGui::SetNextWindowBgAlpha(backgroundOpacity);
         // "##..." renders as an empty native title: the bar keeps its drag
         // rect while the brand row below owns the pixels.
         ImGui::Begin("##vkintox_overlay", nullptr,
@@ -1407,6 +1939,25 @@ namespace VKIntox
 
         const ImVec2 windowPos = ImGui::GetWindowPos();
         const ImVec2 windowSize = ImGui::GetWindowSize();
+
+        // Draw the blurred backdrop behind every overlay surface. The background
+        // draw list is rendered before any window, so the shell/nav/child surfaces
+        // (at BackgroundOpacity) tint it exactly like they tint the game frame.
+        if (blurActive && blurResources[imageIndex].imguiTexture != VK_NULL_HANDLE)
+        {
+            // Sample the region actually behind the window so the backdrop stays
+            // registered with the scene as the overlay is dragged or resized.
+            const float invW = width  > 0 ? 1.0f / static_cast<float>(width)  : 0.0f;
+            const float invH = height > 0 ? 1.0f / static_cast<float>(height) : 0.0f;
+            const ImVec2 uv0(windowPos.x * invW, windowPos.y * invH);
+            const ImVec2 uv1((windowPos.x + windowSize.x) * invW, (windowPos.y + windowSize.y) * invH);
+
+            ImDrawList* backgroundDrawList = ImGui::GetBackgroundDrawList();
+            backgroundDrawList->AddImageRounded(
+                ImTextureRef(reinterpret_cast<ImTextureID>(blurResources[imageIndex].imguiTexture)),
+                windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y),
+                uv0, uv1, IM_COL32_WHITE, ImGui::GetStyle().WindowRounding);
+        }
         const float titleBarHeight = ImGui::GetCurrentWindowRead()->TitleBarHeight;
         const ImGuiM3Metrics& m3metrics = ImGuiM3GetMetrics();
         // three-zone header: icon leading, brand centred, close trailing.
@@ -1638,7 +2189,10 @@ namespace VKIntox
             ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
             ImVec4 viewBg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
-            viewBg.w = 1.0f;
+            // Transparent: the window's own surface (at BackgroundOpacity) is the
+            // single tint layer, so the game frame or blurred backdrop shows
+            // through the content region too instead of being covered twice.
+            viewBg.w = 0.0f;
             ImGui::PushStyleColor(ImGuiCol_ChildBg, viewBg);
             ImGui::BeginChild(childId, viewSize, false,
                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -1716,6 +2270,12 @@ namespace VKIntox
 
         publishOverlayInput();
         ImGui::Render();
+
+        // Record the backdrop capture + blur into this same command buffer,
+        // before the overlay render pass samples the result. No work is recorded
+        // when the blur is disabled or the resources are unavailable.
+        if (blurActive)
+            recordBlur(cmd, imageIndex, image, width, height);
 
         // Begin render pass
         VkRenderPassBeginInfo rpBegin = {};

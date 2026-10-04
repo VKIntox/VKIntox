@@ -419,6 +419,10 @@ struct ThemeState
     uint64_t                   role_flags[2] = {0, 0};
     ImVec4                     overrides[ImGuiM3Role_COUNT];
     ImGuiM3Metrics             metrics;
+    // Overlay backdrop blur, persisted with the theme (flat keys at the top of
+    // the file) and edited from the Blur section of the theme editor.
+    ImGuiM3BlurSettings        blur;
+    ImGuiM3BackgroundObject    background_object;
     // non-color tokens from [expressive], with their dirty flags.
     bool                       density_dirty = false;
     bool                       shape_scale_dirty = false;
@@ -636,6 +640,29 @@ static std::string Lowercase(std::string s)
     return s;
 }
 
+// Parses the loose boolean spellings accepted in the `.colors` file.
+static bool ParseBoolValue(const std::string& value, bool* out)
+{
+    const std::string v = Lowercase(value);
+    if (v == "true" || v == "1" || v == "on" || v == "yes")  { *out = true;  return true; }
+    if (v == "false" || v == "0" || v == "off" || v == "no") { *out = false; return true; }
+    return false;
+}
+
+// Strict number parse: rejects trailing garbage so a typo is reported rather
+// than silently read as zero.
+static bool ParseFloatValue(const std::string& value, float* out)
+{
+    char* end = nullptr;
+    const double parsed = strtod(value.c_str(), &end);
+    while (*end == ' ' || *end == '\t')
+        end++;
+    if (end == value.c_str() || *end != '\0')
+        return false;
+    *out = (float)parsed;
+    return true;
+}
+
 // #rgb, #rgba, #rrggbb, #rrggbbaa, 0x-prefixed, 0..255 triplets.
 static bool ParseColor(const std::string& text, ImVec4* out)
 {
@@ -696,6 +723,8 @@ static void LoadThemeFile(const std::string& path)
     g_theme.role_flags[0] = 0;
     g_theme.role_flags[1] = 0;
     g_theme.metrics = ImGuiM3Metrics();
+    g_theme.blur = ImGuiM3BlurSettings();
+    g_theme.background_object = ImGuiM3BackgroundObject();
     g_theme.source = 0xFFE91E63;
     g_theme.variant = ImGuiM3Variant_Expressive;
     g_theme.contrast = ImGuiM3Contrast_Standard;
@@ -811,6 +840,36 @@ static void LoadThemeFile(const std::string& path)
             else
                 applied++;
         }
+        else if (key == "blur" || key == "blur_enabled")
+        {
+            bool b = g_theme.blur.blur;
+            if (ParseBoolValue(value, &b)) { g_theme.blur.blur = b; applied++; }
+            else err += "line " + std::to_string(line_no) + ": blur must be true/false\n";
+        }
+        else if (key == "background_opacity" || key == "bg_opacity")
+        {
+            float f = g_theme.blur.background_opacity;
+            if (ParseFloatValue(value, &f)) { g_theme.blur.background_opacity = ImSaturate(f); applied++; }
+            else err += "line " + std::to_string(line_no) + ": background_opacity must be a number\n";
+        }
+        else if (key == "blur_size" || key == "blur_radius")
+        {
+            float f = g_theme.blur.size;
+            if (ParseFloatValue(value, &f)) { g_theme.blur.size = f < 0.0f ? 0.0f : f; applied++; }
+            else err += "line " + std::to_string(line_no) + ": blur_size must be a number\n";
+        }
+        else if (key == "blur_passes" || key == "blur_pass_count")
+        {
+            float f = (float)g_theme.blur.passes;
+            if (ParseFloatValue(value, &f)) { g_theme.blur.passes = clampInt(1, 10, (int)(f + 0.5f)); applied++; }
+            else err += "line " + std::to_string(line_no) + ": blur_passes must be a number\n";
+        }
+        else if (key == "background_blur" || key == "surface_background_blur")
+        {
+            bool b = g_theme.background_object.BackgroundBlur;
+            if (ParseBoolValue(value, &b)) { g_theme.background_object.BackgroundBlur = b; applied++; }
+            else err += "line " + std::to_string(line_no) + ": background_blur must be true/false\n";
+        }
         else
         {
             ImGuiM3Role role = ImGuiM3RoleFromName(key.c_str());
@@ -921,6 +980,16 @@ const ImGuiM3Metrics& ImGuiM3GetMetrics()
     return g_theme.metrics;
 }
 
+ImGuiM3BlurSettings& ImGuiM3GetBlurSettings()
+{
+    return g_theme.blur;
+}
+
+ImGuiM3BackgroundObject& ImGuiM3GetBackgroundObject()
+{
+    return g_theme.background_object;
+}
+
 bool  ImGuiM3IsDark() { return g_theme.dark; }
 ImU32 ImGuiM3SourceColor() { return g_theme.source; }
 ImGuiM3Variant  ImGuiM3GetVariant()  { return g_theme.variant; }
@@ -1000,6 +1069,14 @@ bool ImGuiM3WriteThemeFile(const char* path)
         out += sbuf;
     }
     out += "\n\n";
+
+    out += "# Overlay backdrop blur.\n";
+    out += "blur               = " + std::string(g_theme.blur.blur ? "true" : "false") + "\n";
+    out += "background_opacity = " + std::to_string(g_theme.blur.background_opacity) + "\n";
+    out += "blur_size          = " + std::to_string(g_theme.blur.size) + "\n";
+    out += "blur_passes        = " + std::to_string(g_theme.blur.passes) + "\n";
+    out += "background_blur    = " + std::string(g_theme.background_object.BackgroundBlur ? "true" : "false") + "\n";
+    out += "\n";
 
     for (int i = 0; i < ImGuiM3Role_COUNT; i++)
     {
@@ -1890,6 +1967,8 @@ void ImGuiM3NewFrame()
             g_theme.role_flags[0] = 0;
             g_theme.role_flags[1] = 0;
             g_theme.metrics = ImGuiM3Metrics();
+            g_theme.blur = ImGuiM3BlurSettings();
+            g_theme.background_object = ImGuiM3BackgroundObject();
             g_theme.source = 0xFFE91E63;
     g_theme.variant = ImGuiM3Variant_Expressive;
             g_theme.contrast = ImGuiM3Contrast_Standard;
@@ -2571,6 +2650,33 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
 void ImGui::M3ThemeEditor()
 {
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+
+    // Backdrop blur. This edits the same struct the overlay renderer reads, so a
+    // change is live immediately, and writes the values back to the `.colors`
+    // file so they persist with the rest of the theme.
+    M3SectionHeader("Blur");
+    {
+        ImGuiM3BlurSettings& bs = ImGuiM3GetBlurSettings();
+        ImGuiM3BackgroundObject& bg = ImGuiM3GetBackgroundObject();
+        bool changed = false;
+
+        changed |= M3Switch("Blur", &bs.blur);
+        changed |= ImGui::SliderFloat("Background opacity", &bs.background_opacity, 0.0f, 1.0f, "%.2f");
+        changed |= ImGui::SliderFloat("Size", &bs.size, 0.5f, 20.0f, "%.1f");
+        changed |= ImGui::SliderInt("Passes", &bs.passes, 1, 10);
+        changed |= M3Switch("Background surface blur", &bg.BackgroundBlur);
+
+        // Keep the shared struct legal regardless of what the widgets or a
+        // hand-edited file produced.
+        bs.background_opacity = ImSaturate(bs.background_opacity);
+        if (bs.passes < 1)   bs.passes = 1;
+        if (bs.passes > 10)  bs.passes = 10;
+        if (bs.size < 0.0f)  bs.size = 0.0f;
+
+        if (changed)
+            ImGuiM3WriteThemeFile(ImGuiM3GetThemeFile());
+    }
+    ImGui::TextDisabled("Blur is skipped when Background opacity is above 0.99.");
 
     // source + generation knobs
     M3SectionHeader("Source");

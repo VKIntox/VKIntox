@@ -14,6 +14,7 @@ glsl_shader_src = files(
     'effects/shaders/glsl/depth_resolve_universal_ms.frag.glsl',
     'effects/shaders/glsl/depth_resolve_universal_msaa.frag.glsl',
     'effects/shaders/glsl/full_screen_triangle.vert.glsl',
+    'effects/shaders/glsl/overlay_blur.frag.glsl',
 )
 glsl_compiler = find_program('glslangValidator')
 glsl_generator = generator(glsl_compiler,

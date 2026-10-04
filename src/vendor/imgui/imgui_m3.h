@@ -317,6 +317,27 @@ struct ImGuiM3Metrics
     float       duration_extra_long4 = 1000.0f;
 };
 
+// Overlay backdrop blur. The settings live in the theme so the editor and the
+// `.colors` file own them end to end. `blur` is the global toggle, `size` the
+// blur radius/spread and `passes` (1..10) the number of separable ping-pong
+// rounds. `background_opacity` is how strongly the backdrop surface tints the
+// frame behind the overlay; blur is skipped once it reaches 1.
+struct ImGuiM3BlurSettings
+{
+    bool  blur = true;
+    float background_opacity = 0.80f;
+    float size = 5.0f;
+    int   passes = 3;
+};
+
+// A background surface. The overlay shell owns the only one; its
+// `BackgroundBlur` flag opts that surface into the shared backdrop blur,
+// independently of the global toggle.
+struct ImGuiM3BackgroundObject
+{
+    bool BackgroundBlur = true;
+};
+
 // Button flavours.
 
 enum ImGuiM3ButtonVariant_
@@ -361,6 +382,10 @@ IMGUI_API ImVec4              ImGuiM3StateLayer(ImGuiM3Role role, ImGuiM3State s
 IMGUI_API ImU32               ImGuiM3StateLayerU32(ImGuiM3Role role, ImGuiM3State state);
 IMGUI_API ImVec4              ImGuiM3Elevate(ImGuiM3Role role, int level);
 IMGUI_API const ImGuiM3Metrics& ImGuiM3GetMetrics();
+
+// Overlay backdrop blur settings and the single overlay background surface.
+IMGUI_API ImGuiM3BlurSettings&     ImGuiM3GetBlurSettings();
+IMGUI_API ImGuiM3BackgroundObject& ImGuiM3GetBackgroundObject();
 
 // Named Google Sans faces, or NULL when the family was missing. Expressive leans
 // on weight for emphasis, which a single face cannot express.

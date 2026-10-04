@@ -170,7 +170,7 @@ namespace VKIntox
         void setSelectedEffects(const std::vector<std::string>& effects,
                                 const std::vector<std::string>& disabledEffects = {});
 
-        VkCommandBuffer recordFrame(uint32_t imageIndex, VkImageView imageView, uint32_t width, uint32_t height);
+        VkCommandBuffer recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height);
 
         // Get fence for command buffer synchronization (used by vkintox.cpp submit)
         VkFence getCommandBufferFence(uint32_t imageIndex) const
@@ -185,6 +185,14 @@ namespace VKIntox
         void initVulkanBackend(VkFormat swapchainFormat, uint32_t imageCount);
         void saveToPersistentState();
         void saveCurrentConfig();
+
+        // Backdrop blur. Resources are created once and rebuilt only when the
+        // backing swapchain extent or format changes. Returns false when the
+        // blur cannot run (no Vulkan objects or a failed creation), in which
+        // case the caller falls back to the flat translucent background.
+        bool ensureBlurResources(uint32_t width, uint32_t height);
+        void recordBlur(VkCommandBuffer cmd, uint32_t imageIndex, VkImage sourceImage, uint32_t sourceWidth, uint32_t sourceHeight);
+        void releaseBlurResources(bool deferred = false);
 
         // View rendering methods (implemented in separate files)
         void renderAddEffectsView();
@@ -222,6 +230,30 @@ namespace VKIntox
         VkImageView titleIconView = VK_NULL_HANDLE;
         VkSampler titleIconSampler = VK_NULL_HANDLE;
         VkDescriptorSet titleIconDescriptor = VK_NULL_HANDLE;
+        // Backdrop blur. One set of resources per swapchain image so a half-res
+        // capture written for image N can never race a blur still reading image
+        // M on the GPU. Shared objects (pipeline, sampler, render pass) live
+        // below and are rebuilt only on a swapchain extent/format change.
+        struct BlurResources
+        {
+            VkImage         image[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};       // [0] final ping-pong target
+            VkDeviceMemory  memory[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+            VkImageView     view[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+            VkFramebuffer   framebuffer[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+            VkDescriptorSet sourceSet[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};   // samples image[i]
+            VkDescriptorSet imguiTexture = VK_NULL_HANDLE;                     // samples image[0]
+        };
+        std::vector<BlurResources> blurResources;
+        VkSampler             blurSampler = VK_NULL_HANDLE;
+        VkDescriptorSetLayout blurSetLayout = VK_NULL_HANDLE;
+        VkDescriptorPool      blurPool = VK_NULL_HANDLE;
+        VkRenderPass          blurRenderPass = VK_NULL_HANDLE;
+        VkPipelineLayout      blurPipelineLayout = VK_NULL_HANDLE;
+        VkPipeline            blurPipeline = VK_NULL_HANDLE;
+        uint32_t              blurWidth = 0;   // half-res capture width
+        uint32_t              blurHeight = 0;  // half-res capture height
+        VkFilter              blurFilter = VK_FILTER_LINEAR;  // blit filter, downgraded if unsupported
+        bool                  blurReady = false;
         std::vector<VkCommandBuffer> commandBuffers;
         std::vector<VkFence> commandBufferFences;  // Fences to track command buffer completion
         std::vector<VkFramebuffer> framebuffers;    // Pre-created per swapchain image

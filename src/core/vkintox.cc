@@ -1414,13 +1414,16 @@ namespace VKIntox
             return VK_SUCCESS;
 
         VkCommandBuffer overlayCmd = logicalDevice->imguiOverlay->recordFrame(
-            index, swapchain->imageViews[index],
+            index, swapchain->images[index], swapchain->imageViews[index],
             swapchain->imageExtent.width, swapchain->imageExtent.height);
 
         if (overlayCmd == VK_NULL_HANDLE)
             return VK_SUCCESS;
 
-        VkPipelineStageFlags overlayWaitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        // The wait must cover the capture blit's TRANSFER stage as well as the
+        // overlay's colour output, or the blit could read the swapchain image
+        // before the effect pass that produced it has finished writing.
+        VkPipelineStageFlags overlayWaitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
         VkSubmitInfo overlaySubmit = {};
         overlaySubmit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         overlaySubmit.waitSemaphoreCount = 1;
@@ -2037,6 +2040,11 @@ namespace VKIntox
 
             modifiedCreateInfo.pNext = &imageFormatListCreateInfo;
         }
+
+        // The overlay's backdrop capture blits out of the real swapchain image, so
+        // it must be usable as a transfer source. This is a strict widening of the
+        // app's requested usage and is valid on both swapchain paths.
+        modifiedCreateInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
         // Keep application-provided usage bits unchanged on the non-mutable path.
         // Some drivers/apps are sensitive to swapchain usage mutation.
@@ -2799,7 +2807,7 @@ namespace VKIntox
                     }
 
                     VkCommandBuffer overlayCmd = passThroughDevice->imguiOverlay->recordFrame(
-                        index, swap->imageViews[index],
+                        index, swap->images[index], swap->imageViews[index],
                         swap->imageExtent.width, swap->imageExtent.height);
 
                     if (overlayCmd == VK_NULL_HANDLE)
