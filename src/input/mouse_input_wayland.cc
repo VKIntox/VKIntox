@@ -28,23 +28,16 @@ namespace VKIntox
     // pointer frame, so we skip the continuous axis event to avoid double-counting.
     static bool discreteScrollReceived = false;
 
-    // Time-based auto-release safety net. We intentionally avoid releasing
-    // just because the cursor stopped moving while still inside the surface
-    // (that breaks drag/resize holds). Fast release is only used after leave.
-    // A long hard timeout remains as fallback for truly stuck states.
+    // Stuck-button safety net. Button state is authoritative from
+    // wl_pointer.button: the compositor delivers the release even when the
+    // pointer leaves the surface under an implicit grab, so we do not
+    // synthesise a release on leave. A very long press timeout remains in
+    // case a compositor grab swallows the release entirely.
     using Clock = std::chrono::steady_clock;
     static Clock::time_point leftPressTime{};
     static Clock::time_point rightPressTime{};
     static Clock::time_point middlePressTime{};
-    static constexpr int AUTO_RELEASE_AFTER_LEAVE_MS = 250;
     static constexpr int AUTO_RELEASE_HARD_TIMEOUT_MS = 30000;
-
-    // Track whether motion occurred since last getMouseStateWayland() poll
-    static bool motionSinceLastPoll = false;
-    // Last time we saw motion — used to measure idle duration
-    static Clock::time_point lastMotionTime{};
-    // Track pointer focus so we only do aggressive release when pointer left.
-    static bool pointerInsideSurface = false;
 
     static bool mouseInitialized = false;
 
@@ -53,7 +46,6 @@ namespace VKIntox
                              uint32_t /*serial*/, wl_surface* surface,
                              wl_fixed_t sx, wl_fixed_t sy)
     {
-        pointerInsideSurface = true;
         pointerFocusSurface = surface;
         // events on our capture surface are surface-local; shift them into the
         // game's framebuffer space, which is what ImGui draws in.
@@ -62,7 +54,6 @@ namespace VKIntox
         const int originY = onInputSurface ? static_cast<int>(getWaylandInputSurfaceY()) : 0;
         pointerX = wl_fixed_to_int(sx) + originX;
         pointerY = wl_fixed_to_int(sy) + originY;
-        lastMotionTime = Clock::now();
 
         // Do NOT clear button state here. Surface reconfigurations (swapchain
         // resize) cause rapid leave/enter cycles while the user is dragging.
@@ -78,7 +69,6 @@ namespace VKIntox
     {
         (void)surface;   // keep the last focus: motion carries no surface, and
                          // clearing it here mistranslates the next one.
-        pointerInsideSurface = false;
         Logger::trace("Wayland: pointer leave");
     }
 
@@ -91,7 +81,6 @@ namespace VKIntox
         const int originY = onInputSurface ? static_cast<int>(getWaylandInputSurfaceY()) : 0;
         pointerX = wl_fixed_to_int(sx) + originX;
         pointerY = wl_fixed_to_int(sy) + originY;
-        motionSinceLastPoll = true;
     }
 
     static void pointerButton(void* /*data*/, wl_pointer* /*pointer*/,
@@ -118,8 +107,6 @@ namespace VKIntox
                 if (pressed) middlePressTime = now;
                 break;
         }
-        if (pressed)
-            lastMotionTime = now;
     }
 
     static void pointerAxis(void* /*data*/, wl_pointer* /*pointer*/,
@@ -260,8 +247,6 @@ namespace VKIntox
                 if (pressed) middlePressTime = now;
                 break;
         }
-        if (pressed)
-            lastMotionTime = now;
     }
 
     MouseState getMouseStateWayland()
@@ -273,37 +258,23 @@ namespace VKIntox
 
         dispatchWaylandInputEvents();
 
-        // Time-based auto-release for stuck buttons.
-        // Do NOT synthesize release from motion idle while pointer remains
-        // inside the surface (this breaks hold-to-drag). Release quickly only
-        // after leave, with a long hard timeout as a fallback.
+        // Stuck-button safety net only: a normal press holds as long as the
+        // compositor says so. The old leave-based release fired whenever a
+        // compositor dropped pointer focus mid-press (a transient leave on a
+        // subsurface is common), which cleared `held` and snapped the button
+        // morph back before the user released.
         auto now = Clock::now();
-        if (motionSinceLastPoll)
-        {
-            lastMotionTime = now;
-            motionSinceLastPoll = false;
-        }
-
-        auto idleMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastMotionTime).count();
         if (leftButton || rightButton || middleButton)
         {
             auto leftMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - leftPressTime).count();
             auto rightMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - rightPressTime).count();
             auto middleMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - middlePressTime).count();
 
-            const bool shouldReleaseAfterLeave =
-                !pointerInsideSurface && idleMs > AUTO_RELEASE_AFTER_LEAVE_MS;
-            const bool shouldReleaseHard =
-                idleMs > AUTO_RELEASE_HARD_TIMEOUT_MS;
-
-            if (leftButton && (shouldReleaseAfterLeave || shouldReleaseHard) &&
-                leftMs > AUTO_RELEASE_AFTER_LEAVE_MS)
+            if (leftButton && leftMs > AUTO_RELEASE_HARD_TIMEOUT_MS)
                 leftButton = false;
-            if (rightButton && (shouldReleaseAfterLeave || shouldReleaseHard) &&
-                rightMs > AUTO_RELEASE_AFTER_LEAVE_MS)
+            if (rightButton && rightMs > AUTO_RELEASE_HARD_TIMEOUT_MS)
                 rightButton = false;
-            if (middleButton && (shouldReleaseAfterLeave || shouldReleaseHard) &&
-                middleMs > AUTO_RELEASE_AFTER_LEAVE_MS)
+            if (middleButton && middleMs > AUTO_RELEASE_HARD_TIMEOUT_MS)
                 middleButton = false;
         }
 
