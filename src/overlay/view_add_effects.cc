@@ -60,21 +60,27 @@ namespace VKIntox
         return -1;
     }
 
-    // A visual hint about what an effect does, picked from its name.
+    // A visual hint about what an effect does, picked from its name. First match
+    // wins, so the more specific hints come before the broad ones.
     static const char* effectIconFor(const std::string& name)
     {
         const std::string n = toLower(name);
         auto has = [&](const char* needle) { return n.find(needle) != std::string::npos; };
 
-        if (has("lut") || has("color") || has("curve") || has("grade")) return Icon::ColorizeUtf8;
-        if (has("blur") || has("dof") || has("bokeh"))                   return Icon::BlurOnUtf8;
-        if (has("film") || has("grain") || has("noise") || has("deb"))   return Icon::GrainUtf8;
-        if (has("sharp") || has("cas") || has("aa"))                     return Icon::StraightenUtf8;
-        if (has("bloom") || has("glow") || has("light"))                 return Icon::BoltUtf8;
-        if (has("tone") || has("contrast") || has("hdr"))                return Icon::ContrastUtf8;
-        if (has("depth") || has("ssao") || has("ssr") || has("ao"))      return Icon::LayersUtf8;
-        if (has("dls"))                                                  return Icon::AutoAwesomeUtf8;
-        if (has("shader") || has("fx") || has("effect"))                 return Icon::BrushUtf8;
+        if (has("motionblur") || has("motion_blur") || has("motion blur")) return Icon::MotionBlurUtf8;
+        if (has("sharpen") || has("sharp") || has("clarity"))             return Icon::DiamondShineUtf8;
+        if (has("dof") || has("bokeh"))                                   return Icon::LensBlurUtf8;
+        if (has("ssr"))                                                   return Icon::GradientUtf8;
+        if (has("bloom") || has("flare") || has("glow"))                  return Icon::FlareUtf8;
+        if (has("lut") || has("color") || has("curve") || has("grade"))   return Icon::ColorizeUtf8;
+        if (has("blur"))                                                  return Icon::BlurOnUtf8;
+        if (has("film") || has("grain") || has("noise") || has("deb"))    return Icon::GrainUtf8;
+        if (has("cas") || has("aa"))                                      return Icon::StraightenUtf8;
+        if (has("light"))                                                 return Icon::BoltUtf8;
+        if (has("tone") || has("contrast") || has("hdr"))                 return Icon::ContrastUtf8;
+        if (has("ssao") || has("ao"))                                     return Icon::ShadowUtf8;
+        if (has("depth"))                                                 return Icon::LayersUtf8;
+        if (has("shader") || has("fx") || has("effect"))                  return Icon::BrushUtf8;
         return Icon::ExtensionUtf8;
     }
 

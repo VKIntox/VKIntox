@@ -63,6 +63,12 @@ namespace VKIntox::Icon
     constexpr ImWchar Colorize       = 0xE3B8;
     constexpr ImWchar Contrast       = 0xEB37;
     constexpr ImWchar Straighten     = 0xE41C;
+    constexpr ImWchar Gradient       = 0xE3E9;  // SSR
+    constexpr ImWchar DiamondShine   = 0xF2B2;  // sharpen/clarity
+    constexpr ImWchar LensBlur       = 0xF029;  // depth of field
+    constexpr ImWchar Flare          = 0xE3E4;  // bloom/flare
+    constexpr ImWchar MotionBlur     = 0xF0D0;  // motion blur
+    constexpr ImWchar Shadow         = 0xE9DF;  // ambient occlusion
     constexpr ImWchar Memory         = 0xE322;
     constexpr ImWchar Terminal       = 0xEB8E;
     constexpr ImWchar Code           = 0xE86F;
@@ -119,6 +125,12 @@ namespace VKIntox::Icon
     constexpr const char* ColorizeUtf8      = "\xEE\x8E\xB8";
     constexpr const char* ContrastUtf8      = "\xEE\xAC\xB7";
     constexpr const char* StraightenUtf8    = "\xEE\x90\x9C";
+    constexpr const char* GradientUtf8      = "\xEE\x8F\xA9";
+    constexpr const char* DiamondShineUtf8  = "\xEF\x8A\xB2";
+    constexpr const char* LensBlurUtf8      = "\xEF\x80\xA9";
+    constexpr const char* FlareUtf8         = "\xEE\x8F\xA4";
+    constexpr const char* MotionBlurUtf8    = "\xEF\x83\x90";
+    constexpr const char* ShadowUtf8        = "\xEE\xA7\x9F";
     constexpr const char* MemoryUtf8        = "\xEE\x8C\xA2";
     constexpr const char* TerminalUtf8      = "\xEE\xAE\x8E";
     constexpr const char* CodeUtf8          = "\xEE\xA1\xAF";
@@ -143,7 +155,8 @@ namespace VKIntox::Icon
             FolderOpen, Upload, Check, CheckCircle, Cancel, Warning, Error, Info,
             Visibility, VisibilityOff, Power, PlayArrow,
             Speed, Bolt, Science, Build, Extension, Brush, Image, Layers, Texture,
-            BlurOn, Grain, Colorize, Contrast, Straighten, Memory, Terminal, Code,
+            BlurOn, Grain, Colorize, Contrast, Straighten, Gradient, DiamondShine,
+            LensBlur, Flare, MotionBlur, Shadow, Memory, Terminal, Code,
             Movie, VideoSettings, List, GridView, DragIndicator, MoreVert, FilterAlt,
             Star, DarkMode, LightMode,
             0,
