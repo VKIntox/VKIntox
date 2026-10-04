@@ -198,7 +198,17 @@ namespace VKIntox
                 }
                 ImGui::EndCombo();
             }
-            ImGui::SameLine();
+            // the profile actions sit flush right, like the effects row below
+            const ImGuiM3Metrics& profileMetrics = ImGuiM3GetMetrics();
+            const bool hasShaderProfile = !activeShaderProfileName.empty();
+            const float profileIconWidth = ImGui::CalcTextSize(Icon::AddUtf8).x +
+                                           profileMetrics.button_padding_x * 2.0f * profileMetrics.density;
+            const int profileActionCount = hasShaderProfile ? 4 : 2;
+            const float profileActionsWidth =
+                profileIconWidth * (float)profileActionCount +
+                ImGui::GetStyle().ItemSpacing.x * (float)(profileActionCount - 1);
+            ImGui::SameLine(ImGui::GetWindowWidth() - profileActionsWidth -
+                            ImGui::GetCurrentWindowRead()->WindowPadding.x);
             const std::string newProfileLabel = std::string(Icon::AddUtf8) + "##newshaderprofile";
             if (ImGui::Button(newProfileLabel.c_str()))
                 ImGui::OpenPopup("NewShaderProfilePopup");
