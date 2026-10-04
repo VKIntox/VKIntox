@@ -1987,7 +1987,10 @@ namespace VKIntox
                 titleRightDragging = false;
         }
         const bool closeRequested = buttonHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-        ImDrawList* drawList = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
+        // The titlebar rides the window's own draw list, not the foreground one,
+        // so popups opened over it (dropdowns, dialogs) draw above it. The sliding
+        // views are clipped to the content region, so they never cover it.
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
 
         // brand row: icon pinned to the leading edge, wordmark centred on the
         // bar independently of it.
