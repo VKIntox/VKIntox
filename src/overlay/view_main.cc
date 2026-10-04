@@ -401,28 +401,34 @@ namespace VKIntox
         }
         ImGui::Separator();
 
+        // toggle and actions share one row: switch on the left, actions
+        // right-aligned, with a single separator above and below the group.
         bool effectsOn = state.effectsEnabled;
         if (ImGui::Checkbox(effectsOn ? "Effects ON" : "Effects OFF", &effectsOn))
             toggleEffectsRequested = true;
         ImGui::SameLine();
-        ImGui::TextDisabled("(%s)", settingsManager.getToggleKey().c_str());
-        ImGui::Separator();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("(Bound to %s)", settingsManager.getToggleKey().c_str());
 
-        // Add Effects button
-        const std::string addEffectsLabel = std::string(Icon::AddUtf8) + "  Add Effects...";
-        if (ImGui::Button(addEffectsLabel.c_str()))
+        const std::string clearAllLabel = std::string(Icon::DeleteUtf8) + "  Clear all";
+        const std::string addEffectsLabel = std::string(Icon::AddUtf8) + "  Add effects...";
+        const ImGuiM3Metrics& m3m = ImGuiM3GetMetrics();
+        const float clearW = ImGui::CalcTextSize(clearAllLabel.c_str()).x + m3m.button_padding_x * 2.0f * m3m.density;
+        const float addW = ImGui::CalcTextSize(addEffectsLabel.c_str()).x + m3m.button_padding_x * 2.0f * m3m.density;
+        ImGui::SameLine(ImGui::GetWindowWidth() - (clearW + addW + ImGui::GetStyle().ItemSpacing.x) -
+                        ImGui::GetCurrentWindowRead()->WindowPadding.x);
+        ImGui::BeginDisabled(selectedEffects.empty());
+        if (ImGui::M3Button(clearAllLabel.c_str(), ImGuiM3Button_DestructiveOutlined))
+            ImGui::OpenPopup("##clear_all_confirm");
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::M3Button(addEffectsLabel.c_str(), ImGuiM3Button_Filled))
         {
             inSelectionMode = true;
             addEffectsFocusSearch = true;
             insertPosition = -1;  // Append to end
             pendingAddEffects.clear();
         }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(selectedEffects.empty());
-        const std::string clearAllLabel = std::string(Icon::DeleteUtf8) + "  Clear All";
-        if (ImGui::Button(clearAllLabel.c_str()))
-            ImGui::OpenPopup("##clear_all_confirm");
-        ImGui::EndDisabled();
 
         // Destructive action, so confirm it through the shared dialog frame.
         const std::string clearPresetName = !activeShaderProfileName.empty() ? activeShaderProfileName : activeProfileName;

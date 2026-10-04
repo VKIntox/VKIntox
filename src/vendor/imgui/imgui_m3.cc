@@ -1925,6 +1925,7 @@ namespace
         ImGuiM3Role layer_role;
         bool        has_outline;
         int         elevation;
+        ImGuiM3Role outline_role = ImGuiM3Role_Outline;
     };
 
     ButtonPaint PaintFor(ImGuiM3ButtonVariant variant)
@@ -1937,7 +1938,7 @@ namespace
         case ImGuiM3Button_Text:                 return {ImGuiM3Role_Surface, ImGuiM3Role_Primary, ImGuiM3Role_Primary, false, 0};
         case ImGuiM3Button_Destructive:          return {ImGuiM3Role_Error, ImGuiM3Role_OnError, ImGuiM3Role_OnError, false, 0};
         case ImGuiM3Button_DestructiveTonal:     return {ImGuiM3Role_ErrorContainer, ImGuiM3Role_OnErrorContainer, ImGuiM3Role_OnErrorContainer, false, 0};
-        case ImGuiM3Button_DestructiveOutlined:  return {ImGuiM3Role_Surface, ImGuiM3Role_Error, ImGuiM3Role_Error, true, 0};
+        case ImGuiM3Button_DestructiveOutlined:  return {ImGuiM3Role_Surface, ImGuiM3Role_Error, ImGuiM3Role_Error, true, 0, ImGuiM3Role_Error};
         case ImGuiM3Button_Filled:
         default:                                 return {ImGuiM3Role_Primary, ImGuiM3Role_OnPrimary, ImGuiM3Role_OnPrimary, false, 0};
         }
@@ -1981,8 +1982,7 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
         ImGuiM3DrawElevation(window->DrawList, bb, rounding, paint.elevation);
 
     const ImU32 fill = paint.has_outline ? 0u : ImGuiM3ColorU32(paint.container_role);
-    const ImU32 outline = paint.has_outline ? ImGuiM3ColorU32(paint.container_role == ImGuiM3Role_Surface ? ImGuiM3Role_Outline : ImGuiM3Role_Outline)
-                                            : 0u;
+    const ImU32 outline = paint.has_outline ? ImGuiM3ColorU32(paint.outline_role) : 0u;
     ImGuiM3DrawContainer(window->DrawList, bb, rounding, fill, outline, m.button_outline_width * m.density);
 
     // State layer, drawn after the container and before the label.
