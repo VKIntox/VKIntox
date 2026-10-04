@@ -123,10 +123,17 @@ uninstall_flatpak_layer() {
     fi
 }
 
+# root writes to the build tree during install/uninstall, and any root-owned file
+# left there breaks the next unprivileged `just build`. hand them back. needs the
+# sudo session from the caller; a no-op when nothing is root-owned.
+reclaim_build_ownership() {
+    [[ -d build ]] || return 0
+    find build -user root -print0 2>/dev/null \
+        | sudo -n xargs -0 -r chown "$(id -u):$(id -g)" 2>/dev/null || true
+}
+
 uninstall_system_layer() {
-    # The system install wrote into /usr, so removing it is the one operation
-    # that genuinely needs root, and it goes through the same authenticated
-    # sudo session the install used.
+    # the system install wrote into /usr, so this is the one part needing root.
     section "removing system install"
     if [[ ! -d build ]]; then
         die "no build directory; run this from the project root"
@@ -134,6 +141,7 @@ uninstall_system_layer() {
     say "authenticating for system uninstall"
     sudo -v || die "could not authenticate for system uninstall"
     run_progress "removing system-wide files" sudo -n ninja -C build uninstall
+    reclaim_build_ownership
 
     section "config kept"
     printf "  ${DIM}%s${NC}\n" "$HOME/.config/VKIntox"
@@ -213,7 +221,11 @@ if [[ "$MODE" == "system" ]]; then
 
     say "authenticating for system install"
     sudo -v || die "could not authenticate for system install"
-    run_progress "installed to system" sudo -n ninja -C build install
+    # `--no-rebuild`: plain `ninja install` rebuilds as root and leaves
+    # root-owned objects and .ninja_log behind, which breaks `just build`
+    # afterwards. already compiled above, so just copy into /usr.
+    run_progress "installed to system" sudo -n meson install -C build --no-rebuild
+    reclaim_build_ownership
 fi
 
 if [[ "$MODE" != "system" ]]; then
@@ -257,18 +269,22 @@ else
     APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
 fi
 RESHADE_DIR="$APP_CONFIG/reshade"
-PACKAGE_DIR="$RESHADE_DIR/packages"
+SHADERS_DIR="$RESHADE_DIR/Shaders"
+TEXTURES_DIR="$RESHADE_DIR/Textures"
 FONT_DIR="$APP_CONFIG/font"
 
-mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$FONT_DIR"
+mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$FONT_DIR"
 cp "$SCRIPT_DIR/VERSION" "$APP_CONFIG/version"
 ok "created config dirs"
 
-if [[ -f "$SCRIPT_DIR/assets/font/font.ttf" ]]; then
-    cp "$SCRIPT_DIR/assets/font/font.ttf" "$FONT_DIR/"
-    ok "copied font.ttf"
-fi
-[[ -f "$SCRIPT_DIR/assets/font/LICENSE" ]] && cp "$SCRIPT_DIR/assets/font/LICENSE" "$FONT_DIR/"
+# the overlay loads the whole M3 set: regular plus the three emphasized weights,
+# the Material Symbols font for icons, and font.ttf as the legacy regular
+# fallback. scripts/setup mirrors this list.
+for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded.ttf LICENSE LICENSE-SIL-OFL-1.1.txt LICENSE-Apache-2.0.txt; do
+    cp "$SCRIPT_DIR/assets/font/$font" "$FONT_DIR/" || die "missing assets/font/$font"
+done
+cp "$FONT_DIR/GoogleSans-Regular.ttf" "$FONT_DIR/font.ttf"
+ok "installed fonts"
 
 section "reshade shaders"
 WORK_DIR=$(mktemp -d)
@@ -276,17 +292,20 @@ trap 'rm -rf "$WORK_DIR"; stop_spin' EXIT
 
 INI_FILE="$SCRIPT_DIR/assets/EffectPackages.ini"
 EFFECTS_HASH=$(sha256sum "$INI_FILE" | cut -d' ' -f1)
-EFFECTS_MARKER="$PACKAGE_DIR/.vkintox_effects_hash"
+EFFECTS_MARKER="$RESHADE_DIR/.vkintox_effects_hash"
 
 if [[ -f "$EFFECTS_MARKER" && "$(cat "$EFFECTS_MARKER")" == "$EFFECTS_HASH" ]]; then
     ok "effects up to date"
 else
-    rm -rf "$PACKAGE_DIR"
-    mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures"
+    rm -rf "$SHADERS_DIR" "$TEXTURES_DIR"
+    mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR"
+    # the old layout nested these under reshade/packages; drop it so shader
+    # discovery cannot see the same files in two places
+    rm -rf "$RESHADE_DIR/packages"
 
     start_spin "downloading + extracting packages..."
     PACKAGE_LOG="$WORK_DIR/package-install.log"
-    python3 - "$WORK_DIR" "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$INI_FILE" >"$PACKAGE_LOG" 2>&1 <<'PYEOF' || { stop_spin; cat "$PACKAGE_LOG" >&2; die "shader fetch failed"; }
+    python3 - "$WORK_DIR" "$SHADERS_DIR" "$TEXTURES_DIR" "$INI_FILE" >"$PACKAGE_LOG" 2>&1 <<'PYEOF' || { stop_spin; cat "$PACKAGE_LOG" >&2; die "shader fetch failed"; }
 import configparser, os, sys, shutil, urllib.request, zipfile
 
 work_dir, shaders_dir, textures_dir, ini_file = sys.argv[1:5]
@@ -304,13 +323,23 @@ for section in cfg.sections():
     url = pkg.get("DownloadUrl")
     if not url: continue
 
-    raw_shader = pkg.get("InstallPath", r".\reshade-shaders\Shaders").replace("\\", "/").lstrip("./")
-    sub_shader = raw_shader.replace("reshade-shaders/Shaders", "", 1).strip("/")
-    raw_tex = pkg.get("TextureInstallPath", r".\reshade-shaders\Textures").replace("\\", "/").lstrip("./")
-    sub_tex = raw_tex.replace("reshade-shaders/Textures", "", 1).strip("/")
+    # every package installs into its own directory under Shaders/ and Textures/,
+    # named after its InstallPath subdir or, when it targets the shared root, the
+    # first word of its PackageName
+    def package_dir(configured, root, fallback):
+        path = (configured or "").replace("\\", "/")
+        marker = "reshade-shaders/" + root
+        sub = path.split(marker, 1)[1].strip("/") if marker in path else ""
+        sub = sub or fallback
+        sub = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in sub).strip("._")
+        return sub or "package"
 
-    tgt_shaders = os.path.join(shaders_dir, sub_shader) if sub_shader else shaders_dir
-    tgt_textures = os.path.join(textures_dir, sub_tex) if sub_tex else textures_dir
+    fallback_dir = (pkg.get("PackageName", section).split() or [section])[0]
+    sub_shader = package_dir(pkg.get("InstallPath"), "Shaders", fallback_dir)
+    sub_tex = package_dir(pkg.get("TextureInstallPath"), "Textures", sub_shader)
+
+    tgt_shaders = os.path.join(shaders_dir, sub_shader)
+    tgt_textures = os.path.join(textures_dir, sub_tex)
     os.makedirs(tgt_shaders, exist_ok=True)
     os.makedirs(tgt_textures, exist_ok=True)
 
@@ -359,6 +388,16 @@ PYEOF
     printf '%s\n' "$EFFECTS_HASH" > "$EFFECTS_MARKER"
 fi
 
+# shaders that ship with VKIntox itself, in their own VKIntox package dir beside
+# the downloaded packages; refreshed every run so a shader fix lands without a
+# package hash change
+mkdir -p "$SHADERS_DIR/VKIntox"
+for shader in CAS.fx MSAA.fx; do
+    cp "$SCRIPT_DIR/assets/builtInShaders/$shader" "$SHADERS_DIR/VKIntox/$shader" ||
+        die "missing assets/builtInShaders/$shader"
+done
+ok "installed built-in shaders"
+
 section "shader paths"
 ok "shader/texture paths setup"
 
@@ -376,11 +415,11 @@ else
     ok "enable with ENABLE_VKINTOX=1 when launching a native game"
 fi
 
-SHADER_COUNT=$(find "$PACKAGE_DIR/Shaders" -name '*.fx' 2>/dev/null | wc -l)
-TEXTURE_COUNT=$(find "$PACKAGE_DIR/Textures" -type f 2>/dev/null | wc -l)
+SHADER_COUNT=$(find "$SHADERS_DIR" -name '*.fx' 2>/dev/null | wc -l)
+TEXTURE_COUNT=$(find "$TEXTURES_DIR" -type f 2>/dev/null | wc -l)
 
 printf "\n${BLUE}${B}done${NC}\n"
-printf "  shaders:    ${DIM}%s${NC}  (%s)\n" "$SHADER_COUNT" "$PACKAGE_DIR/Shaders"
-printf "  textures:   ${DIM}%s${NC}  (%s)\n" "$TEXTURE_COUNT" "$PACKAGE_DIR/Textures"
-printf "  packages:   ${DIM}%s${NC}\n" "$PACKAGE_DIR"
+printf "  shaders:    ${DIM}%s${NC}  (%s)\n" "$SHADER_COUNT" "$SHADERS_DIR"
+printf "  textures:   ${DIM}%s${NC}  (%s)\n" "$TEXTURE_COUNT" "$TEXTURES_DIR"
+printf "  packages:   ${DIM}%s${NC}\n" "$RESHADE_DIR"
 printf "\n${B}setup finished!!${NC}\n"

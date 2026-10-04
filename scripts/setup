@@ -7,8 +7,8 @@ set -euo pipefail
 REPO="buwryme/VKIntox"
 WORKFLOW="flatpak-build.yml"
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
-# the M3 font set and the curated EffectPackages.ini are not on main yet, so
-# seed both from the experimental branch.
+# the M3 font set, the curated EffectPackages.ini and the built-in shaders are
+# not on main yet, so seed all of them from the experimental branch.
 # TODO: point this at main once those assets are merged.
 ASSET_REF="v0.2.0-experimental"
 EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/$ASSET_REF/assets/EffectPackages.ini}"
@@ -446,8 +446,10 @@ ok "layer installed"
 
 section "config dirs"
 APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
-PACKAGE_DIR="$APP_CONFIG/reshade/packages"
-mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$APP_CONFIG/font"
+RESHADE_DIR="$APP_CONFIG/reshade"
+SHADERS_DIR="$RESHADE_DIR/Shaders"
+TEXTURES_DIR="$RESHADE_DIR/Textures"
+mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$APP_CONFIG/font"
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version"
 # fonts aren't on raw.githubusercontent until pushed to the font ref, so a local
 # flatpak build would silently seed nothing. prefer the checkout, else download.
@@ -458,7 +460,7 @@ if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 FONT_SRC=""
-if [[ -f "$SCRIPT_DIR/../assets/font/MaterialSymbolsRounded-subset.ttf" ]]; then
+if [[ -f "$SCRIPT_DIR/../assets/font/MaterialSymbolsRounded.ttf" ]]; then
     FONT_SRC="$SCRIPT_DIR/../assets/font"
 fi
 
@@ -484,7 +486,7 @@ version_ge() {
     [[ "$(printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort -V | tail -n1)" == "$1" ]]
 }
 if version_ge "$SELECTED_NUMERIC" "0.2.0"; then
-    for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded-subset.ttf LICENSE; do
+    for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded.ttf LICENSE LICENSE-SIL-OFL-1.1.txt LICENSE-Apache-2.0.txt; do
         seed_font "$font"
     done
     # Keep the historical filename as a regular-weight compatibility fallback.
@@ -493,16 +495,21 @@ else
     # the single-font overlay reads bolder on the medium weight than regular.
     seed_font GoogleSans-Medium.ttf font.ttf
     seed_font LICENSE
+    seed_font LICENSE-SIL-OFL-1.1.txt
+    seed_font LICENSE-Apache-2.0.txt
 fi
 curl -fsSL "$EFFECT_PACKAGES_URL" -o "$TMP_DIR/EffectPackages.ini"
 
 EFFECTS_HASH=$(sha256sum "$TMP_DIR/EffectPackages.ini" | cut -d' ' -f1)
-EFFECTS_MARKER="$PACKAGE_DIR/.vkintox_effects_hash"
+EFFECTS_MARKER="$RESHADE_DIR/.vkintox_effects_hash"
 if [[ ! -f "$EFFECTS_MARKER" || "$(cat "$EFFECTS_MARKER")" != "$EFFECTS_HASH" ]]; then
     say "downloading + extracting packages"
-    rm -rf "$PACKAGE_DIR"
-    mkdir -p "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures"
-    python3 - "$TMP_DIR" "$PACKAGE_DIR/Shaders" "$PACKAGE_DIR/Textures" "$TMP_DIR/EffectPackages.ini" <<'PYEOF'
+    rm -rf "$SHADERS_DIR" "$TEXTURES_DIR"
+    mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR"
+    # the old layout nested these under reshade/packages; drop it so shader
+    # discovery cannot see the same files in two places
+    rm -rf "$RESHADE_DIR/packages"
+    python3 - "$TMP_DIR" "$SHADERS_DIR" "$TEXTURES_DIR" "$TMP_DIR/EffectPackages.ini" <<'PYEOF'
 import configparser, os, sys, shutil, urllib.request, zipfile
 
 work_dir, shaders_dir, textures_dir, ini_file = sys.argv[1:5]
@@ -518,12 +525,23 @@ for section in cfg.sections():
     url = pkg.get("DownloadUrl")
     if not url:
         continue
-    raw_shader = pkg.get("InstallPath", r".\reshade-shaders\Shaders").replace("\\", "/").lstrip("./")
-    sub_shader = raw_shader.replace("reshade-shaders/Shaders", "", 1).strip("/")
-    raw_tex = pkg.get("TextureInstallPath", r".\reshade-shaders\Textures").replace("\\", "/").lstrip("./")
-    sub_tex = raw_tex.replace("reshade-shaders/Textures", "", 1).strip("/")
-    tgt_shaders = os.path.join(shaders_dir, sub_shader) if sub_shader else shaders_dir
-    tgt_textures = os.path.join(textures_dir, sub_tex) if sub_tex else textures_dir
+    # every package installs into its own directory under Shaders/ and Textures/,
+    # named after its InstallPath subdir or, when it targets the shared root, the
+    # first word of its PackageName
+    def package_dir(configured, root, fallback):
+        path = (configured or "").replace("\\", "/")
+        marker = "reshade-shaders/" + root
+        sub = path.split(marker, 1)[1].strip("/") if marker in path else ""
+        sub = sub or fallback
+        sub = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in sub).strip("._")
+        return sub or "package"
+
+    fallback_dir = (pkg.get("PackageName", section).split() or [section])[0]
+    sub_shader = package_dir(pkg.get("InstallPath"), "Shaders", fallback_dir)
+    sub_tex = package_dir(pkg.get("TextureInstallPath"), "Textures", sub_shader)
+
+    tgt_shaders = os.path.join(shaders_dir, sub_shader)
+    tgt_textures = os.path.join(textures_dir, sub_tex)
     os.makedirs(tgt_shaders, exist_ok=True)
     os.makedirs(tgt_textures, exist_ok=True)
     effect_files = {f.strip() for f in pkg.get("EffectFiles", "").split(",") if f.strip()}
@@ -567,18 +585,19 @@ if failed:
     raise SystemExit(1)
 PYEOF
     printf '%s\n' "$EFFECTS_HASH" > "$EFFECTS_MARKER"
-
-    # shaders that ship with VKIntox itself, in their own VKIntox package dir
-    # beside the downloaded packages
-    mkdir -p "$PACKAGE_DIR/Shaders/VKIntox"
-    for shader in CAS.fx MSAA.fx; do
-        curl -fsSL "https://raw.githubusercontent.com/$REPO/$ASSET_REF/assets/builtInShaders/$shader" \
-            -o "$PACKAGE_DIR/Shaders/VKIntox/$shader" ||
-            warn "couldn't fetch builtInShaders/$shader"
-    done
 else
     ok "effects up to date"
 fi
+
+# shaders that ship with VKIntox itself, in their own VKIntox package dir beside
+# the downloaded packages; refreshed every run so a shader fix lands without a
+# package hash change
+mkdir -p "$SHADERS_DIR/VKIntox"
+for shader in CAS.fx MSAA.fx; do
+    curl -fsSL "https://raw.githubusercontent.com/$REPO/$ASSET_REF/assets/builtInShaders/$shader" \
+        -o "$SHADERS_DIR/VKIntox/$shader" ||
+        warn "couldn't fetch builtInShaders/$shader"
+done
 
 section "enable layer"
 if ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
