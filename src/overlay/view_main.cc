@@ -224,7 +224,8 @@ namespace VKIntox
                         {"No, keep", ImGuiM3Button_Outlined},
                         {"Yes, I'm sure", ImGuiM3Button_Destructive},
                     };
-                    if (UI::M3DialogActions(actions, 2) == 1)
+                    const int action = UI::M3DialogActions(actions, 2);
+                    if (action == 1)
                     {
                         if (!ConfigSerializer::deleteShaderProfile(activeGameName, deleteProfileTarget))
                             pushToast(LogLevel::Error, "Could not delete the shader profile.");
@@ -252,8 +253,9 @@ namespace VKIntox
                                 applyRequested = true;
                             }
                         }
-                        ImGui::CloseCurrentPopup();
                     }
+                    if (action >= 0)
+                        ImGui::CloseCurrentPopup();
                     UI::EndM3Dialog();
                 }
             }
@@ -353,7 +355,8 @@ namespace VKIntox
                 {"No, keep", ImGuiM3Button_Outlined},
                 {"Yes, I'm sure", ImGuiM3Button_Destructive},
             };
-            if (UI::M3DialogActions(actions, 2) == 1)
+            const int action = UI::M3DialogActions(actions, 2);
+            if (action == 1)
             {
                 selectedEffects.clear();
                 effectRegistry->clearSelectedEffects();
@@ -361,8 +364,9 @@ namespace VKIntox
                 lastChangeTime = std::chrono::steady_clock::now();
                 applyRequested = true;
                 profileDirty = true;
-                ImGui::CloseCurrentPopup();
             }
+            if (action >= 0)
+                ImGui::CloseCurrentPopup();
             UI::EndM3Dialog();
         }
         ImGui::Separator();

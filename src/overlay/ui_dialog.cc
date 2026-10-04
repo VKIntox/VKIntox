@@ -2,6 +2,8 @@
 
 #include <cfloat>
 
+#include "vendor/imgui/imgui_internal.h"
+
 namespace VKIntox
 {
     namespace UI
@@ -10,6 +12,11 @@ namespace VKIntox
         {
             const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
             const float pad = 24.0f * m.density;
+
+            // captured before the popup becomes current, so the elevation can be
+            // drawn on the parent list (under the popup) rather than on the popup
+            // itself, where it would darken the dialog interior.
+            ImDrawList* parentDraw = ImGui::GetWindowDrawList();
 
             // Pushed before the popup window is created so it captures the M3
             // dialog padding and corner radius.
@@ -20,6 +27,15 @@ namespace VKIntox
             {
                 ImGui::PopStyleVar(2);
                 return false;
+            }
+
+            // dialogs sit at elevation 3
+            {
+                const ImVec2 p = ImGui::GetWindowPos();
+                const ImVec2 s = ImGui::GetWindowSize();
+                const float r = ImMin(m.dialog_radius * m.density, ImMin(s.x, s.y) * 0.5f);
+                const ImGuiM3ShapeRounding rounding{ r, r, r, r };
+                ImGuiM3DrawElevation(parentDraw, ImRect(p, ImVec2(p.x + s.x, p.y + s.y)), rounding, 3);
             }
 
             ImFont* bold = ImGuiM3FontBold();
