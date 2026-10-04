@@ -1503,33 +1503,25 @@ float ImGuiM3SpringStepEffectsSlow(ImGuiID id, float target)
 
 float ImGuiM3PressMorph(ImGuiID id, bool held)
 {
-    // time-based tween with a cubic ease-out: no overshoot, animates to the
-    // pressed radius while held, and only starts easing back on release.
-    static constexpr float kMorphSeconds = 0.32f;
+    // One state key holds linear progress 0..1; the returned value is an
+    // ease-out of it, so the corner eases down while held and eases back on
+    // release, never overshooting. Linear progress (not a clock) keeps the
+    // storage use to the single key the working tween already relied on.
+    static constexpr float kMorphSeconds = 0.30f;
 
     ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const float dt = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f,
+                             1.0f / 240.0f, 1.0f / 10.0f);
     const float target = held ? 1.0f : 0.0f;
-    const double now = ImGui::GetTime();
 
-    float value = window->StateStorage.GetFloat(id, 0.0f);
-    const float prevTarget = window->StateStorage.GetFloat(id ^ 1, value);
-    if (target != prevTarget)
-    {
-        window->StateStorage.SetFloat(id ^ 2, value);       // animate from here
-        window->StateStorage.SetFloat(id ^ 3, (float)now);  // and start now
-        window->StateStorage.SetFloat(id ^ 1, target);
-    }
+    float progress = window->StateStorage.GetFloat(id, 0.0f);
+    const float step = dt / kMorphSeconds;
+    progress = (progress < target) ? ImMin(target, progress + step)
+                                   : ImMax(target, progress - step);
+    window->StateStorage.SetFloat(id, progress);
 
-    const float from = window->StateStorage.GetFloat(id ^ 2, value);
-    const double start = static_cast<double>(window->StateStorage.GetFloat(id ^ 3, static_cast<float>(now)));
-    const float clock = ImClamp(static_cast<float>((now - start) / kMorphSeconds), 0.0f, 1.0f);
-    const float inv = 1.0f - clock;
-    value = from + (target - from) * (1.0f - inv * inv * inv);
-    if (clock >= 1.0f)
-        value = target;
-
-    window->StateStorage.SetFloat(id, value);
-    return value;
+    const float inv = 1.0f - progress;
+    return 1.0f - inv * inv * inv;
 }
 
 // Named font weights.
