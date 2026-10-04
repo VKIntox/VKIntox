@@ -1503,25 +1503,29 @@ float ImGuiM3SpringStepEffectsSlow(ImGuiID id, float target)
 
 float ImGuiM3PressMorph(ImGuiID id, bool held)
 {
-    // One state key holds linear progress 0..1; the returned value is an
-    // ease-out of it, so the corner eases down while held and eases back on
-    // release, never overshooting. Linear progress (not a clock) keeps the
-    // storage use to the single key the working tween already relied on.
-    static constexpr float kMorphSeconds = 0.30f;
+    // Its own map rather than the window's state storage: ImGui also stores
+    // per-widget state there under hashed ids, and a key collision made the
+    // morph read a default every frame and sit frozen at a hair past rest.
+    // One float of linear progress per button, eased for display.
+    static constexpr float kMorphSeconds = 0.45f;
+    static std::unordered_map<ImGuiID, float> s_progress;
 
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
     const float dt = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f,
                              1.0f / 240.0f, 1.0f / 10.0f);
     const float target = held ? 1.0f : 0.0f;
 
-    float progress = window->StateStorage.GetFloat(id, 0.0f);
+    float progress = 0.0f;
+    if (const auto it = s_progress.find(id); it != s_progress.end())
+        progress = it->second;
+
     const float step = dt / kMorphSeconds;
     progress = (progress < target) ? ImMin(target, progress + step)
                                    : ImMax(target, progress - step);
-    window->StateStorage.SetFloat(id, progress);
+    s_progress[id] = progress;
 
-    const float inv = 1.0f - progress;
-    return 1.0f - inv * inv * inv;
+    // smoothstep: gentle at both ends, so the corner reads as moving rather
+    // than snapping on the first held frame
+    return progress * progress * (3.0f - 2.0f * progress);
 }
 
 // Named font weights.
