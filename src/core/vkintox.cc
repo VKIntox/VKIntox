@@ -1319,12 +1319,9 @@ namespace VKIntox
         logicalSwapchain->effects.clear();
         logicalSwapchain->defaultTransfer.reset();
 
-        // Clearing the effects hands every handle they owned to the deferred
-        // destroy queue. The caller's fence check already proved their GPU work is
-        // done, so drain it now instead of letting the orphans pile up until the
-        // next swapchain teardown. Without this, rapid reloads (the reload key,
-        // depth pinning) grow VRAM by a full effect's worth of images per reload.
-        DeferredDestroyQueue::instance().flush();
+        // Retired effect handles are now in the deferred queue. The drain happens
+        // once, after every swapchain of the device has been reloaded and the
+        // queue is idled — see reloadAllSwapchains.
 
         // Use provided active effects list directly - no fallback to config
         // Registry is the single source of truth (initialized at first swapchain creation)
@@ -1362,12 +1359,30 @@ namespace VKIntox
     }
 
     // Reload effects for all swapchains belonging to a device
-    void reloadAllSwapchains(LogicalDevice* /* logicalDevice */, const std::vector<std::string>& activeEffects)
+    void reloadAllSwapchains(LogicalDevice* logicalDevice, const std::vector<std::string>& activeEffects)
     {
+        bool reloaded = false;
         for (auto& [_, logicalSwapchain] : swapchainMap)
         {
-            if (!logicalSwapchain->fakeImages.empty())
+            if (!logicalSwapchain->fakeImages.empty()
+                && (!logicalDevice || logicalSwapchain->logicalDevice == logicalDevice))
+            {
                 reloadEffectsForSwapchain(logicalSwapchain.get(), config.get(), activeEffects);
+                reloaded = true;
+            }
+        }
+
+        // Every reload handed the retired effects' handles to the deferred queue.
+        // The caller's fence gate proved the effect submissions finished, but the
+        // queue is global and this is a free of device memory, not a command
+        // buffer: idle the queue first so nothing the GPU still reads is
+        // destroyed. Without this, a reload orphans a whole effect's images until
+        // the next swapchain teardown (a VRAM leak); draining without the idle is
+        // a device loss.
+        if (reloaded && logicalDevice)
+        {
+            logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
+            DeferredDestroyQueue::instance().flush();
         }
     }
 
