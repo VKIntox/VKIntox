@@ -12,6 +12,8 @@
 #include <dirent.h>
 #include <algorithm>
 #include <array>
+#include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <unistd.h>
@@ -547,6 +549,61 @@ namespace VKIntox
             Logger::warn("VKIntox: could not remove the legacy reshade/packages directory");
         else
             Logger::info("VKIntox: migrated reshade/packages into reshade/");
+    }
+
+    std::vector<std::string> ConfigSerializer::expandShaderIncludePaths(const std::vector<std::string>& roots)
+    {
+        // one expansion per compile would mean rescanning the whole shader tree
+        // each time, so memoise by the root set
+        static std::mutex cacheMutex;
+        static std::map<std::string, std::vector<std::string>> cache;
+
+        std::string key;
+        for (const std::string& root : roots)
+            key += root + "\n";
+
+        {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            auto it = cache.find(key);
+            if (it != cache.end())
+                return it->second;
+        }
+
+        std::vector<std::string> result;
+        std::set<std::string> seen;
+        auto addExisting = [&](const std::string& path) {
+            if (path.empty())
+                return;
+            std::error_code ec;
+            if (!std::filesystem::is_directory(path, ec) || ec)
+                return;
+            const std::string normalized = std::filesystem::path(path).lexically_normal().string();
+            if (seen.insert(normalized).second)
+                result.push_back(normalized);
+        };
+
+        for (const std::string& root : roots)
+        {
+            addExisting(root);
+            // headers live inside the per-package directories, so they have to be
+            // searchable even when the shader sits in a different package
+            std::error_code ec;
+            std::filesystem::recursive_directory_iterator it(
+                root, std::filesystem::directory_options::skip_permission_denied, ec);
+            const std::filesystem::recursive_directory_iterator end;
+            for (; !ec && it != end; it.increment(ec))
+            {
+                std::error_code entryError;
+                if (it->is_directory(entryError) && !entryError)
+                    addExisting(it->path().string());
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            cache[key] = result;
+        }
+        return result;
     }
 
     ShaderManagerConfig ConfigSerializer::loadShaderManagerConfig()

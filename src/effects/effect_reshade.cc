@@ -2052,7 +2052,7 @@ namespace VKIntox
 
         // Add all discovered shader paths from shader manager
         ShaderManagerConfig shaderMgrConfig = ConfigSerializer::loadShaderManagerConfig();
-        for (const auto& path : shaderMgrConfig.discoveredShaderPaths)
+        for (const auto& path : ConfigSerializer::expandShaderIncludePaths(shaderMgrConfig.discoveredShaderPaths))
             preprocessor.add_include_path(path);
 
         // Use provided effectPath, or try to find it in discovered shader paths

@@ -155,7 +155,7 @@ namespace VKIntox
 
             // Add all discovered shader paths from shader manager
             ShaderManagerConfig shaderMgrConfig = ConfigSerializer::loadShaderManagerConfig();
-            for (const auto& path : shaderMgrConfig.discoveredShaderPaths)
+            for (const auto& path : ConfigSerializer::expandShaderIncludePaths(shaderMgrConfig.discoveredShaderPaths))
                 pp.add_include_path(path);
         }
 
@@ -164,7 +164,7 @@ namespace VKIntox
                                const std::vector<std::string>& includePaths)
         {
             addStandardMacros(pp);
-            for (const auto& path : includePaths)
+            for (const auto& path : ConfigSerializer::expandShaderIncludePaths(includePaths))
                 pp.add_include_path(path);
         }
 

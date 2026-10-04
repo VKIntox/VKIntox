@@ -143,6 +143,10 @@ namespace VKIntox
         // file already present. Call early at startup, before shader discovery.
         static void migrateLegacyReshadePackages();
 
+        // Expand shader root directories to include their subdirectories, so a
+        // shader can include a header that lives inside another package's folder.
+        static std::vector<std::string> expandShaderIncludePaths(const std::vector<std::string>& roots);
+
         // Detect the game executable name from /proc/self/exe
         static std::string detectGameName();
 
