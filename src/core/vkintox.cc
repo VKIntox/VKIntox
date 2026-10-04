@@ -1952,6 +1952,12 @@ namespace VKIntox
         // the device dies, and there's no later flush to pick them up.
         DeferredDestroyQueue::instance().flush();
 
+        if (logicalDevice->pipelineCache != VK_NULL_HANDLE)
+        {
+            logicalDevice->vkd.DestroyPipelineCache(device, logicalDevice->pipelineCache, pAllocator);
+            logicalDevice->pipelineCache = VK_NULL_HANDLE;
+        }
+
         logicalDevice->vkd.DestroyDevice(device, pAllocator);
 
         depthRetryStates.erase(logicalDevice);

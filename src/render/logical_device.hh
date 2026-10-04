@@ -81,6 +81,9 @@ namespace VKIntox
         VkQueue                  queue;
         uint32_t                 queueFamilyIndex;
         VkCommandPool            commandPool;
+        // Shared driver pipeline cache. Rebuilt effects reuse compiled pipelines
+        // instead of making the driver recompile them on every chain reload.
+        VkPipelineCache          pipelineCache = VK_NULL_HANDLE;
         bool                     supportsMutableFormat;
         bool                     isNvidiaGpu;
         // Real identity of the device the game is actually running on. The

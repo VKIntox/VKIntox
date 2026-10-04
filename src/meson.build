@@ -280,6 +280,15 @@ depth_copy_state_tests = executable('vkintox-depth-copy-state-tests',
     include_directories : [render_inc, source_inc])
 test('depth copy state', depth_copy_state_tests)
 
+# The compile cache is what stops a chain reload from re-parsing every ReShade
+# effect. Its keying and bound are the contract, and a missing lock would only
+# show as a rare corrupt module under load, so it is hammered directly.
+compile_cache_tests = executable('vkintox-compile-cache-tests',
+    'effects/compile_cache_test.cc',
+    dependencies : [threads_dep],
+    include_directories : [effects_inc, source_inc])
+test('compile cache', compile_cache_tests)
+
 vkintox_run = configure_file(
     input: '../scripts/vkintox-run.in',
     output: 'vkintox-run',

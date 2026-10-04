@@ -25,6 +25,7 @@
 #include "config_serializer.hh"
 #include "settings_manager.hh"
 #include "reshade/reshade_depth_macros.hh"
+#include "compile_cache.hh"
 
 #include "util.hh"
 
@@ -278,6 +279,27 @@ namespace VKIntox
                 return;
             }
         }
+    }
+
+    // One cache per device, shared by every effect so a chain reload reuses the
+    // pipelines the previous chain already made the driver compile. Created on
+    // first use; effect construction always runs under globalLock, so no extra
+    // locking is needed here.
+    static VkPipelineCache devicePipelineCache(LogicalDevice* logicalDevice)
+    {
+        if (!logicalDevice)
+            return VK_NULL_HANDLE;
+        if (logicalDevice->pipelineCache == VK_NULL_HANDLE)
+        {
+            VkPipelineCacheCreateInfo createInfo = {};
+            createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+            if (logicalDevice->vkd.CreatePipelineCache(logicalDevice->device, &createInfo, nullptr,
+                                                       &logicalDevice->pipelineCache) != VK_SUCCESS)
+            {
+                logicalDevice->pipelineCache = VK_NULL_HANDLE;
+            }
+        }
+        return logicalDevice->pipelineCache;
     }
 
     ReshadeEffect::ReshadeEffect(LogicalDevice*       logicalDevice,
@@ -917,7 +939,7 @@ namespace VKIntox
 
                 Logger::debug("creating compute pipeline entry: " + pass.cs_entry_point);
                 const VkResult computeResult = logicalDevice->vkd.CreateComputePipelines(
-                    logicalDevice->device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &runtime.pipeline);
+                    logicalDevice->device, devicePipelineCache(logicalDevice), 1, &computePipelineCreateInfo, nullptr, &runtime.pipeline);
                 if (computeResult != VK_SUCCESS)
                 {
                     std::string error = "CreateComputePipelines failed for effect '" + effectName +
@@ -1235,7 +1257,7 @@ namespace VKIntox
 
             Logger::debug("creating graphics pipeline VS=" + pass.vs_entry_point + " PS=" + pass.ps_entry_point);
             result = logicalDevice->vkd.CreateGraphicsPipelines(
-                logicalDevice->device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &runtime.pipeline);
+                logicalDevice->device, devicePipelineCache(logicalDevice), 1, &pipelineCreateInfo, nullptr, &runtime.pipeline);
             if (result != VK_SUCCESS)
             {
                 std::string error = "CreateGraphicsPipelines failed for effect '" + effectName +
@@ -2101,34 +2123,56 @@ namespace VKIntox
                       " debug_info=" + std::to_string(runtimePolicy.emitDebugInfo ? 1 : 0) +
                       " disable_compute_opt=" + std::to_string(runtimePolicy.disableComputePipelineOptimization ? 1 : 0));
 
-        std::unique_ptr<reshadefx::codegen> codegen(reshadefx::create_codegen_spirv(
-            true /* vulkan semantics */,
-            runtimePolicy.emitDebugInfo,
-            runtimePolicy.useUniformSpecConstants,
-            true /* flip vertex shader */,
-            runtimePolicy.useLocalSizeId));
+        // The preprocessor output has every include and macro folded in, so its
+        // hash is a complete cache key: an edited include or a changed macro
+        // misses and recompiles, an unchanged effect is reused across reloads.
+        // That reuse is what keeps a chain rebuild from re-parsing every effect.
+        std::string preprocessedSource = std::move(preprocessor.output());
+        const uint64_t sourceHash = hashBytes(preprocessedSource.data(), preprocessedSource.size());
+        const uint32_t codegenFlags =
+            (runtimePolicy.useLocalSizeId ? 1u : 0u) |
+            (runtimePolicy.useUniformSpecConstants ? 2u : 0u) |
+            (runtimePolicy.emitDebugInfo ? 4u : 0u);
 
-        if (!parser.parse(std::move(preprocessor.output()), codegen.get()))
+        static CompileCache<reshadefx::module> s_moduleCache(64);
+        const CompileCache<reshadefx::module>::Key cacheKey{sourceHash, codegenFlags};
+
+        if (s_moduleCache.lookup(cacheKey, module))
         {
-            errors = parser.errors();
-            if (!errors.empty())
-                Logger::err(errors);
-            throw std::runtime_error("failed to compile shader: " + effectName);
+            Logger::debug("reshade compile cache hit for " + effectName);
         }
-
-        errors = parser.errors();
-        if (!errors.empty())
+        else
         {
-            if (hasFatalCompilerDiagnostics(errors))
+            std::unique_ptr<reshadefx::codegen> codegen(reshadefx::create_codegen_spirv(
+                true /* vulkan semantics */,
+                runtimePolicy.emitDebugInfo,
+                runtimePolicy.useUniformSpecConstants,
+                true /* flip vertex shader */,
+                runtimePolicy.useLocalSizeId));
+
+            if (!parser.parse(std::move(preprocessedSource), codegen.get()))
             {
-                Logger::err(errors);
+                errors = parser.errors();
+                if (!errors.empty())
+                    Logger::err(errors);
                 throw std::runtime_error("failed to compile shader: " + effectName);
             }
 
-            Logger::warn(errors);
-        }
+            errors = parser.errors();
+            if (!errors.empty())
+            {
+                if (hasFatalCompilerDiagnostics(errors))
+                {
+                    Logger::err(errors);
+                    throw std::runtime_error("failed to compile shader: " + effectName);
+                }
 
-        codegen->write_result(module);
+                Logger::warn(errors);
+            }
+
+            codegen->write_result(module);
+            s_moduleCache.store(cacheKey, module);
+        }
 
         if (module.techniques.empty())
         {

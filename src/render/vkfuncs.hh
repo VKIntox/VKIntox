@@ -64,6 +64,7 @@
     FORVKFUNC(CreateComputePipelines) \
     FORVKFUNC(CreateImage) \
     FORVKFUNC(CreateImageView) \
+    FORVKFUNC(CreatePipelineCache) \
     FORVKFUNC(CreatePipelineLayout) \
     FORVKFUNC(CreateRenderPass) \
     FORVKFUNC(CreateRenderPass2) \
@@ -82,6 +83,7 @@
     FORVKFUNC(DestroyImage) \
     FORVKFUNC(DestroyImageView) \
     FORVKFUNC(DestroyPipeline) \
+    FORVKFUNC(DestroyPipelineCache) \
     FORVKFUNC(DestroyPipelineLayout) \
     FORVKFUNC(DestroyRenderPass) \
     FORVKFUNC(DestroySampler) \
