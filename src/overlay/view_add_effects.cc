@@ -78,7 +78,7 @@ namespace VKIntox
         if (has("cas") || has("aa"))                                      return Icon::StraightenUtf8;
         if (has("light"))                                                 return Icon::BoltUtf8;
         if (has("tone") || has("contrast") || has("hdr"))                 return Icon::ContrastUtf8;
-        if (has("ssao") || has("ao"))                                     return Icon::ShadowUtf8;
+        if (has("ssao") || has("mxao"))                                   return Icon::ShadowUtf8;
         if (has("depth"))                                                 return Icon::LayersUtf8;
         if (has("shader") || has("fx") || has("effect"))                  return Icon::BrushUtf8;
         return Icon::ExtensionUtf8;
