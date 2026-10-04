@@ -1060,7 +1060,16 @@ namespace VKIntox
                         std::string effectName = entry.path().stem().string();
 
                         if (knownEffects.find(effectName) != knownEffects.end())
+                        {
+                            // config-sourced effects only carry their filename, so
+                            // record the resolved path the package view needs
+                            auto pathIt = effectPaths.find(effectName);
+                            if (pathIt != effectPaths.end() &&
+                                pathIt->second.find('/') == std::string::npos &&
+                                pathIt->second.find('\\') == std::string::npos)
+                                pathIt->second = entry.path().string();
                             continue;
+                        }
 
                         defaultConfigEffects.push_back(effectName);
                         effectPaths[effectName] = entry.path().string();

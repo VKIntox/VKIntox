@@ -570,7 +570,7 @@ namespace VKIntox
                         ImGui::SetCursorScreenPos(ImVec2(minusX, controlY));
                         ImGui::PushID(3);
                         ImGui::BeginDisabled(dupCount == 0);
-                        if (ImGui::M3IconButton(Icon::MinusUtf8, "Remove a duplicate copy", ImGuiM3Button_Tonal))
+                        if (ImGui::M3IconButton(Icon::MinusUtf8, "Remove a duplicate copy", ImGuiM3Button_Outlined))
                         {
                             addEffectsDuplicateCount[e.type] = std::max(0, dupCount - 1);
                             toggleQueued(e.type, true);
