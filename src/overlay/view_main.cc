@@ -200,35 +200,60 @@ namespace VKIntox
                 ImGui::OpenPopup("NewShaderProfilePopup");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Create shader INI profile");
+            static std::string deleteProfileTarget;
             if (!activeShaderProfileName.empty())
             {
                 ImGui::SameLine();
                 const std::string delProfileLabel = std::string(Icon::DeleteUtf8) + "##delshaderprofile";
                 if (ImGui::Button(delProfileLabel.c_str()))
                 {
-                    if (!ConfigSerializer::deleteShaderProfile(activeGameName, activeShaderProfileName))
-                        pushToast(LogLevel::Error, "Could not delete the shader profile.");
-                    else
+                    deleteProfileTarget = activeShaderProfileName;
+                    ImGui::OpenPopup("##delete_shader_profile");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Delete shader INI profile");
+
+                if (UI::BeginM3Dialog("##delete_shader_profile", "Delete this shader preset?"))
+                {
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 380.0f * ImGuiM3GetMetrics().density);
+                    ImGui::TextUnformatted(("This preset, \"" + deleteProfileTarget + "\", will be deleted. This can't be reverted.").c_str());
+                    ImGui::PopTextWrapPos();
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    if (UI::M3DialogButton("Yes, I'm sure", ImGuiM3Button_Destructive))
                     {
-                        profileDirty = false;
-                        paramsDirty = false;
-                        activeShaderProfileName.clear();
-                        refreshShaderProfiles();
-                        if (!shaderProfiles.empty())
-                        {
-                            pendingShaderProfilePath = activeShaderProfilePath;
-                            pendingShaderProfile = true;
-                            applyRequested = true;
-                        }
+                        if (!ConfigSerializer::deleteShaderProfile(activeGameName, deleteProfileTarget))
+                            pushToast(LogLevel::Error, "Could not delete the shader profile.");
                         else
                         {
-                            activeShaderProfileName.clear();
-                            activeShaderProfilePath.clear();
-                            pendingShaderProfilePath.clear();
-                            pendingShaderProfile = true;
-                            applyRequested = true;
+                            if (deleteProfileTarget == activeShaderProfileName)
+                            {
+                                profileDirty = false;
+                                paramsDirty = false;
+                                activeShaderProfileName.clear();
+                            }
+                            refreshShaderProfiles();
+                            if (!shaderProfiles.empty())
+                            {
+                                pendingShaderProfilePath = activeShaderProfilePath;
+                                pendingShaderProfile = true;
+                                applyRequested = true;
+                            }
+                            else
+                            {
+                                activeShaderProfileName.clear();
+                                activeShaderProfilePath.clear();
+                                pendingShaderProfilePath.clear();
+                                pendingShaderProfile = true;
+                                applyRequested = true;
+                            }
                         }
+                        ImGui::CloseCurrentPopup();
                     }
+                    ImGui::SameLine();
+                    if (UI::M3DialogButton("No", ImGuiM3Button_Outlined))
+                        ImGui::CloseCurrentPopup();
+                    UI::EndM3Dialog();
                 }
             }
             ImGui::SameLine();
