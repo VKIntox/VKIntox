@@ -312,8 +312,9 @@ namespace VKIntox
         ImGui::Text("%s  %s", Icon::AddUtf8, insertPosition >= 0 ? "Insert Effects" : "Add Effects");
         ImGui::PopFont();
         ImGui::SameLine();
-        ImGui::TextColored(atLimit ? UI::Warning() : UI::Muted(), "%zu / %zu queued",
-                           currentCount + pendingCount, maxEffectsLimit);
+        ImGui::TextColored(atLimit ? UI::Warning() : UI::Muted(), "%zu / %zu queued", pendingCount, maxEffectsLimit);
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu %s", currentCount, currentCount == 1 ? "effect" : "effects");
         if (insertPosition >= 0)
         {
             ImGui::SameLine();
