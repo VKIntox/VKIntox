@@ -8,7 +8,6 @@
 
 #include "reshade_parser.hh"
 #include "config_serializer.hh"
-#include "builtin/builtin_effects.hh"
 #include "logger.hh"
 
 namespace VKIntox
@@ -50,48 +49,6 @@ namespace VKIntox
             }
 
             return "";
-        }
-
-        // Helper to create a float parameter
-        std::unique_ptr<FloatParam> makeFloatParam(
-            const std::string& effectName,
-            const std::string& name,
-            const std::string& label,
-            float defaultVal,
-            float minVal,
-            float maxVal,
-            Config* config)
-        {
-            auto p = std::make_unique<FloatParam>();
-            p->effectName = effectName;
-            p->name = name;
-            p->label = label;
-            p->defaultValue = defaultVal;
-            p->value = config->getInstanceOption<float>(effectName, name, defaultVal);
-            p->minValue = minVal;
-            p->maxValue = maxVal;
-            return p;
-        }
-
-        // Helper to create an int parameter
-        std::unique_ptr<IntParam> makeIntParam(
-            const std::string& effectName,
-            const std::string& name,
-            const std::string& label,
-            int defaultVal,
-            int minVal,
-            int maxVal,
-            Config* config)
-        {
-            auto p = std::make_unique<IntParam>();
-            p->effectName = effectName;
-            p->name = name;
-            p->label = label;
-            p->defaultValue = defaultVal;
-            p->value = config->getInstanceOption<int32_t>(effectName, name, defaultVal);
-            p->minValue = minVal;
-            p->maxValue = maxVal;
-            return p;
         }
 
         // Search a list of directories for an effect file by name
@@ -222,9 +179,21 @@ namespace VKIntox
         }
     } // anonymous namespace
 
-    bool EffectRegistry::isBuiltInEffect(const std::string& name)
+    bool EffectRegistry::isLegacyBuiltInName(const std::string& name)
     {
-        return BuiltInEffects::instance().isBuiltIn(name);
+        static const std::set<std::string> legacyNames = {"cas", "dls", "fxaa", "smaa", "deband", "lut"};
+
+        std::string base = toLower(name);
+        // strip a numbered-instance suffix ("cas.2"), not a filename extension
+        const size_t dot = base.find('.');
+        if (dot != std::string::npos)
+        {
+            const std::string suffix = base.substr(dot + 1);
+            if (!suffix.empty() && std::all_of(suffix.begin(), suffix.end(),
+                                               [](unsigned char c) { return std::isdigit(c) != 0; }))
+                base = base.substr(0, dot);
+        }
+        return legacyNames.count(base) != 0;
     }
 
     std::string EffectRegistry::resolveEffectPath(const std::string& name, Config* config)
@@ -249,31 +218,17 @@ namespace VKIntox
 
         for (const auto& name : effectNames)
         {
-            // Check if there's a stored effect type/path for this effect
-            // Format: "cas.2 = cas" (built-in) or "Clarity = /path/to/Clarity.fx" (ReShade)
-            std::string storedValue = config->getOption<std::string>(name, "");
-
-            if (!storedValue.empty() && isBuiltInEffect(storedValue))
+            std::string effectPath = findEffectPath(name, config);
+            if (effectPath.empty())
             {
-                // Stored value is a built-in type name (e.g., "cas.2 = cas")
-                initBuiltInEffect(name, storedValue);
-            }
-            else if (isBuiltInEffect(name))
-            {
-                // Effect name itself is a built-in (e.g., "cas")
-                initBuiltInEffect(name, name);
-            }
-            else
-            {
-                // Try to find as ReShade effect
-                std::string effectPath = findEffectPath(name, config);
-                if (effectPath.empty())
-                {
+                // a legacy built-in has no .fx to find; drop it silently so the
+                // next auto-save rewrites the preset without it
+                const std::string storedValue = config->getOption<std::string>(name, "");
+                if (!isLegacyBuiltInName(name) && !isLegacyBuiltInName(storedValue))
                     Logger::err("EffectRegistry: could not find effect file for: " + name);
-                    continue;
-                }
-                initReshadeEffect(name, effectPath);
+                continue;
             }
+            initReshadeEffect(name, effectPath);
 
             // Set enabled state based on disabledEffects list
             if (!effects.empty() && disabledSet.count(name))
@@ -281,42 +236,6 @@ namespace VKIntox
         }
 
         Logger::debug("EffectRegistry: initialized " + std::to_string(effects.size()) + " effects");
-    }
-
-    void EffectRegistry::initBuiltInEffect(const std::string& instanceName, const std::string& effectType)
-    {
-        const auto* def = BuiltInEffects::instance().getDef(effectType);
-        if (!def)
-        {
-            Logger::err("Unknown built-in effect type: " + effectType);
-            return;
-        }
-
-        EffectConfig config;
-        config.name = instanceName;
-        config.effectType = effectType;
-        config.type = EffectType::BuiltIn;
-        config.enabled = true;
-
-        // Create parameters from centralized definitions
-        for (const auto& paramDef : def->params)
-        {
-            if (paramDef.type == ParamType::Float)
-            {
-                config.parameters.push_back(
-                    makeFloatParam(instanceName, paramDef.name, paramDef.label,
-                                   paramDef.defaultFloat, paramDef.minFloat, paramDef.maxFloat, rootConfig));
-            }
-            else if (paramDef.type == ParamType::Int)
-            {
-                config.parameters.push_back(
-                    makeIntParam(instanceName, paramDef.name, paramDef.label,
-                                 paramDef.defaultInt, paramDef.minInt, paramDef.maxInt, rootConfig));
-            }
-        }
-
-        effects.push_back(std::move(config));
-        paramGeneration.fetch_add(1, std::memory_order_release);
     }
 
     void EffectRegistry::initReshadeEffect(const std::string& name, const std::string& path)
@@ -565,13 +484,6 @@ namespace VKIntox
         return effect ? (*effect)->effectType : "";
     }
 
-    bool EffectRegistry::isEffectBuiltIn(const std::string& name) const
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        auto effect = findEffect(name);
-        return effect ? ((*effect)->type == EffectType::BuiltIn) : false;
-    }
-
     bool EffectRegistry::hasEffectFailed(const std::string& name) const
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -602,16 +514,15 @@ namespace VKIntox
         std::string type = effectType.empty() ? instanceName : effectType;
 
         // Do path lookup outside mutex (filesystem I/O can be slow)
-        std::string path;
-        bool isBuiltIn = isBuiltInEffect(type);
-        if (!isBuiltIn)
+        const bool legacy = isLegacyBuiltInName(type) || isLegacyBuiltInName(instanceName);
+        std::string path = findEffectPath(type, rootConfig);
+        if (path.empty() || !std::filesystem::exists(path))
         {
-            path = findEffectPath(type, rootConfig);
-            if (path.empty() || !std::filesystem::exists(path))
-            {
+            // a legacy built-in has nothing to resolve, so dropping it silently
+            // keeps the ghost out of the log
+            if (!legacy)
                 Logger::warn("EffectRegistry::ensureEffect: could not find effect file for: " + type);
-                return;
-            }
+            return;
         }
 
         // Lock for the check-and-mutate as a single critical section
@@ -620,35 +531,25 @@ namespace VKIntox
         auto existing = findEffect(instanceName);
         if (existing)
         {
-            // For ReShade effects, check if the file changed on disk since we last parsed it
-            if (!isBuiltIn && !path.empty())
+            // check if the file changed on disk since we last parsed it
+            std::error_code ec;
+            auto currentModTime = std::filesystem::last_write_time(path, ec);
+            if (!ec && currentModTime != (*existing)->fileModTime)
             {
-                std::error_code ec;
-                auto currentModTime = std::filesystem::last_write_time(path, ec);
-                if (!ec && currentModTime != (*existing)->fileModTime)
-                {
-                    Logger::info("EffectRegistry: shader file changed on disk, re-parsing: " + instanceName);
-                    // Remove the stale entry so we re-parse below
-                    effects.remove_if(
-                        [&](const EffectConfig& e) { return e.name == instanceName; });
-                    // the removed config freed its params; readers must rebuild
-                    paramGeneration.fetch_add(1, std::memory_order_release);
-                }
-                else
-                {
-                    return;  // File unchanged, keep existing
-                }
+                Logger::info("EffectRegistry: shader file changed on disk, re-parsing: " + instanceName);
+                // Remove the stale entry so we re-parse below
+                effects.remove_if(
+                    [&](const EffectConfig& e) { return e.name == instanceName; });
+                // the removed config freed its params; readers must rebuild
+                paramGeneration.fetch_add(1, std::memory_order_release);
             }
             else
             {
-                return;  // Built-in or no path change
+                return;  // File unchanged, keep existing
             }
         }
 
-        if (isBuiltIn)
-            initBuiltInEffect(instanceName, type);
-        else
-            initReshadeEffect(instanceName, path);
+        initReshadeEffect(instanceName, path);
     }
 
     void EffectRegistry::removeEffect(const std::string& name)
@@ -759,6 +660,15 @@ namespace VKIntox
         // Read effects list from config
         std::vector<std::string> configEffects = rootConfig->getOption<std::vector<std::string>>("effects", {});
         std::vector<std::string> disabledEffects = rootConfig->getOption<std::vector<std::string>>("disabledEffects", {});
+
+        // drop the removed built-ins and anything with no installed .fx, so a
+        // stale config never seeds a ghost instance in the selected list
+        configEffects.erase(
+            std::remove_if(configEffects.begin(), configEffects.end(),
+                           [this](const std::string& name) {
+                               return resolveEffectPath(name, rootConfig).empty();
+                           }),
+            configEffects.end());
 
         // Build set of disabled effects for quick lookup
         std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());

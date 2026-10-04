@@ -1,7 +1,6 @@
 subdir('vendor/reshade')
 
 glsl_shader_src = files(
-    'effects/shaders/glsl/cas.frag.glsl',
     'effects/shaders/glsl/depth_resolve.frag.glsl',
     'effects/shaders/glsl/depth_resolve_ms.frag.glsl',
     'effects/shaders/glsl/depth_resolve_msaa.frag.glsl',
@@ -14,18 +13,7 @@ glsl_shader_src = files(
     'effects/shaders/glsl/depth_resolve_universal.frag.glsl',
     'effects/shaders/glsl/depth_resolve_universal_ms.frag.glsl',
     'effects/shaders/glsl/depth_resolve_universal_msaa.frag.glsl',
-    'effects/shaders/glsl/deband.frag.glsl',
-    'effects/shaders/glsl/dls.frag.glsl',
     'effects/shaders/glsl/full_screen_triangle.vert.glsl',
-    'effects/shaders/glsl/fxaa.frag.glsl',
-    'effects/shaders/glsl/lut.frag.glsl',
-    'effects/shaders/glsl/smaa_blend.frag.glsl',
-    'effects/shaders/glsl/smaa_blend.vert.glsl',
-    'effects/shaders/glsl/smaa_edge_color.frag.glsl',
-    'effects/shaders/glsl/smaa_edge_luma.frag.glsl',
-    'effects/shaders/glsl/smaa_edge.vert.glsl',
-    'effects/shaders/glsl/smaa_neighbor.frag.glsl',
-    'effects/shaders/glsl/smaa_neighbor.vert.glsl',
 )
 glsl_compiler = find_program('glslangValidator')
 glsl_generator = generator(glsl_compiler,
@@ -78,15 +66,7 @@ VKIntox_src = [
     'effects/effect.cc',
     'effects/effect_registry.cc',
     'effects/effect_reshade.cc',
-    'effects/effect_simple.cc',
     'effects/effect_transfer.cc',
-    'effects/builtin/builtin_effects.cc',
-    'effects/builtin/effect_cas.cc',
-    'effects/builtin/effect_deband.cc',
-    'effects/builtin/effect_dls.cc',
-    'effects/builtin/effect_fxaa.cc',
-    'effects/builtin/effect_lut.cc',
-    'effects/builtin/effect_smaa.cc',
     'effects/reshade_parser.cc',
     'render/fake_swapchain.cc',
     'render/format.cc',
@@ -97,7 +77,6 @@ VKIntox_src = [
     'input/keyboard_input.cc',
     'core/logger.cc',
     'render/logical_swapchain.cc',
-    'render/lut_cube.cc',
     'render/memory.cc',
     'render/renderpass.cc',
     'effects/reshade_uniforms.cc',
@@ -189,7 +168,6 @@ wayland_interpose_lib = static_library('wayland_interpose',
 imgui_inc = include_directories('vendor/imgui')
 overlay_inc = include_directories('overlay')
 effects_inc = include_directories('effects')
-effects_builtin_inc = include_directories('effects/builtin')
 effects_params_inc = include_directories('effects/params')
 core_inc = include_directories('core')
 input_inc = include_directories('input')
@@ -216,7 +194,7 @@ shared_library('vkintox',
                 x11_display_lib, mouse_input_x11_lib,
                 wayland_input_common_lib, keyboard_input_wayland_lib, mouse_input_wayland_lib,
                 wayland_pointer_constraints_lib, wayland_interpose_lib],
-    include_directories : [VKIntox_include_path, imgui_inc, overlay_inc, effects_inc, effects_builtin_inc, effects_params_inc, core_inc, input_inc, render_inc, vendor_inc, include_directories('vendor/reshade'), stb_inc, shader_asset_inc, source_inc],
+    include_directories : [VKIntox_include_path, imgui_inc, overlay_inc, effects_inc, effects_params_inc, core_inc, input_inc, render_inc, vendor_inc, include_directories('vendor/reshade'), stb_inc, shader_asset_inc, source_inc],
     cpp_args : vkintox_cpp_args,
     dependencies : vkintox_deps,
     gnu_symbol_visibility: 'hidden',
@@ -238,7 +216,7 @@ executable('vkintox-shader-check',
     'core/config_serializer_profile.cc',
     'core/logger.cc',
     'core/util.cc',
-    include_directories : [VKIntox_include_path, imgui_inc, overlay_inc, effects_inc, effects_builtin_inc, effects_params_inc, core_inc, input_inc, render_inc, vendor_inc, include_directories('vendor/reshade'), stb_inc, source_inc],
+    include_directories : [VKIntox_include_path, imgui_inc, overlay_inc, effects_inc, effects_params_inc, core_inc, input_inc, render_inc, vendor_inc, include_directories('vendor/reshade'), stb_inc, source_inc],
     dependencies : [reshade_dep],
     install : true)
 

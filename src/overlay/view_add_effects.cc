@@ -173,14 +173,13 @@ namespace VKIntox
         // Rebuilding and re-sorting 300+ shaders every frame is wasted when the
         // inputs rarely move, so cache the result until state, search or filter
         // actually changes.
-        static int filter = 0;   // 0 all, 1 built-in, 2 this config, 3 reshade
+        static int filter = 0;   // 0 all, 1 this config, 2 reshade
         if (overlayStateVersion != addEffectsCacheVersion
             || std::string(addEffectsSearch) != addEffectsCacheSearch
             || filter != addEffectsCacheFilter)
         {
             addEffectsEntries.clear();
 
-            static const char* const builtinEffects[] = {"cas", "dls", "fxaa", "smaa", "deband", "lut"};
             std::vector<std::string> sortedCurrent = state.currentConfigEffects;
             std::vector<std::string> sortedDefault = state.defaultConfigEffects;
             std::sort(sortedCurrent.begin(), sortedCurrent.end());
@@ -191,19 +190,17 @@ namespace VKIntox
                 if (score >= 0)
                     addEffectsEntries.push_back({type, path, group, score});
             };
-            for (const char* et : builtinEffects)
-                addEntry(et, "", 0);
             for (const auto& et : sortedCurrent)
             {
                 auto it = state.effectPaths.find(et);
-                addEntry(et, (it != state.effectPaths.end()) ? it->second : "", 1);
+                addEntry(et, (it != state.effectPaths.end()) ? it->second : "", 0);
             }
             for (const auto& et : sortedDefault)
             {
                 if (std::find(sortedCurrent.begin(), sortedCurrent.end(), et) != sortedCurrent.end())
                     continue;
                 auto it = state.effectPaths.find(et);
-                addEntry(et, (it != state.effectPaths.end()) ? it->second : "", 2);
+                addEntry(et, (it != state.effectPaths.end()) ? it->second : "", 1);
             }
 
             if (filter != 0)
@@ -284,7 +281,7 @@ namespace VKIntox
         // Filter chips.
         {
             const std::pair<const char*, int> chips[] = {
-                {"All", 0}, {"Built-in", 1}, {"This config", 2}, {"ReShade", 3}};
+                {"All", 0}, {"This config", 1}, {"ReShade", 2}};
             for (int i = 0; i < (int)(sizeof(chips) / sizeof(chips[0])); i++)
             {
                 if (i > 0)
@@ -371,7 +368,7 @@ namespace VKIntox
                     if (medium)
                         ImGui::PopFont();
 
-                    const char* group = e.group == 0 ? "built-in" : e.group == 1 ? "config" : "reshade";
+                    const char* group = e.group == 0 ? "config" : "reshade";
                     ImGui::RenderTextClipped(ImVec2(bb.Max.x - 150.0f * d, bb.Min.y), ImVec2(bb.Max.x - 40.0f * d, bb.Max.y),
                                              group, NULL, NULL, ImVec2(1.0f, 0.5f), &bb);
 

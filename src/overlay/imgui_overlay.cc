@@ -705,25 +705,16 @@ namespace VKIntox
             if (!effectEnabled)
                 disabledEffects.push_back(effectName);
 
-            if (effectRegistry->isEffectBuiltIn(effectName))
-            {
-                std::string effectType = effectRegistry->getEffectType(effectName);
-                if (!effectType.empty())
-                    effectPaths[effectName] = effectType;
-            }
-            else
-            {
-                std::string path = effectRegistry->getEffectFilePath(effectName);
-                if (!path.empty())
-                    effectPaths[effectName] = path;
+            std::string path = effectRegistry->getEffectFilePath(effectName);
+            if (!path.empty())
+                effectPaths[effectName] = path;
 
-                const auto& defs = effectRegistry->getPreprocessorDefs(effectName);
-                for (const auto& def : defs)
-                {
-                    allDefs.push_back(def);
-                    if (!effectEnabled)
-                        disabledEffectParams.push_back({def.effectName, "@" + def.name, def.value});
-                }
+            const auto& defs = effectRegistry->getPreprocessorDefs(effectName);
+            for (const auto& def : defs)
+            {
+                allDefs.push_back(def);
+                if (!effectEnabled)
+                    disabledEffectParams.push_back({def.effectName, "@" + def.name, def.value});
             }
         }
     }
@@ -762,26 +753,15 @@ namespace VKIntox
         bool configSaved = true;
         if (!activeProfilePath.empty())
         {
-            // .conf is the structural base: definitions plus built-ins. values
-            // live in the .ini so a sparse preset can't inherit stale ones.
-            std::vector<std::string> baseEffects;
-            std::vector<std::string> baseDisabled;
-            const std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());
-            for (const auto& name : effects)
-            {
-                if (!effectRegistry->isEffectBuiltIn(name))
-                    continue;
-                baseEffects.push_back(name);
-                if (disabledSet.count(name))
-                    baseDisabled.push_back(name);
-            }
+            // .conf carries the ReShade definitions only; values live in the
+            // .ini so a sparse preset can't inherit stale ones.
             std::map<std::string, std::string> instancePaths = effectPaths;
             for (const auto& [name, path] : effectPaths)
             {
                 if (std::filesystem::path(path).extension() == ".fx")
                     instancePaths[name] = std::filesystem::path(path).filename().string();
             }
-            configSaved = ConfigSerializer::saveToPath(activeProfilePath, baseEffects, baseDisabled, {},
+            configSaved = ConfigSerializer::saveToPath(activeProfilePath, {}, {}, {},
                                                        instancePaths, {});
         }
 
@@ -833,7 +813,7 @@ namespace VKIntox
                 auto effect = std::find_if(allEffects.begin(), allEffects.end(), [&name](const EffectConfig& item) {
                     return item.name == name;
                 });
-                if (effect == allEffects.end() || effect->type != EffectType::ReShade || effect->filePath.empty())
+                if (effect == allEffects.end() || effect->filePath.empty())
                     continue;
                 const std::string filename = std::filesystem::path(effect->filePath).filename().string();
                 for (const auto& technique : effect->techniqueNames)

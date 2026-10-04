@@ -12,7 +12,6 @@ namespace VKIntox
 {
     enum class EffectType
     {
-        BuiltIn,  // cas, dls, fxaa, smaa, deband, lut
         ReShade   // .fx files
     };
 
@@ -28,10 +27,10 @@ namespace VKIntox
 
     struct EffectConfig
     {
-        std::string name;       // Instance name: "cas", "cas.2", "Clarity", etc.
-        std::string effectType; // Base type: "cas", "Clarity" (for finding shader/identifying built-in)
-        std::string filePath;   // For ReShade: path to .fx file, empty for built-in
-        EffectType type = EffectType::BuiltIn;
+        std::string name;       // Instance name: "Clarity", "CAS", "CAS.2", etc.
+        std::string effectType; // Base type: "Clarity", "CAS" (for finding the shader)
+        std::string filePath;   // Path to the .fx file
+        EffectType type = EffectType::ReShade;
         bool enabled = true;
         std::vector<std::unique_ptr<EffectParam>> parameters;
         std::vector<std::string> techniqueNames;

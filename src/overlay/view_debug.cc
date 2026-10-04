@@ -68,9 +68,7 @@ namespace VKIntox
 
                 for (const auto& effect : effects)
                 {
-                    bool open = ImGui::TreeNode(effect.name.c_str(), "[%s] %s",
-                        effect.type == EffectType::BuiltIn ? "BuiltIn" : "ReShade",
-                        effect.name.c_str());
+                    bool open = ImGui::TreeNode(effect.name.c_str());
 
                     if (open)
                     {

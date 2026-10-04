@@ -421,8 +421,6 @@ namespace VKIntox
                             editor->resetToDefault(*param);
                     }
                     paramsDirty = true;
-                    if (effectRegistry->isEffectBuiltIn(effectName))
-                        reloadNeeded = true;  // built-ins need a rebuild for new values
                     lastChangeTime = std::chrono::steady_clock::now();
                 }
 
@@ -595,9 +593,7 @@ namespace VKIntox
             }
 
             // Show parameters for this effect. ReShade uniforms are pushed every
-            // frame by updateEffect, so a value edit needs no rebuild; built-ins
-            // read their config at construction and do.
-            const bool builtInEffect = effectRegistry->isEffectBuiltIn(effectName);
+            // frame by updateEffect, so a value edit needs no rebuild.
             auto effectParams = effectRegistry->getParametersForEffect(effectName);
             for (size_t paramIdx = 0; paramIdx < effectParams.size(); paramIdx++)
             {
@@ -607,8 +603,6 @@ namespace VKIntox
                     paramsDirty = true;
                     profileDirty = true;
                     lastChangeTime = std::chrono::steady_clock::now();
-                    if (builtInEffect)
-                        reloadNeeded = true;
                 }
                 ImGui::PopID();
             }

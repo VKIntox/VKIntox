@@ -59,7 +59,6 @@
 #include "effects/effect.hh"
 #include "effects/effect_reshade.hh"
 #include "effects/effect_transfer.hh"
-#include "effects/builtin/builtin_effects.hh"
 #include "imgui_overlay.hh"
 #include "effects/effect_registry.hh"
 
@@ -744,6 +743,11 @@ namespace VKIntox
                 {
                     if (effects.size() >= maxEffects)
                         break;
+                    // skip the removed built-ins: they have no .fx, so a legacy
+                    // reference drops here and auto-save rewrites it away. an
+                    // installed shader of the same name still resolves.
+                    if (EffectRegistry::resolveEffectPath(instance.name, config).empty())
+                        continue;
                     effects.push_back(instance.name);
                     if (!instance.enabled)
                         disabled.push_back(instance.name);
@@ -753,49 +757,27 @@ namespace VKIntox
             }
             else if (profile.hasEffectList)
             {
-                config->setOption("effects", join(profile.effects));
-                config->setOption("disabledEffects", join(profile.disabledEffects));
+                std::vector<std::string> effects, disabled;
+                std::set<std::string> disabledSet(profile.disabledEffects.begin(), profile.disabledEffects.end());
+                for (const auto& name : profile.effects)
+                {
+                    if (EffectRegistry::resolveEffectPath(name, config).empty())
+                        continue;
+                    effects.push_back(name);
+                    if (disabledSet.count(name))
+                        disabled.push_back(name);
+                }
+                config->setOption("effects", join(effects));
+                config->setOption("disabledEffects", join(disabled));
             }
             else if (!profile.techniques.empty() || !profile.techniqueSorting.empty())
             {
-                // foreign or pre-sidecar profile: presets have no syntax for
-                // built-ins, so one survives only if the preset carries data
-                // for it (a [cas]-style section). this also migrates profiles
-                // saved before sidecars existed, where the shared game config
-                // alone decided which profile "had" the built-in
-                const auto currentEffects = config->getOption<std::vector<std::string>>("effects", {});
-                const auto currentDisabled = config->getOption<std::vector<std::string>>("disabledEffects", {});
-                std::set<std::string> currentDisabledSet(currentDisabled.begin(), currentDisabled.end());
-                std::vector<std::string> effects, disabled;
-                std::set<std::string> retainedEffects;
-
-                std::set<std::string> sections;
-                for (const auto& param : profile.params)
-                    sections.insert(param.effectName);
-                for (const auto& param : sidecar.params)
-                    sections.insert(param.effectName);
-                for (const auto& name : currentEffects)
-                {
-                    const auto configuredType = config->getOption<std::string>(name, "");
-                    const bool isBuiltIn = BuiltInEffects::instance().isBuiltIn(name) ||
-                                           BuiltInEffects::instance().isBuiltIn(configuredType);
-                    const bool presetCarriesIt = sections.count(name) != 0 ||
-                                                 sections.count(configuredType) != 0;
-                    if (isBuiltIn && presetCarriesIt)
-                    {
-                        if (!retainedEffects.insert(name).second)
-                            continue;
-                        effects.push_back(name);
-                        if (currentDisabledSet.count(name))
-                            disabled.push_back(name);
-                    }
-                }
-
                 // TechniqueSorting is an ordering hint for all techniques in a
                 // preset. Techniques is the actual enabled list. Expanding the
                 // sorting list (or matching only by filename) imports every
                 // technique from a shader pack and can create hundreds of
                 // disabled instances that make the overlay unusable.
+                std::vector<std::string> effects, disabled;
                 const auto& sortedTechniques = profile.techniqueSorting.empty()
                     ? profile.techniques
                     : profile.techniqueSorting;
@@ -805,7 +787,7 @@ namespace VKIntox
                     enabledTechniques.insert(technique);
                 }
                 const bool hasExplicitEnabledTechniques = profile.hasTechniques;
-                std::set<std::string> addedEffects = retainedEffects;
+                std::set<std::string> addedEffects;
                 std::set<std::string> matchedConfiguredEffects;
                 const size_t maxEffects = static_cast<size_t>(settingsManager.getMaxEffects());
                 for (const auto& technique : sortedTechniques)
@@ -1195,9 +1177,6 @@ namespace VKIntox
             return;
         }
 
-        VkFormat unormFormat = convertToUNORM(logicalSwapchain->format);
-        VkFormat srgbFormat = convertToSRGB(logicalSwapchain->format);
-
         // If no effects, add pass-through so rendering still works
         if (effectStrings.empty())
         {
@@ -1243,96 +1222,58 @@ namespace VKIntox
                 continue;
             }
 
-            // Get effect type from registry (handles instance names like "cas.2")
-            std::string effectType = effectRegistry.getEffectType(effectStrings[i]);
-            if (effectType.empty())
-                effectType = effectStrings[i];
+            // ReShade effect - wrap in try-catch + signal handler to handle compilation failures gracefully
+            // The embedded reshadefx compiler can trigger SIGFPE/SIGABRT in edge cases
+            std::string effectPath = effectRegistry.getEffectFilePath(effectStrings[i]);
+            auto customDefs = effectRegistry.getPreprocessorDefs(effectStrings[i]);
 
-            // Create the appropriate effect type
-            const auto* def = BuiltInEffects::instance().getDef(effectType);
-            if (def)
+            installCrashHandlers();
+            bool signalCrash = false;
+            if (sigsetjmp(signalJmpBuf, 1) != 0)
             {
-                // Sync registry parameter values to config overrides so built-in
-                // effects (which read from config) see the latest UI-modified values.
-                for (auto* param : effectRegistry.getParametersForEffect(effectStrings[i]))
-                {
-                    auto serialized = param->serialize();
-                    for (const auto& [suffix, value] : serialized)
-                    {
-                        std::string key = suffix.empty() ? param->name : (param->name + suffix);
-                        config->setOverride(key, value);
-                    }
-                }
+                // Returned here from signal handler (SIGFPE/SIGABRT/SIGSEGV).
+                // The C++ stack was unwound by siglongjmp, so any RAII
+                // guards above us in the createEffectsForSwapchain frame
+                // (including the scoped_lock on globalLock) were NOT
+                // destroyed. We must NOT touch globalLock-protected state
+                // from here — just push a passthrough effect and continue.
+                signalJmpActive = 0;
+                signalCrash = true;
+                std::string sigName = (caughtSignal == SIGFPE) ? "SIGFPE"
+                                    : (caughtSignal == SIGABRT) ? "SIGABRT"
+                                    : (caughtSignal == SIGSEGV) ? "SIGSEGV" : "SIGNAL";
+                Logger::err("Caught " + sigName + " creating ReshadeEffect " + effectStrings[i]);
+                effectRegistry.setEffectError(effectStrings[i], sigName + " during shader compilation");
+                logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
+                // Soft-disable: reshadefx native crash means we can't
+                // trust the compiler. Don't risk another one.
+                panicLayer(logicalDevice, std::string("reshadefx native crash (") + sigName
+                           + ") while compiling " + effectStrings[i]);
+            }
 
-                // Wrap built-in effect creation in try-catch to handle failures gracefully
+            if (!signalCrash)
+            {
+                signalJmpActive = 1;
                 try
                 {
-                    VkFormat format = def->usesSrgbFormat ? srgbFormat : unormFormat;
-                    logicalSwapchain->effects.push_back(
-                        def->factory(logicalDevice, format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
+                    auto reshadeEffect = std::make_shared<ReshadeEffect>(
+                        logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
+                        firstImages, secondImages, &effectRegistry, effectStrings[i], effectPath, customDefs);
+                    logicalSwapchain->effects.push_back(reshadeEffect);
+                    if (reshadeEffect->getOutputWrites() == 0)
+                    {
+                        Logger::debug("deterministic forwarding for zero-output-write effect: " + effectStrings[i]);
+                        logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
+                                               firstImages, secondImages, config));
+                    }
                 }
                 catch (const std::exception& e)
                 {
-                    Logger::err("Failed to create built-in effect " + effectStrings[i] + ": " + e.what());
+                    Logger::err("Failed to create ReshadeEffect " + effectStrings[i] + ": " + e.what());
                     effectRegistry.setEffectError(effectStrings[i], e.what());
                     logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
                 }
-            }
-            else
-            {
-                // ReShade effect - wrap in try-catch + signal handler to handle compilation failures gracefully
-                // The embedded reshadefx compiler can trigger SIGFPE/SIGABRT in edge cases
-                std::string effectPath = effectRegistry.getEffectFilePath(effectStrings[i]);
-                auto customDefs = effectRegistry.getPreprocessorDefs(effectStrings[i]);
-
-                installCrashHandlers();
-                bool signalCrash = false;
-                if (sigsetjmp(signalJmpBuf, 1) != 0)
-                {
-                    // Returned here from signal handler (SIGFPE/SIGABRT/SIGSEGV).
-                    // The C++ stack was unwound by siglongjmp, so any RAII
-                    // guards above us in the createEffectsForSwapchain frame
-                    // (including the scoped_lock on globalLock) were NOT
-                    // destroyed. We must NOT touch globalLock-protected state
-                    // from here — just push a passthrough effect and continue.
-                    signalJmpActive = 0;
-                    signalCrash = true;
-                    std::string sigName = (caughtSignal == SIGFPE) ? "SIGFPE"
-                                        : (caughtSignal == SIGABRT) ? "SIGABRT"
-                                        : (caughtSignal == SIGSEGV) ? "SIGSEGV" : "SIGNAL";
-                    Logger::err("Caught " + sigName + " creating ReshadeEffect " + effectStrings[i]);
-                    effectRegistry.setEffectError(effectStrings[i], sigName + " during shader compilation");
-                    logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
-                    // Soft-disable: reshadefx native crash means we can't
-                    // trust the compiler. Don't risk another one.
-                    panicLayer(logicalDevice, std::string("reshadefx native crash (") + sigName
-                               + ") while compiling " + effectStrings[i]);
-                }
-
-                if (!signalCrash)
-                {
-                    signalJmpActive = 1;
-                    try
-                    {
-                        auto reshadeEffect = std::make_shared<ReshadeEffect>(
-                            logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                            firstImages, secondImages, &effectRegistry, effectStrings[i], effectPath, customDefs);
-                        logicalSwapchain->effects.push_back(reshadeEffect);
-                        if (reshadeEffect->getOutputWrites() == 0)
-                        {
-                            Logger::debug("deterministic forwarding for zero-output-write effect: " + effectStrings[i]);
-                            logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                                                   firstImages, secondImages, config));
-                        }
-                    }
-                    catch (const std::exception& e)
-                    {
-                        Logger::err("Failed to create ReshadeEffect " + effectStrings[i] + ": " + e.what());
-                        effectRegistry.setEffectError(effectStrings[i], e.what());
-                        logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
-                    }
-                    signalJmpActive = 0;
-                }
+                signalJmpActive = 0;
             }
         }
 

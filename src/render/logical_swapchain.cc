@@ -70,8 +70,7 @@ namespace VKIntox
 
             // Walked per vector rather than indexed by imageCount: the two
             // semaphore vectors are filled in at different points during
-            // setup, and a short one would be read past its end. Same coupling
-            // that bit SmaaEffect and SimpleEffect.
+            // setup, and a short one would be read past its end.
             for (auto sem : semaphores)
             {
                 if (sem != VK_NULL_HANDLE)

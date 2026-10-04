@@ -65,8 +65,10 @@ namespace VKIntox
         // Get config reference for effects to read values
         Config* getConfig() const { return rootConfig; }
 
-        // Check if an effect is a built-in effect
-        static bool isBuiltInEffect(const std::string& name);
+        // True for the names of the removed built-in effects (cas, dls, fxaa,
+        // smaa, deband, lut) and their numbered instances (cas.2). Legacy
+        // config and preset references to these are dropped.
+        static bool isLegacyBuiltInName(const std::string& name);
 
         // Resolve an effect name, stem or filename to an installed .fx path using
         // the same search directories the registry uses. Static because preset
@@ -86,11 +88,8 @@ namespace VKIntox
         // Get the file path for an effect (for ReShade effects)
         std::string getEffectFilePath(const std::string& name) const;
 
-        // Get the effect type for an effect (base type name, e.g., "cas" for "cas.2")
+        // Get the effect type for an effect (base type name, e.g., "CAS" for "CAS.2")
         std::string getEffectType(const std::string& name) const;
-
-        // Check if an effect is a built-in effect (by instance name)
-        bool isEffectBuiltIn(const std::string& name) const;
 
         // Check if an effect failed to compile
         bool hasEffectFailed(const std::string& name) const;
@@ -127,17 +126,13 @@ namespace VKIntox
         std::list<EffectConfig> effects;
         std::vector<std::string> selectedEffects;  // Ordered list of selected effects for UI
         bool initializedFromConfig = false;        // True once first load from config is complete
-        // Named rootConfig rather than config: initBuiltInEffect and
-        // initReshadeEffect each build a local EffectConfig called config, and
-        // this is a different type entirely -- the parsed VKIntox.conf. The old
-        // pConfig prefix was doing the job a name has to do, which is to say
-        // which of two same-ish things this is.
+        // Named rootConfig rather than config: initReshadeEffect builds a local
+        // EffectConfig called config, and this is a different type entirely --
+        // the parsed VKIntox.conf. The old pConfig prefix was doing the job a
+        // name has to do, which is to say which of two same-ish things this is.
         Config* rootConfig = nullptr;
         mutable std::mutex mutex;
         std::atomic<uint64_t> paramGeneration{0};
-
-        // Initialize built-in effect configs
-        void initBuiltInEffect(const std::string& instanceName, const std::string& effectType);
 
         // Initialize ReShade effect config
         void initReshadeEffect(const std::string& name, const std::string& path);
