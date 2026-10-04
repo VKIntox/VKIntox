@@ -325,7 +325,7 @@ struct ImGuiM3Metrics
 struct ImGuiM3BlurSettings
 {
     bool  blur = true;
-    float background_opacity = 0.80f;
+    float background_opacity = 0.90f;
     float size = 5.0f;
     int   passes = 3;
 };
