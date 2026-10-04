@@ -2052,10 +2052,10 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
     const float pill = ImMin(track_h, track_w) * 0.5f;
     const ImGuiM3ShapeRounding track_rounding{ pill, pill, pill, pill };
 
-    // Press narrows the track, which is the switch's own shape morph. This is
-    // the switch's own spring, slower and less bouncy than the shared default
-    // spatial spring: damping 0.9 + stiffness 120 settle in ~405ms, where the
-    // default's 0.8 + 380 settled in ~257ms and read as a snap.
+    // Press narrows the track, which is the switch's own shape morph. Slower
+    // and less bouncy than the shared default spatial spring (0.9 + 120 settles
+    // in ~405ms, where the default's 0.8 + 380 settled in ~257ms and read as a
+    // snap).
     const float press_t = ImGuiM3SpringStep(id ^ 0x5357, held ? 1.0f : 0.0f, 0.9f, 120.0f);
 
     // Handle: 22dp normally, 26dp when pressed, with a spring so it grows.
@@ -2070,7 +2070,12 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
         track_w + (m.switch_pressed_track_width - m.switch_track_width) * m.density * press_t,
         handle_size);
     const float inset = (track_h - handle_size) * 0.5f;
-    const float travel = ImMax(0.0f, track_width - handle_size - inset * 2.0f);
+
+    // The toggle animation proper: the handle springs from its previous side to
+    // the new one, settling in ~410ms with a light bounce (damping 0.75,
+    // stiffness 170). Its resting spot is clamped to the track, so the overshoot
+    // can use the padding but the circle can never leave the pill.
+    const float toggle_t = ImGuiM3SpringStep(id ^ 0x5351, on ? 1.0f : 0.0f, 0.75f, 170.0f);
 
     ImGuiM3DrawContainer(window->DrawList, track_bb, track_rounding, PackU32(on ? track_on_color : track_off_color),
                          PackU32(on ? ImGuiM3Color(ImGuiM3Role_SurfaceTint) : outline_off_color),
@@ -2080,9 +2085,11 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
     ImGuiM3State state = (hovered && held) ? ImGuiM3State_Pressed : hovered ? ImGuiM3State_Hovered : ImGuiM3State_Enabled;
     ImGuiM3DrawStateLayer(window->DrawList, track_bb, track_rounding, on ? ImGuiM3Role_OnPrimary : ImGuiM3Role_OnSurface, state);
 
-    const ImVec2 handle_center(on ? track_bb.Min.x + inset + handle_size * 0.5f + travel
-                                  : track_bb.Min.x + inset + handle_size * 0.5f,
-                               track_bb.GetCenter().y);
+    const float handle_half = handle_size * 0.5f;
+    const float x_off = track_bb.Min.x + inset + handle_half;
+    const float x_on  = track_bb.Min.x + track_width - inset - handle_half;
+    const float handle_x = ImClamp(x_off + (x_on - x_off) * toggle_t, ImMin(x_off, x_on), ImMax(x_off, x_on));
+    const ImVec2 handle_center(handle_x, track_bb.GetCenter().y);
     const float handle_r = handle_size * 0.5f;
     const ImU32 handle_col = on ? PackU32(ImGuiM3Color(ImGuiM3Role_OnPrimary)) : PackU32(ImGuiM3Color(ImGuiM3Role_Outline));
     window->DrawList->AddCircleFilled(handle_center, handle_r, handle_col, window->DrawList->_CalcCircleAutoSegmentCount(handle_r));
