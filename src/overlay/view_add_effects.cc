@@ -560,7 +560,8 @@ namespace VKIntox
                         const int dupCount = duplicateCountFor(e.type);
                         char dupText[8];
                         std::snprintf(dupText, sizeof(dupText), "%d", dupCount);
-                        const float stepSize = m.icon_button_size * d;
+                        // smaller than the row so the circles keep a vertical margin
+                        const float stepSize = 30.0f * d;
                         const float dupW = ImGui::CalcTextSize(dupText).x;
                         const float plusX = switchX - gap - stepSize;
                         const float countX = plusX - gap - dupW;
@@ -570,14 +571,17 @@ namespace VKIntox
                         ImGui::SetCursorScreenPos(ImVec2(minusX, controlY));
                         ImGui::PushID(3);
                         ImGui::BeginDisabled(dupCount == 0);
-                        if (ImGui::M3IconButton(Icon::MinusUtf8, "Remove a duplicate copy", ImGuiM3Button_Outlined))
+                        if (ImGui::M3Button(Icon::MinusUtf8, ImGuiM3Button_Outlined, ImVec2(stepSize, stepSize)))
                         {
                             addEffectsDuplicateCount[e.type] = std::max(0, dupCount - 1);
                             toggleQueued(e.type, true);
                         }
                         ImGui::EndDisabled();
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        {
+                            ImGui::SetTooltip("Remove a duplicate copy");
                             overControl = true;
+                        }
                         ImGui::PopID();
 
                         ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
@@ -587,13 +591,16 @@ namespace VKIntox
 
                         ImGui::SetCursorScreenPos(ImVec2(plusX, controlY));
                         ImGui::PushID(2);
-                        if (ImGui::M3IconButton(Icon::AddUtf8, "Add a duplicate copy", ImGuiM3Button_Filled))
+                        if (ImGui::M3Button(Icon::AddUtf8, ImGuiM3Button_Filled, ImVec2(stepSize, stepSize)))
                         {
                             addEffectsDuplicateCount[e.type] = std::min(99, dupCount + 1);
                             toggleQueued(e.type, true);
                         }
                         if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip("Add a duplicate copy");
                             overControl = true;
+                        }
                         ImGui::PopID();
                     }
 
