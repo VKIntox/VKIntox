@@ -280,13 +280,19 @@ static ImVec4 Vec4FromArgb(uint32_t argb)
                   (float)alphaFromArgb(argb) / 255.0f);
 }
 
-// packs without imgui's global style alpha, which GetColorU32() would apply.
+// Applies imgui's global style alpha the same way GetColorU32() does, so M3
+// content honours PushStyleVar(ImGuiStyleVar_Alpha). Without this a view faded
+// with that style var still drew at full opacity and overlapped whatever it
+// was supposed to be covering.
 static ImU32 PackU32(const ImVec4& c)
 {
+    const float globalAlpha = ImGui::GetCurrentContext()
+        ? ImClamp(ImGui::GetStyle().Alpha, 0.0f, 1.0f) : 1.0f;
+    const float alpha = ImSaturate(c.w) * globalAlpha;
     const ImU32 r = (ImU32)clampInt(0, 255, (int)(ImSaturate(c.x) * 255.0f + 0.5f));
     const ImU32 g = (ImU32)clampInt(0, 255, (int)(ImSaturate(c.y) * 255.0f + 0.5f));
     const ImU32 b = (ImU32)clampInt(0, 255, (int)(ImSaturate(c.z) * 255.0f + 0.5f));
-    const ImU32 a = (ImU32)clampInt(0, 255, (int)(ImSaturate(c.w) * 255.0f + 0.5f));
+    const ImU32 a = (ImU32)clampInt(0, 255, (int)(alpha * 255.0f + 0.5f));
     return (a << 24) | (b << 16) | (g << 8) | r;
 }
 
