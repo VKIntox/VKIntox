@@ -623,7 +623,7 @@ fi
 # beside the downloaded packages; refreshed every run so a fix lands without a
 # package hash change
 mkdir -p "$SHADERS_DIR/VKIntox"
-for shader in MSAA.fx; do
+for shader in MSAA.fx ExponentialFog.fx; do
     curl -fsSL "https://raw.githubusercontent.com/$REPO/$ASSET_REF/assets/builtInShaders/$shader" \
         -o "$SHADERS_DIR/VKIntox/$shader" ||
         warn "couldn't fetch builtInShaders/$shader"
