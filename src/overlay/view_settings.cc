@@ -196,6 +196,16 @@ namespace VKIntox
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Source colour, variant, contrast, and every colour token.");
 
+        ImGui::Spacing();
+        bool separateParams = settingsManager.getSeparateEffectParams();
+        if (ImGui::Checkbox("Separate effect parameters into a separate card", &separateParams))
+        {
+            settingsManager.setSeparateEffectParams(separateParams);
+            settingsManager.save();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Each effect edits in its own tabbed card at the bottom.\nTurn off for the all-in-one effect list.");
+
         if (themeEditorOpen)
         {
             ImGui::Spacing();

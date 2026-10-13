@@ -7,6 +7,7 @@
 #include "logger.hh"
 #include "overlay/ui_theme.hh"
 #include "overlay/ui_icons.hh"
+#include "overlay/effect_icons.hh"
 #include "overlay/ui_dialog.hh"
 #include "overlay/ui_menu.hh"
 #include "util.hh"
@@ -95,6 +96,37 @@ namespace VKIntox
             return changed;
         }
 
+        // Section title for a card: leading icon plus an emphasized primary
+        // label, matching the parameters sheet header. Reserves the row.
+        inline float drawCardHeaderRow(const char* iconUtf8, const char* title)
+        {
+            const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+            const float h = ImGui::GetFrameHeight() + 4.0f * m.density;
+            const ImVec2 min = ImGui::GetCursorScreenPos();
+            const float w = ImGui::GetContentRegionAvail().x;
+            ImGui::Dummy(ImVec2(w, h));
+
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float iconPx = ImGui::GetFontSize() * 1.35f;
+            const float padX = 6.0f * m.density;
+            float x = min.x + padX;
+            if (ImGuiM3IconFont() && iconUtf8)
+            {
+                ImGuiM3DrawIcon(dl, iconUtf8,
+                                ImRect(ImVec2(x, min.y + (h - iconPx) * 0.5f),
+                                       ImVec2(x + iconPx, min.y + (h + iconPx) * 0.5f)),
+                                iconPx, ImGuiM3ColorU32(ImGuiM3Role_Primary));
+                x += iconPx + 8.0f * m.density;
+            }
+            ImFont* font = ImGuiM3FontBold();
+            if (!font)
+                font = ImGui::GetFont();
+            const float fs = ImGui::GetFontSize();
+            dl->AddText(font, fs, ImVec2(x, min.y + (h - fs) * 0.5f),
+                        ImGuiM3ColorU32(ImGuiM3Role_Primary), title);
+            return h;
+        }
+
         // Fallback picker when the xdg portal is unavailable; mirrors the
         // Shaders tab. only displayed while the main view is the active tab.
         ImGui::FileBrowser presetBrowser(ImGuiFileBrowserFlags_CloseOnEsc);
@@ -167,6 +199,68 @@ namespace VKIntox
         }
 
         const std::vector<std::string>& displayedEffects = reorderPreviewActive ? reorderPreviewEffects : selectedEffects;
+
+        // When on, each effect edits in its own tabbed card at the bottom; when
+        // off, the parameters live inline in the effect list (all-in-one card).
+        const bool splitParams = settingsManager.getSeparateEffectParams();
+
+        // Renders one effect's preprocessor definitions and parameters, shared by
+        // the inline list and the separate parameters card. Returns changed.
+        auto renderEffectParams = [&](const std::string& effectName) -> bool {
+            bool changed = false;
+            if (effectRegistry->hasEffectFailed(effectName))
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
+                ImGui::TextWrapped("Failed to compile: %s",
+                                   effectRegistry->getEffectError(effectName).c_str());
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+            }
+
+            auto& defs = effectRegistry->getPreprocessorDefs(effectName);
+            if (!defs.empty())
+            {
+                // folded by default; opened on demand
+                if (ImGui::TreeNodeEx("##preprocessor",
+                                      ImGuiTreeNodeFlags_SpanAvailWidth,
+                                      "%s  Preprocessor (%zu)", Icon::BuildUtf8, defs.size()))
+                {
+                    ImGui::Spacing();
+                    // align every field to the widest definition name
+                    float nameColumn = 60.0f;
+                    for (const auto& def : defs)
+                        nameColumn = ImMax(nameColumn, ImGui::CalcTextSize(def.name.c_str()).x + 20.0f);
+                    for (size_t defIdx = 0; defIdx < defs.size(); defIdx++)
+                    {
+                        ImGui::PushID(static_cast<int>(defIdx + 1000));
+                        if (renderPreprocessorDef(defs[defIdx], effectRegistry, effectName, nameColumn))
+                        {
+                            changed = true;
+                            reloadNeeded = true;  // macros are compile-time
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+            }
+
+            // ReShade uniforms are pushed every frame by updateEffect, so a value
+            // edit needs no rebuild.
+            auto effectParams = effectRegistry->getParametersForEffect(effectName);
+            if (effectParams.empty() && defs.empty())
+                ImGui::TextDisabled("This effect has no adjustable parameters.");
+            for (size_t paramIdx = 0; paramIdx < effectParams.size(); paramIdx++)
+            {
+                ImGui::PushID(static_cast<int>(paramIdx));
+                if (renderFieldEditor(*effectParams[paramIdx]))
+                    changed = true;
+                ImGui::PopID();
+            }
+            return changed;
+        };
 
         // Normal mode - show profile and effect controls
 
@@ -465,13 +559,60 @@ namespace VKIntox
                 ImGui::CloseCurrentPopup();
             UI::EndM3Dialog();
         }
-        // Scrollable effect list, carded and scrolled independently of the view
-        float footerHeight = ImGui::GetFrameHeightWithSpacing() * 2 + ImGui::GetStyle().ItemSpacing.y;
+        // Effect parameters live in their own foldable, resizable sheet at the
+        // bottom, folded by default, one tab per effect. The handle between the
+        // sheet and the list trades height between them.
+        static bool  paramsFolded = true;
+        static float paramsSheetHeight = -1.0f;   // px, remembered while unfolded
+        static bool  paramsSheetUserSized = false;
+        static std::string paramsActiveEffect;
+        static std::string paramsSlideShown;      // last effect whose body was shown
+        static std::string paramsSlideFrom;       // effect sliding out
+        static bool   paramsSlideActive = false;
+        static double paramsSlideStart = 0.0;
+        static int    paramsSlideDir = 1;
+
         const ImGuiM3Metrics& listMetrics = ImGuiM3GetMetrics();
+        const float cardSpacing = ImGui::GetStyle().ItemSpacing.y;
+        const float sheetHeaderH = ImGui::GetFrameHeight() + 24.0f * listMetrics.density;
+        const float resizeHandleH = 12.0f * listMetrics.density;
+        const float footerRowH = ImGui::GetFrameHeight();
+        const float footerHeight = footerRowH + cardSpacing;
+
+        const float availH = ImGui::GetContentRegionAvail().y;
+        const float minListH = 110.0f * listMetrics.density;
+        const float minSheetH = 210.0f * listMetrics.density;
+        const float sheetReserve = footerHeight + (paramsFolded ? 0.0f : resizeHandleH + cardSpacing * 2.0f);
+        const float maxSheetH = ImMax(minSheetH, availH - sheetReserve - minListH);
+
+        float sheetHeight = 0.0f;
+        if (splitParams)
+        {
+            sheetHeight = sheetHeaderH;
+            if (!paramsFolded)
+            {
+                // lean tall, and taller the more effects there are to edit
+                const float effectBias = ImClamp(0.70f + 0.05f * (float)displayedEffects.size(), 0.70f, 0.94f);
+                if (!paramsSheetUserSized || paramsSheetHeight <= 0.0f)
+                    paramsSheetHeight = ImClamp(availH * effectBias, minSheetH, maxSheetH);
+                sheetHeight = ImClamp(paramsSheetHeight, minSheetH, maxSheetH);
+            }
+        }
+
+        const float handleReserve = (splitParams && !paramsFolded) ? resizeHandleH + cardSpacing * 2.0f : 0.0f;
+        const float listReserve = footerHeight + sheetHeight + handleReserve;
+
+        // The effect list is its own labelled card: toggling and reordering only.
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * listMetrics.density, 10.0f * listMetrics.density));
-        ImGui::BeginChild("EffectList", ImVec2(0, -footerHeight), ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::BeginChild("EffectListCard", ImVec2(0, -listReserve),
+                          ImGuiChildFlags_AlwaysUseWindowPadding,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        drawCardHeaderRow(Icon::AutoAwesomeUtf8, "Effects");
+        ImGui::Spacing();
+        // borderless child: no padding of its own, the card already insets it
+        ImGui::BeginChild("EffectList", ImVec2(0, 0));
 
         // Show selected effects with their parameters
         float itemHeight = ImGui::GetFrameHeightWithSpacing();
@@ -540,14 +681,37 @@ namespace VKIntox
 
             ImGui::SameLine();
 
-            // Show failed effects in red
-            if (effectFailed)
-                ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
+            // name row: in split mode it jumps to the effect's tab in the
+            // parameters card; otherwise it expands to edit params inline.
+            bool treeOpen = false;
+            if (splitParams)
+            {
+                if (effectFailed)
+                    ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
+                ImGui::Selectable(effectName.c_str(), false, ImGuiSelectableFlags_None,
+                                  ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
+                if (effectFailed)
+                    ImGui::PopStyleColor();
 
-            bool treeOpen = ImGui::TreeNode("effect", "%s%s", effectName.c_str(), effectFailed ? " (FAILED)" : "");
-
-            if (effectFailed)
-                ImGui::PopStyleColor();
+                if (effectFailed && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", effectError.c_str());
+                if (ImGui::IsItemClicked())
+                {
+                    paramsActiveEffect = effectName;
+                    paramsFolded = false;
+                }
+            }
+            else
+            {
+                if (effectFailed)
+                    ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
+                treeOpen = ImGui::TreeNode("effect", "%s%s", effectName.c_str(),
+                                           effectFailed ? " (FAILED)" : "");
+                if (effectFailed)
+                    ImGui::PopStyleColor();
+                if (effectFailed && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", effectError.c_str());
+            }
 
             // Right-click context menu
             if (UI::BeginM3MenuContext("effect_context"))
@@ -613,7 +777,6 @@ namespace VKIntox
                     applyRequested = true;
                     profileDirty = true;
                     UI::EndM3Menu();
-                    // CRITICAL: Must TreePop before break if tree was opened, else assertion failure
                     if (treeOpen) ImGui::TreePop();
                     ImGui::PopID();
                     break;  // Iterator invalidated — exit loop safely
@@ -680,89 +843,19 @@ namespace VKIntox
                 ImGui::EndDragDropTarget();
             }
 
-            ImGui::PopID();
-
-            if (!treeOpen)
-                continue;
-
-            // Show error for failed effects
-            if (effectFailed)
+            // inline parameters for the all-in-one card
+            if (treeOpen)
             {
-                ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
-                ImGui::TextWrapped("Error: %s", effectError.c_str());
-                ImGui::PopStyleColor();
-                ImGui::TreePop();
-                continue;
-            }
-
-            // Show preprocessor definitions first (ReShade effects only)
-            if (effectRegistry)
-            {
-                auto& defs = effectRegistry->getPreprocessorDefs(effectName);
-                if (!defs.empty())
-                {
-                    // A framed section: the card background is drawn on a
-                    // separate draw channel so it sits behind the tree node and
-                    // its inputs, matching the M3 list/card treatment.
-                    ImVec2 startPos = ImGui::GetCursorScreenPos();
-                    float contentWidth = ImGui::GetContentRegionAvail().x;
-                    ImDrawList* drawList = ImGui::GetWindowDrawList();
-                    drawList->ChannelsSplit(2);
-                    drawList->ChannelsSetCurrent(1);  // Foreground for content
-
-                    if (ImGui::TreeNode("preprocessor", "%s  Preprocessor (%zu)", Icon::BuildUtf8, defs.size()))
-                    {
-                        ImGui::TextDisabled("Applied when you press %s or Apply", settingsManager.getReloadKey().c_str());
-                        ImGui::Spacing();
-
-                        // Align every field to the widest definition name.
-                        float nameColumn = 60.0f;
-                        for (const auto& def : defs)
-                            nameColumn = ImMax(nameColumn, ImGui::CalcTextSize(def.name.c_str()).x + 20.0f);
-
-                        for (size_t defIdx = 0; defIdx < defs.size(); defIdx++)
-                        {
-                            ImGui::PushID(static_cast<int>(defIdx + 1000));
-                            if (renderPreprocessorDef(defs[defIdx], effectRegistry, effectName, nameColumn))
-                            {
-                                paramsDirty = true;
-                                profileDirty = true;
-                                reloadNeeded = true;  // macros are compile-time
-                                lastChangeTime = std::chrono::steady_clock::now();
-                            }
-                            ImGui::PopID();
-                        }
-                        ImGui::TreePop();
-                    }
-
-                    // Card background, on channel 0 (behind content).
-                    ImVec2 endPos = ImGui::GetCursorScreenPos();
-                    drawList->ChannelsSetCurrent(0);
-                    const float card_r = ImGuiM3Radius(ImGuiM3Shape_Medium);
-                    const ImRect card(ImVec2(startPos.x - 10.0f, startPos.y - 6.0f),
-                                      ImVec2(startPos.x + contentWidth + 10.0f, endPos.y + 6.0f));
-                    ImGuiM3PathRoundedRect(drawList, card, ImGuiM3ShapeRounding{ card_r, card_r, card_r, card_r },
-                                           ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
-                    drawList->ChannelsMerge();
-                }
-            }
-
-            // Show parameters for this effect. ReShade uniforms are pushed every
-            // frame by updateEffect, so a value edit needs no rebuild.
-            auto effectParams = effectRegistry->getParametersForEffect(effectName);
-            for (size_t paramIdx = 0; paramIdx < effectParams.size(); paramIdx++)
-            {
-                ImGui::PushID(static_cast<int>(paramIdx));
-                if (renderFieldEditor(*effectParams[paramIdx]))
+                if (renderEffectParams(effectName))
                 {
                     paramsDirty = true;
                     profileDirty = true;
                     lastChangeTime = std::chrono::steady_clock::now();
                 }
-                ImGui::PopID();
+                ImGui::TreePop();
             }
 
-            ImGui::TreePop();
+            ImGui::PopID();
         }
 
         const ImGuiPayload* activePayload = ImGui::GetDragDropPayload();
@@ -789,9 +882,230 @@ namespace VKIntox
             reorderPreviewEffects.clear();
         }
 
-        ImGui::EndChild();
+        ImGui::EndChild();  // EffectList
+        ImGui::EndChild();  // EffectListCard
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor();
+
+        // Resize handle: drag to trade height between the list and the sheet.
+        if (splitParams && !paramsFolded)
+        {
+            const ImVec2 handleMin = ImGui::GetCursorScreenPos();
+            const float handleW = ImGui::GetContentRegionAvail().x;
+            ImGui::InvisibleButton("##params_resize", ImVec2(handleW, resizeHandleH));
+            const ImGuiID handleId = ImGui::GetItemID();
+            const bool handleHovered = ImGui::IsItemHovered();
+            const bool handleActive = ImGui::IsItemActive();
+            if (handleHovered || handleActive)
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            if (handleActive)
+            {
+                // the handle rides the boundary: moving it down grows the list
+                // above and shrinks the sheet below, so the delta is subtracted.
+                const float dy = ImGui::GetIO().MouseDelta.y;
+                if (dy != 0.0f)
+                {
+                    paramsSheetHeight = ImClamp(paramsSheetHeight - dy, minSheetH, maxSheetH);
+                    paramsSheetUserSized = true;
+                }
+            }
+            if (handleHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                paramsSheetUserSized = false;  // back to the automatic height
+
+            // same widen-and-tint-on-touch the scrollbar thumb uses
+            const float grow = ImSaturate(
+                ImGuiM3SpringStepEffectsFast(handleId ^ 0x52535A, (handleHovered || handleActive) ? 1.0f : 0.0f));
+            const float restW = 40.0f * listMetrics.density;
+            const float hoverW = 64.0f * listMetrics.density;
+            const float pillW = ImLerp(restW, hoverW, grow);
+            const float pillH = (3.0f + grow) * listMetrics.density;
+            const ImVec4 restCol = ImGuiM3Color(ImGuiM3Role_OutlineVariant);
+            const ImVec4 activeCol = handleActive ? ImGuiM3Color(ImGuiM3Role_Primary)
+                                                  : ImGuiM3Color(ImGuiM3Role_OnSurface);
+            const ImU32 pillCol = ImGui::GetColorU32(ImVec4(ImLerp(restCol.x, activeCol.x, grow),
+                                                            ImLerp(restCol.y, activeCol.y, grow),
+                                                            ImLerp(restCol.z, activeCol.z, grow),
+                                                            ImLerp(restCol.w, activeCol.w, grow)));
+
+            ImDrawList* handleDl = ImGui::GetWindowDrawList();
+            const float cx = handleMin.x + handleW * 0.5f;
+            const float cy = handleMin.y + resizeHandleH * 0.5f;
+            handleDl->AddRectFilled(ImVec2(cx - pillW * 0.5f, cy - pillH * 0.5f),
+                                    ImVec2(cx + pillW * 0.5f, cy + pillH * 0.5f),
+                                    pillCol, pillH * 0.5f);
+        }
+
+        // Effect Parameters: a foldable sheet at the bottom, folded by default,
+        // one tab per effect. Only shown when the all-in-one card is off.
+        if (splitParams)
+        {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * listMetrics.density, 10.0f * listMetrics.density));
+            ImGui::BeginChild("EffectParamsCard", ImVec2(0, sheetHeight),
+                              ImGuiChildFlags_AlwaysUseWindowPadding,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+            // fold header: chevron plus emphasized title, the whole row toggles
+            {
+                const float headH = ImGui::GetFrameHeight() + 4.0f * listMetrics.density;
+                const ImVec2 headMin = ImGui::GetCursorScreenPos();
+                const float headW = ImGui::GetContentRegionAvail().x;
+                ImGui::InvisibleButton("##params_fold", ImVec2(headW, headH));
+                const bool headHovered = ImGui::IsItemHovered();
+                if (ImGui::IsItemClicked())
+                    paramsFolded = !paramsFolded;
+
+                ImDrawList* headDl = ImGui::GetWindowDrawList();
+                const ImRect headRect(headMin, ImVec2(headMin.x + headW, headMin.y + headH));
+                const float headRadius = ImGuiM3Radius(ImGuiM3Shape_Large);
+                if (headHovered)
+                    ImGuiM3DrawStateLayer(headDl, headRect,
+                                          ImGuiM3ShapeRounding{ headRadius, headRadius, headRadius, headRadius },
+                                          ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
+
+                const float iconPx = ImGui::GetFontSize() * 1.35f;
+                const float padX = 6.0f * listMetrics.density;
+                float x = headMin.x + padX;
+                if (ImGuiM3IconFont())
+                {
+                    ImGuiM3DrawIcon(headDl, Icon::TuneUtf8,
+                                    ImRect(ImVec2(x, headMin.y + (headH - iconPx) * 0.5f),
+                                           ImVec2(x + iconPx, headMin.y + (headH + iconPx) * 0.5f)),
+                                    iconPx, ImGuiM3ColorU32(ImGuiM3Role_Primary));
+                    x += iconPx + 8.0f * listMetrics.density;
+                }
+                ImFont* titleFont = ImGuiM3FontBold();
+                if (!titleFont)
+                    titleFont = ImGui::GetFont();
+                const float titleSize = ImGui::GetFontSize();
+                headDl->AddText(titleFont, titleSize,
+                                ImVec2(x, headMin.y + (headH - titleSize) * 0.5f),
+                                ImGuiM3ColorU32(ImGuiM3Role_Primary), "Effect Parameters");
+                ImGuiM3TreeNodeArrow(headDl,
+                                     ImVec2(headMin.x + headW - padX - iconPx,
+                                            headMin.y + (headH - titleSize) * 0.5f),
+                                     iconPx, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant), !paramsFolded);
+            }
+
+            if (!paramsFolded)
+            {
+                ImGui::Spacing();
+                if (displayedEffects.empty())
+                {
+                    ImGui::TextDisabled("No effects in this preset. Add effects to edit their parameters.");
+                }
+                else
+                {
+                    // tabs are the navbar's connected button group: one segment
+                    // per effect, each carrying its add-effects icon.
+                    int activeIndex = 0;
+                    for (int i = 0; i < static_cast<int>(displayedEffects.size()); i++)
+                        if (displayedEffects[i] == paramsActiveEffect)
+                        {
+                            activeIndex = i;
+                            break;
+                        }
+
+                    std::vector<const char*> tabLabels;
+                    std::vector<ImWchar>     tabIcons;
+                    tabLabels.reserve(displayedEffects.size());
+                    tabIcons.reserve(displayedEffects.size());
+                    for (const auto& effectName : displayedEffects)
+                    {
+                        tabLabels.push_back(effectName.c_str());
+                        tabIcons.push_back(effectIconCodepointFor(effectName));
+                    }
+
+                    // the tabs scroll horizontally when they can't all fit
+                    ImGui::BeginChild("##effect_param_tabs", ImVec2(0, 0),
+                                      ImGuiChildFlags_AutoResizeY,
+                                      ImGuiWindowFlags_HorizontalScrollbar);
+                    if (ImGui::M3ConnectedButtonGroup("##effect_param_segments", tabLabels.data(),
+                                                      static_cast<int>(tabLabels.size()), &activeIndex, tabIcons.data(),
+                                                      true))
+                        paramsActiveEffect = displayedEffects[activeIndex];
+                    ImGui::EndChild();
+
+                    // keep the selection valid when the active effect is removed
+                    if (std::find(displayedEffects.begin(), displayedEffects.end(), paramsActiveEffect) == displayedEffects.end())
+                        paramsActiveEffect = displayedEffects.front();
+
+                    // slide transition between effects, same clock and bezier as
+                    // the top-level view swipes.
+                    if (paramsActiveEffect != paramsSlideShown)
+                    {
+                        auto indexOf = [&](const std::string& n) {
+                            auto it = std::find(displayedEffects.begin(), displayedEffects.end(), n);
+                            return it == displayedEffects.end()
+                                ? 0 : static_cast<int>(std::distance(displayedEffects.begin(), it));
+                        };
+                        paramsSlideFrom = paramsSlideShown;
+                        paramsSlideActive = !paramsSlideShown.empty() && paramsSlideShown != paramsActiveEffect;
+                        paramsSlideDir = (indexOf(paramsActiveEffect) >= indexOf(paramsSlideFrom)) ? 1 : -1;
+                        paramsSlideStart = ImGui::GetTime();
+                        paramsSlideShown = paramsActiveEffect;
+                    }
+
+                    constexpr float kParamsSlideSeconds = 0.30f;
+                    constexpr float kParamBezX1 = 0.05f, kParamBezY1 = 0.90f;
+                    constexpr float kParamBezX2 = 0.10f, kParamBezY2 = 1.06f;
+                    float paramsEase = 1.0f;
+                    if (paramsSlideActive)
+                    {
+                        const float clock = static_cast<float>((ImGui::GetTime() - paramsSlideStart) / kParamsSlideSeconds);
+                        if (clock >= 1.0f)
+                            paramsSlideActive = false;
+                        else
+                            paramsEase = UI::CubicBezierEase(clock, kParamBezX1, kParamBezY1, kParamBezX2, kParamBezY2);
+                    }
+
+                    ImGui::Spacing();
+                    const ImVec2 slidePos = ImGui::GetCursorScreenPos();
+                    const ImVec2 slideSize = ImGui::GetContentRegionAvail();
+                    const bool showFrom = paramsSlideActive && paramsSlideFrom != paramsActiveEffect;
+                    const float travel = 0.20f * slideSize.x * static_cast<float>(paramsSlideDir);
+                    const float offsetIn = showFrom ? (1.0f - paramsEase) * travel : 0.0f;
+                    const float offsetOut = showFrom ? -paramsEase * travel : 0.0f;
+                    const float alphaIn = showFrom ? ImClamp(paramsEase, 0.0f, 1.0f) : 1.0f;
+                    const float alphaOut = showFrom ? ImClamp(1.0f - paramsEase * 2.5f, 0.0f, 1.0f) : 1.0f;
+
+                    auto renderSlidingParams = [&](const std::string& effectName, float offset, float alpha) {
+                        ImGui::SetCursorScreenPos(ImVec2(slidePos.x + offset, slidePos.y));
+                        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha * ImGui::GetStyle().Alpha);
+                        ImGui::BeginChild(("##params_" + effectName).c_str(), slideSize,
+                                          ImGuiChildFlags_AlwaysUseWindowPadding);
+                        if (renderEffectParams(effectName))
+                        {
+                            paramsDirty = true;
+                            profileDirty = true;
+                            lastChangeTime = std::chrono::steady_clock::now();
+                        }
+                        ImGui::EndChild();
+                        ImGui::PopStyleVar();
+                    };
+
+                    if (showFrom && alphaOut > 0.01f)
+                        renderSlidingParams(paramsSlideFrom, offsetOut, alphaOut);
+                    renderSlidingParams(paramsActiveEffect, offsetIn, alphaIn);
+                    ImGui::SetCursorScreenPos(slidePos);
+                }
+            }
+            else
+            {
+                // no body while folded; keep the slide target in step so an unfold
+                // doesn't animate a stale change
+                paramsSlideShown = paramsActiveEffect;
+                paramsSlideActive = false;
+            }
+
+            ImGui::EndChild();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+        }
+
+        // pin the apply row to the bottom of the view
+        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footerRowH);
 
         bool autoApplyVal = settingsManager.getAutoApply();
         if (ImGui::Checkbox("Apply automatically", &autoApplyVal))

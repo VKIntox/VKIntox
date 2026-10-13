@@ -53,6 +53,9 @@ namespace VKIntox
         bool autoApply;  // Auto-apply changes without clicking Apply
         int autoApplyDelay;  // ms delay before auto-applying changes
         bool showDebugWindow;  // Show debug window with raw effect registry data
+        // Split effect parameters into their own tabbed card at the bottom
+        // (default) or keep them inline in the effect list (all-in-one card).
+        bool separateEffectParams;
         // Depth buffer resolve mode for MSAA sources (Advanced tab).
         // 0 = auto (prefer average, fall back to sample-zero),
         // 1 = sample-zero, 2 = average. Only applied when supported by the device.

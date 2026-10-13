@@ -86,6 +86,11 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.showDebugWindow;
         }
+        bool getSeparateEffectParams() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.separateEffectParams;
+        }
         int getDepthResolveMode() const
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -177,6 +182,11 @@ namespace VKIntox
         {
             std::lock_guard<std::mutex> lock(mutex);
             settings.showDebugWindow = value;
+        }
+        void setSeparateEffectParams(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.separateEffectParams = value;
         }
         void setDepthResolveMode(int value)
         {

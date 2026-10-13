@@ -74,6 +74,7 @@ int main()
     settings.autoApply = false;
     settings.autoApplyDelay = 375;
     settings.showDebugWindow = true;
+    settings.separateEffectParams = false;
     settings.depthResolveMode = 1;
     settings.depthManualPin = "image-view-42";
     settings.depthTransientWorkaround = false;
@@ -95,6 +96,7 @@ int main()
     expect(loaded.autoApply == settings.autoApply && loaded.autoApplyDelay == settings.autoApplyDelay,
            "settings preserve auto-apply options");
     expect(loaded.showDebugWindow == settings.showDebugWindow, "settings preserve showDebugWindow");
+    expect(loaded.separateEffectParams == settings.separateEffectParams, "settings preserve separateEffectParams");
     expect(loaded.depthResolveMode == settings.depthResolveMode && loaded.depthManualPin == settings.depthManualPin &&
                loaded.depthTransientWorkaround == settings.depthTransientWorkaround &&
                loaded.depthCaptureMethod == settings.depthCaptureMethod &&

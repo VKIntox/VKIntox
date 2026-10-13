@@ -283,6 +283,8 @@ namespace VKIntox
             }
             else if (key == "showDebugWindow")
                 settings.showDebugWindow = (value == "true" || value == "1");
+            else if (key == "separateEffectParams")
+                settings.separateEffectParams = (value == "true" || value == "1");
             else if (key == "depthResolveMode")
             {
                 try { settings.depthResolveMode = std::stoi(value); }
@@ -370,6 +372,9 @@ namespace VKIntox
 
         file << "\n# Debug\n";
         file << "showDebugWindow = " << (settings.showDebugWindow ? "true" : "false") << "\n";
+
+        file << "\n# Overlay layout\n";
+        file << "separateEffectParams = " << (settings.separateEffectParams ? "true" : "false") << "\n";
 
         file << "\n# Advanced (depth buffer)\n";
         file << "# depthResolveMode: 0=auto (prefer average), 1=sample-zero, 2=average\n";

@@ -49,6 +49,7 @@ namespace VKIntox::DefaultConfig
         settings.autoApply = true;
         settings.autoApplyDelay = 200;
         settings.showDebugWindow = false;
+        settings.separateEffectParams = true;
         settings.depthResolveMode = 0;
         settings.depthManualPin.clear();
         settings.depthTransientWorkaround = true;
