@@ -22,6 +22,18 @@ namespace VKIntox
 
     void ImGuiOverlay::renderAboutView()
     {
+        // Reserve the footer before laying out the content so it stays visible
+        // when the view is short; the content scrolls in what is left.
+        const char* disclaimer = "This project uses a design heavily inspired by Google's Material 3/Material You. Not affiliated with or endorsed by Google.";
+        const float wrapWidth = ImGui::GetContentRegionAvail().x;
+        const float disclaimerHeight = ImGui::CalcTextSize(disclaimer, nullptr, false, wrapWidth).y;
+        const float spacing = ImGui::GetStyle().ItemSpacing.y;
+        // budget generously: the footer carries the separator, the wrapped
+        // disclaimer, three lines, and the gaps between them.
+        const float footerHeight = 1.0f + disclaimerHeight + ImGui::GetTextLineHeight() * 3.0f + spacing * 8.0f + 6.0f;
+
+        ImGui::BeginChild("about_content", ImVec2(0, -footerHeight));
+
         const float brandSize = std::min(512.0f, ImGui::GetContentRegionAvail().x * 0.288f);
         renderCenteredBrandIcon(brandSize);
 
@@ -51,18 +63,9 @@ namespace VKIntox
         credit("Dear ImGui by", "@ocornut", "https://github.com/ocornut/imgui");
         ImGui::M3CardEnd();
 
-        ImGui::Spacing();
+        ImGui::EndChild();
 
-        // pin the footer to the bottom of the view, with a separator above it
-        const char* disclaimer = "This project uses a design heavily inspired by Google's Material 3/Material You. Not affiliated with or endorsed by Google.";
-        const float wrapWidth = ImGui::GetContentRegionAvail().x;
-        const float disclaimerHeight = ImGui::CalcTextSize(disclaimer, nullptr, false, wrapWidth).y;
-        const float spacing = ImGui::GetStyle().ItemSpacing.y;
-        const float footerHeight = 1.0f + disclaimerHeight + ImGui::GetTextLineHeight() * 3.0f + spacing * 6.0f;
-        const float remaining = ImGui::GetContentRegionAvail().y;
-        if (remaining > footerHeight)
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (remaining - footerHeight));
-
+        // Footer, pinned below the content by the reserved height.
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::PushTextWrapPos(0.0f);
