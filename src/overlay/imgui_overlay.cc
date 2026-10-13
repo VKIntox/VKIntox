@@ -1713,7 +1713,9 @@ namespace VKIntox
         const float shellClock = std::clamp(
             static_cast<float>((shellNow - shellAnimStart) / kShellAnimSeconds), 0.0f, 1.0f);
         const float shellEase = UI::CubicBezierEase(shellClock, kShellBezX1, kShellBezY1, kShellBezX2, kShellBezY2);
-        shellAlpha = visible ? shellEase : 1.0f - shellEase;
+        // The bezier overshoots past 1 (kShellBezY2 > 1); clamp the alpha or the
+        // raw 8-bit pack in the title bar wraps and the marks blink out.
+        shellAlpha = std::clamp(visible ? shellEase : 1.0f - shellEase, 0.0f, 1.0f);
         const bool  shellActive = visible || shellAlpha > 0.001f;
         const bool  shellAnimating = shellClock < 1.0f;
         // appears by rising from below, disappears by sinking back down: the
@@ -1993,10 +1995,19 @@ namespace VKIntox
         // child stays transparent so the tint is applied exactly once. The whole
         // shell fades with the appear/disappear clock.
         ImGui::SetNextWindowBgAlpha(backgroundOpacity * shellAlpha);
+        // The shell's own title bar would otherwise paint an opaque strip that
+        // ignores the fade; let the (fading) window background show instead.
+        {
+            const ImVec4 clear(0.0f, 0.0f, 0.0f, 0.0f);
+            ImGui::PushStyleColor(ImGuiCol_TitleBg, clear);
+            ImGui::PushStyleColor(ImGuiCol_TitleBgActive, clear);
+            ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, clear);
+        }
         // "##..." renders as an empty native title: the bar keeps its drag
         // rect while the brand row below owns the pixels.
         ImGui::Begin("##vkintox_overlay", nullptr,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleColor(3);
         ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
 
         // Fade every widget the shell draws. Raw draw-list marks below get the
@@ -2090,7 +2101,7 @@ namespace VKIntox
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
         auto fadeU32 = [&](ImU32 c) -> ImU32
         {
-            const float a = ((c >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f * shellAlpha;
+            const float a = std::clamp(((c >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f * shellAlpha, 0.0f, 1.0f);
             return (c & ~IM_COL32_A_MASK) | (static_cast<ImU32>(a * 255.0f + 0.5f) << IM_COL32_A_SHIFT);
         };
 
