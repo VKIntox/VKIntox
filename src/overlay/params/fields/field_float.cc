@@ -85,7 +85,7 @@ namespace VKIntox
                     focusCustomValueInput = false;
                 }
                 bool submit = ImGui::InputText(inputId, customValueBuf,
-                    sizeof(customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                    sizeof(customValueBuf), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
 
                 ImGui::Spacing();
                 const UI::M3DialogAction actions[] = {
