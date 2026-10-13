@@ -1060,7 +1060,7 @@ namespace VKIntox
         VkPushConstantRange depthPushConstantRange = {};
         depthPushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         depthPushConstantRange.offset = 0;
-        depthPushConstantRange.size = sizeof(int32_t) * 3; // 12 bytes: depthMode + invertDepth + normalize
+        depthPushConstantRange.size = sizeof(int32_t) * 5; // 20 bytes: depthMode + invertDepth + normalize + flipDepth + flopDepth
 
         logicalSwapchain->depthResolvePipelineLayout = createGraphicsPipelineLayout(
             logicalDevice,

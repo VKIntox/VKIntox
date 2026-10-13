@@ -22,11 +22,20 @@ layout(push_constant) uniform DepthParams {
     int  depthMode;      // Source channel/mode selection
     bool invertDepth;    // Invert after reading: depth = 1.0 - depth
     bool normalize;      // Normalize to [0,1] range if needed
+    bool flipDepth;      // Mirror sampling vertically (uv.y -> 1 - uv.y)
+    bool flopDepth;      // Mirror sampling horizontally (uv.x -> 1 - uv.x)
 } depthParams;
 
 void main()
 {
-    vec4 texel = textureLod(depthTexture, textureCoord, 0.0);
+    // mirror the source before sampling. branchless: mix picks uv or 1-uv per
+    // axis, so a flipped/flopped renderer reads upright depth with no pipeline
+    // rebuild.
+    vec2 uv = textureCoord;
+    vec2 mirror = vec2(float(depthParams.flopDepth), float(depthParams.flipDepth));
+    uv = mix(uv, vec2(1.0) - uv, mirror);
+
+    vec4 texel = textureLod(depthTexture, uv, 0.0);
     float depth = 0.0;
 
     // Extract depth based on selected source mode

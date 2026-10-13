@@ -208,6 +208,7 @@ namespace VKIntox
         }
 
         bool sawDepthInvert = false;
+        bool sawDepthFlip = false;
         std::string line;
         while (std::getline(file, line))
         {
@@ -314,12 +315,21 @@ namespace VKIntox
                 settings.depthInvert = (value == "true" || value == "1");
                 sawDepthInvert = true;
             }
+            else if (key == "depthFlip")
+            {
+                settings.depthFlip = (value == "true" || value == "1");
+                sawDepthFlip = true;
+            }
+            else if (key == "depthFlop")
+                settings.depthFlop = (value == "true" || value == "1");
         }
 
         // an existing config predating the per-game default has no depthInvert
         // key; seed it so old installs match a fresh one.
         if (!sawDepthInvert)
-            DefaultConfig::applyGameDefaults(settings, gameName);
+            settings.depthInvert = DefaultConfig::depthInvertForGame(gameName);
+        if (!sawDepthFlip)
+            settings.depthFlip = DefaultConfig::depthFlipForGame(gameName);
 
         return settings;
     }
@@ -381,6 +391,9 @@ namespace VKIntox
         file << "depthSourceChannel = " << settings.depthSourceChannel << "\n";
         file << "# depthInvert: invert depth values (flips near/far planes)\n";
         file << "depthInvert = " << (settings.depthInvert ? "true" : "false") << "\n";
+        file << "# depthFlip/depthFlop: mirror the depth image vertically/horizontally\n";
+        file << "depthFlip = " << (settings.depthFlip ? "true" : "false") << "\n";
+        file << "depthFlop = " << (settings.depthFlop ? "true" : "false") << "\n";
 
         if (!file.good() || !writeAtomically(configPath, file.str()))
         {

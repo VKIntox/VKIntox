@@ -85,6 +85,11 @@ namespace VKIntox
         // Invert depth values after reading from source.
         // When enabled, depth = 1.0 - depth (flips near/far planes).
         bool depthInvert;
+        // Mirror the depth image vertically (uv.y -> 1 - uv.y) for upside-down
+        // renderers such as macOS builds running under Darling.
+        bool depthFlip;
+        // Mirror the depth image horizontally (uv.x -> 1 - uv.x).
+        bool depthFlop;
     };
 
     // Shader Manager configuration (from shader_manager.conf)

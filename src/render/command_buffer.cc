@@ -262,20 +262,26 @@ namespace VKIntox
             //   int  depthMode;    = int32_t (4 bytes)
             //   bool invertDepth; = int32_t (4 bytes in GLSL)
             //   bool normalize;   = int32_t (4 bytes in GLSL)
-            // Total: 12 bytes
+            //   bool flipDepth;   = int32_t (4 bytes in GLSL)
+            //   bool flopDepth;   = int32_t (4 bytes in GLSL)
+            // Total: 20 bytes
             struct DepthPushConstants {
                 int32_t depthMode;
                 int32_t invertDepth;
                 int32_t normalize;
+                int32_t flipDepth;
+                int32_t flopDepth;
             };
             
-            static_assert(sizeof(DepthPushConstants) == sizeof(int32_t) * 3, 
-                          "DepthPushConstants size must be 12 bytes to match GLSL");
+            static_assert(sizeof(DepthPushConstants) == sizeof(int32_t) * 5, 
+                          "DepthPushConstants size must be 20 bytes to match GLSL");
             
             DepthPushConstants pushData = {};
             pushData.depthMode = static_cast<int32_t>(settingsManager.getDepthSourceChannel()); // 0=R, 1=Alpha, etc.
             pushData.invertDepth = settingsManager.getDepthInvert() ? 1 : 0;
             pushData.normalize = 1; // Always normalize for safety
+            pushData.flipDepth = settingsManager.getDepthFlip() ? 1 : 0;
+            pushData.flopDepth = settingsManager.getDepthFlop() ? 1 : 0;
             
             logicalDevice->vkd.CmdPushConstants(
                 commandBuffer,

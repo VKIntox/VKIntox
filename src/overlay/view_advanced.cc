@@ -447,7 +447,38 @@ namespace VKIntox
             ImGui::TextColored(UI::Success(), "Can be toggled at runtime.");
             ImGui::EndTooltip();
         }
-        ImGui::TextDisabled("Current: %s%s", depthModeNames[dsc], depthInvert ? ", INVERTED" : "");
+
+        bool depthFlip = settingsManager.getDepthFlip();
+        if (ImGui::Checkbox("Flip depth (upside down)", &depthFlip))
+        {
+            settingsManager.setDepthFlip(depthFlip);
+            markSettingsDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::Text("Mirror the depth image vertically (uv.y -> 1 - uv.y).");
+            ImGui::Text("For renderers that produce an upside-down depth buffer.");
+            ImGui::TextColored(UI::Success(), "Can be toggled at runtime.");
+            ImGui::EndTooltip();
+        }
+
+        bool depthFlop = settingsManager.getDepthFlop();
+        if (ImGui::Checkbox("Flop depth (mirror)", &depthFlop))
+        {
+            settingsManager.setDepthFlop(depthFlop);
+            markSettingsDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::Text("Mirror the depth image horizontally (uv.x -> 1 - uv.x).");
+            ImGui::TextColored(UI::Success(), "Can be toggled at runtime.");
+            ImGui::EndTooltip();
+        }
+
+        ImGui::TextDisabled("Current: %s%s%s%s", depthModeNames[dsc],
+            depthInvert ? ", INVERTED" : "", depthFlip ? ", FLIPPED" : "", depthFlop ? ", FLOPPED" : "");
         ImGui::M3CardEnd();
 
         // --- MSAA resolve ---

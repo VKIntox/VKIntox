@@ -55,21 +55,28 @@ namespace VKIntox::DefaultConfig
         settings.depthCaptureMethod = 2;
         settings.depthSourceChannel = 0;
         settings.depthInvert = false;
+        settings.depthFlip = false;
+        settings.depthFlop = false;
         return settings;
     }
 
-    // sober's depth buffer reads inverted; seeding this natively means a fresh
-    // config is right and the setup script no longer rewrites VKIntox.conf.
-    // TODO: once we add upside-down depth handling, default macoblox
-    // (its runner, hdlr or whatever) to upside-down depth
+    // per-game depth orientation. sober's depth reads inverted; flip and flop
+    // are image mirrors, off for every game unless it is listed here.
     inline bool depthInvertForGame(const std::string& executableName)
     {
         return executableName == "sober";
     }
 
+    inline bool depthFlipForGame(const std::string& executableName)
+    {
+        return false;
+    }
+
     inline void applyGameDefaults(VkBasaltSettings& settings, const std::string& executableName)
     {
         settings.depthInvert = depthInvertForGame(executableName);
+        settings.depthFlip = depthFlipForGame(executableName);
+        settings.depthFlop = false;
     }
 }
 

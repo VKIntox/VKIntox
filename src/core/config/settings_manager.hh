@@ -116,6 +116,16 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.depthInvert;
         }
+        bool getDepthFlip() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.depthFlip;
+        }
+        bool getDepthFlop() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.depthFlop;
+        }
 
         // Setters (update in-memory state, call save() to persist)
         void setMaxEffects(int value)
@@ -197,6 +207,16 @@ namespace VKIntox
         {
             std::lock_guard<std::mutex> lock(mutex);
             settings.depthInvert = value;
+        }
+        void setDepthFlip(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthFlip = value;
+        }
+        void setDepthFlop(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthFlop = value;
         }
 
         // Get raw settings struct (for bulk operations)

@@ -1,5 +1,6 @@
 #include "config.hh"
 #include "config_serializer.hh"
+#include "default_config.hh"
 
 #include <algorithm>
 #include <cstdlib>
@@ -62,7 +63,7 @@ int main()
     std::filesystem::remove(VKIntox::ConfigSerializer::getBaseConfigDir() + "/VKIntox.conf");
 
     // Settings are read back from an isolated XDG config directory.
-    VKIntox::VkBasaltSettings settings;
+    VKIntox::VkBasaltSettings settings = VKIntox::DefaultConfig::appSettings();
     settings.maxEffects = 23;
     settings.overlayBlockInput = false;
     settings.toggleKey = "F8";
@@ -79,6 +80,8 @@ int main()
     settings.depthCaptureMethod = 1;
     settings.depthSourceChannel = 4;
     settings.depthInvert = false;
+    settings.depthFlip = true;
+    settings.depthFlop = true;
 
     expect(VKIntox::ConfigSerializer::saveSettings(settings), "save global settings");
     const auto loaded = VKIntox::ConfigSerializer::loadSettings();
@@ -95,7 +98,8 @@ int main()
     expect(loaded.depthResolveMode == settings.depthResolveMode && loaded.depthManualPin == settings.depthManualPin &&
                loaded.depthTransientWorkaround == settings.depthTransientWorkaround &&
                loaded.depthCaptureMethod == settings.depthCaptureMethod &&
-               loaded.depthSourceChannel == settings.depthSourceChannel && loaded.depthInvert == settings.depthInvert,
+               loaded.depthSourceChannel == settings.depthSourceChannel && loaded.depthInvert == settings.depthInvert &&
+               loaded.depthFlip == settings.depthFlip && loaded.depthFlop == settings.depthFlop,
            "settings preserve depth options");
 
     // Saving a per-game config and loading it through Config preserves options.
