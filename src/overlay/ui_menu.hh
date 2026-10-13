@@ -23,10 +23,10 @@ namespace VKIntox
         bool BeginM3Combo(const char* label, const char* preview);
         void EndM3Combo();
 
-        // Clip a label to a character budget, ending with an ellipsis if it was
-        // shortened. A safe ceiling for names that would otherwise overrun the
-        // narrow menu/combo surfaces. Returns a view into a thread-local buffer.
-        const char* TruncateLabel(const char* label, size_t maxChars = 22);
+        // Clip a label to a pixel budget, ending with an ellipsis if it was
+        // shortened, so a name can never overrun its surface. Returns a view
+        // into a rotating buffer.
+        const char* TruncateLabel(const char* label, float maxWidth);
     }
 } // namespace VKIntox
 

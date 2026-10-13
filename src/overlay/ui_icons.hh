@@ -34,6 +34,7 @@ namespace VKIntox::Icon
     constexpr ImWchar Delete         = 0xE872;
     constexpr ImWchar ExpandMore     = 0xE5CF;
     constexpr ImWchar ArrowDropDown  = 0xE5C5;
+    constexpr ImWchar KeyboardArrowDown = 0xE313;
     constexpr ImWchar ChevronRight   = 0xE409;
     constexpr ImWchar ChevronLeft    = 0xE408;
     constexpr ImWchar Refresh        = 0xE5D5;
@@ -161,7 +162,7 @@ namespace VKIntox::Icon
     {
         static const ImWchar ranges[] = {
             AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport,
-            Add, Edit, Close, Search, Delete, ExpandMore, ArrowDropDown, ChevronRight, ChevronLeft, Refresh, Save,
+            Add, Edit, Close, Search, Delete, ExpandMore, ArrowDropDown, KeyboardArrowDown, ChevronRight, ChevronLeft, Refresh, Save,
             FolderOpen, Upload, Check, Minus, CheckCircle, Cancel, Warning, Error, Info,
             Visibility, VisibilityOff, Power, PlayArrow,
             Speed, Bolt, Joystick, Science, Build, Extension, Brush, Image, Layers, Texture,

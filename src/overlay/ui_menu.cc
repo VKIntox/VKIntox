@@ -1,7 +1,6 @@
 #include "ui_menu.hh"
 
 #include <cfloat>
-#include <cstring>
 #include <string>
 
 #include "vendor/imgui/imgui_internal.h"
@@ -14,6 +13,7 @@ namespace VKIntox
         namespace
         {
             constexpr float kMenuItemGap = 8.0f;
+            constexpr float kMenuMinWidthDp = 320.0f;
 
             // A few rotating slots so several truncations in one expression
             // don't stomp each other.
@@ -43,11 +43,33 @@ namespace VKIntox
             {
                 ImGui::PopStyleVar(3);
             }
+
+            // Widen the popup to a legible floor so short labels don't produce a
+            // cramped, clipping surface.
+            void PushMenuWidthFloor()
+            {
+                const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+                ImGui::SetNextWindowSizeConstraints(ImVec2(kMenuMinWidthDp * m.density, 0.0f),
+                                                    ImVec2(FLT_MAX, FLT_MAX));
+            }
+        }
+
+        const char* TruncateLabel(const char* label, float maxWidth)
+        {
+            if (!label)
+                return "";
+            if (maxWidth <= 0.0f || ImGui::CalcTextSize(label).x <= maxWidth)
+                return label;
+            std::string out(label);
+            while (!out.empty() && ImGui::CalcTextSize((out + "...").c_str()).x > maxWidth)
+                out.pop_back();
+            return RotatingBuffer(out + "...");
         }
 
         bool BeginM3Menu(const char* id)
         {
             PushM3MenuStyle();
+            PushMenuWidthFloor();
             const bool open = ImGui::BeginPopup(id);
             if (!open)
                 PopM3MenuStyle();
@@ -57,6 +79,7 @@ namespace VKIntox
         bool BeginM3MenuContext(const char* id)
         {
             PushM3MenuStyle();
+            PushMenuWidthFloor();
             const bool open = ImGui::BeginPopupContextItem(id);
             if (!open)
                 PopM3MenuStyle();
@@ -71,34 +94,12 @@ namespace VKIntox
             // sized down by the gap so the pitch still lands on menu_item_height.
             const float height = ImMax(ImGui::GetFrameHeight(),
                                        m.menu_item_height * m.density - ImGui::GetStyle().ItemSpacing.y);
-            const bool pressed = ImGui::Selectable(TruncateLabel(label), selected,
-                                                   ImGuiSelectableFlags_NoPadWithHalfSpacing,
-                                                   ImVec2(0.0f, height));
-            if (selected)
-                ImGui::SetItemDefaultFocus();
-            return pressed;
-        }
-
-        const char* TruncateLabel(const char* label, size_t maxChars)
-        {
-            if (!label)
-                return "";
-            const size_t len = std::strlen(label);
-            if (len <= maxChars || maxChars < 4)
-                return label;
-            std::string out(label, maxChars - 3);
-            out += "...";
-            return RotatingBuffer(out);
-        }
-
-        bool M3MenuRadioItem(const char* label, bool selected)
-        {
-            const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-            const float height = ImMax(ImGui::GetFrameHeight(),
-                                       m.menu_item_height * m.density - ImGui::GetStyle().ItemSpacing.y);
-            const char* shown = TruncateLabel(label);
-            // draw the row without its own label, then emplace the dot and the
-            // centred name so the pill stays empty for our own layout
+            const ImGuiM3Metrics& mm = m;
+            const float rowWidth = ImGui::GetContentRegionAvail().x;
+            const float sideRoom = 10.0f * mm.density;
+            const char* shown = TruncateLabel(label, ImMax(16.0f, rowWidth - sideRoom * 2.0f));
+            // empty row, then the centred name: default menus read as a centred
+            // list (no leading bullet — that is the shader-preset row's mark).
             ImGui::PushID(label);
             const bool pressed = ImGui::Selectable("##row", selected,
                                                    ImGuiSelectableFlags_NoPadWithHalfSpacing,
@@ -107,9 +108,38 @@ namespace VKIntox
             const ImVec2 mx = ImGui::GetItemRectMax();
             const ImU32 text = selected ? ImGuiM3ColorU32(ImGuiM3Role_OnPrimary)
                                         : ImGuiM3ColorU32(ImGuiM3Role_OnSurface);
+            const ImVec2 ts = ImGui::CalcTextSize(shown);
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2((mn.x + mx.x - ts.x) * 0.5f, (mn.y + mx.y - ts.y) * 0.5f), text, shown);
+            ImGui::PopID();
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+            return pressed;
+        }
+
+        bool M3MenuRadioItem(const char* label, bool selected)
+        {
+            const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+            const float height = ImMax(ImGui::GetFrameHeight(),
+                                       m.menu_item_height * m.density - ImGui::GetStyle().ItemSpacing.y);
+            // draw the row without its own label, then emplace the dot and the
+            // centred name so the pill stays empty for our own layout
+            ImGui::PushID(label);
+            const bool pressed = ImGui::Selectable("##row", selected,
+                                                   ImGuiSelectableFlags_NoPadWithHalfSpacing,
+                                                   ImVec2(0.0f, height));
+            const ImVec2 mn = ImGui::GetItemRectMin();
+            const ImVec2 mx = ImGui::GetItemRectMax();
+            const float rowWidth = mx.x - mn.x;
+            const float bulletInset = 14.0f * m.density;
             const float bullet_r = ImMax(2.0f, ImGui::GetFontSize() * 0.19f);
+            const ImU32 text = selected ? ImGuiM3ColorU32(ImGuiM3Role_OnPrimary)
+                                        : ImGuiM3ColorU32(ImGuiM3Role_OnSurface);
+            // keep the centred name clear of the leading dot on both sides
+            const float sideRoom = bulletInset + bullet_r + 6.0f * m.density;
+            const char* shown = TruncateLabel(label, ImMax(16.0f, rowWidth - sideRoom * 2.0f));
             ImGui::GetWindowDrawList()->AddCircleFilled(
-                ImVec2(mn.x + 14.0f * m.density, (mn.y + mx.y) * 0.5f), bullet_r, text);
+                ImVec2(mn.x + bulletInset, (mn.y + mx.y) * 0.5f), bullet_r, text);
             const ImVec2 ts = ImGui::CalcTextSize(shown);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2((mn.x + mx.x - ts.x) * 0.5f, (mn.y + mx.y - ts.y) * 0.5f), text, shown);
@@ -128,10 +158,12 @@ namespace VKIntox
         bool BeginM3Combo(const char* label, const char* preview)
         {
             const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-            // cap the popup height so a long list scrolls instead of running off
-            // the overlay.
-            ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
-                                                ImVec2(FLT_MAX, 280.0f * m.density));
+            // The popup is at least as wide as a menu and taller than the field, so
+            // a short list shows in full instead of sprouting a scrollbar. The cap
+            // still keeps a long list on screen.
+            const float min_w = kMenuMinWidthDp * m.density;
+            const float max_h = 420.0f * m.density;
+            ImGui::SetNextWindowSizeConstraints(ImVec2(min_w, 0.0f), ImVec2(FLT_MAX, max_h));
             if (!ImGui::BeginCombo(label, preview))
                 return false;
             // rows stack almost flush inside the popup; the padding and corner

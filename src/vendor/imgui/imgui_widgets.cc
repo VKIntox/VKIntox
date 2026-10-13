@@ -1139,6 +1139,11 @@ bool ImGui::ScrollbarEx(const ImRect& bb_frame, ImGuiID id, ImGuiAxis axis, ImS6
     // VKIntox M3: a trackless pill thumb that is always visible. It is bold at
     // rest (on-surface-variant), darkens under the pointer, and turns `primary`
     // while dragging. There is no background track.
+    //
+    // If nearly everything is on screen the thumb would be a full-height sliver
+    // that adds noise without helping; skip it until the overflow is meaningful.
+    if (size_contents_v > 0 && (float)size_visible_v / (float)size_contents_v > 0.97f)
+        return held;
     ImRect grab_rect;
     if (axis == ImGuiAxis_X)
         grab_rect = ImRect(ImLerp(bb.Min.x, bb.Max.x, grab_v_norm), bb.Min.y, ImLerp(bb.Min.x, bb.Max.x, grab_v_norm) + grab_h_pixels, bb.Max.y);
@@ -1146,10 +1151,12 @@ bool ImGui::ScrollbarEx(const ImRect& bb_frame, ImGuiID id, ImGuiAxis axis, ImS6
         grab_rect = ImRect(bb.Min.x, ImLerp(bb.Min.y, bb.Max.y, grab_v_norm), bb.Max.x, ImLerp(bb.Min.y, bb.Max.y, grab_v_norm) + grab_h_pixels);
 
     // 8dp at rest, 12dp under the pointer. The previous 4/6dp thumb was easy to
-    // miss entirely, which read as "no scrollbar".
+    // miss entirely, which read as "no scrollbar". Menus take a slimmer pair so
+    // the shorter popups don't lose a chunk of width, still widening on hover.
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-    const float thin = 8.0f * m.density;
-    const float thick = 12.0f * m.density;
+    const bool in_menu = (window->Flags & ImGuiWindowFlags_Popup) != 0;
+    const float thin = (in_menu ? 6.0f : 8.0f) * m.density;
+    const float thick = (in_menu ? 9.0f : 12.0f) * m.density;
     const float grow = ImGuiM3SpringStepEffectsFast(id ^ 0x534342, (hovered || held) ? 1.0f : 0.0f);
     const float thickness = ImLerp(thin, thick, ImSaturate(grow)) * alpha;
 
@@ -2091,12 +2098,16 @@ bool ImGui::BeginCombo(const char* label, const char* preview_value, ImGuiComboF
     if (!(flags & ImGuiComboFlags_NoArrowButton))
     {
         const ImU32 arrow_col = ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant);
-        static const char kDropdownGlyph[] = "\xEE\x97\x85";
+        // keyboard_arrow_down: a rounded Material chevron. (arrow_drop_down is a
+        // plain triangle and reads the same as ImGui's builtin arrow.)
+        static const char kDropdownGlyph[] = "\xEE\x8C\x93";
         ImFont* icon = ImGuiM3IconFont();
         if (icon)
         {
-            const ImRect arrow_bb(ImVec2(value_x2, bb.Min.y), ImVec2(bb.Max.x, bb.Max.y));
-            ImGuiM3DrawIcon(window->DrawList, kDropdownGlyph, arrow_bb, arrow_size * 0.8f, arrow_col);
+            const float px = ImMin(arrow_size, ImGui::GetFontSize() * 1.15f);
+            const ImVec2 icon_min(value_x2 + (arrow_size - px) * 0.5f, bb.GetCenter().y - px * 0.5f);
+            ImGuiM3DrawIcon(window->DrawList, kDropdownGlyph,
+                            ImRect(icon_min, ImVec2(icon_min.x + px, icon_min.y + px)), px, arrow_col);
         }
         else
         {
