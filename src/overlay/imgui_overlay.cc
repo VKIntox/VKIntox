@@ -1715,7 +1715,7 @@ namespace VKIntox
             static_cast<float>((shellNow - shellAnimStart) / kShellAnimSeconds), 0.0f, 1.0f);
         const float shellEase = UI::CubicBezierEase(shellClock, kShellBezX1, kShellBezY1, kShellBezX2, kShellBezY2);
         shellAlpha = visible ? shellEase : 1.0f - shellEase;
-        const bool  shellActive = visible || shellAlpha > 0.001f || shellBaseValid;
+        const bool  shellActive = visible || shellAlpha > 0.001f;
         const bool  shellAnimating = shellClock < 1.0f;
         // appears by rising from below, disappears by sinking back down: the
         // reverse of the dialog's entrance.
@@ -1950,7 +1950,18 @@ namespace VKIntox
         {
             ImGui::SetNextWindowPos(defaultPos, ImGuiCond_Always);
             ImGui::SetNextWindowSize(defaultSize, ImGuiCond_Always);
+            shellBaseValid = false;
             resetLayoutRequested = false;
+        }
+        else if (shellAnimating)
+        {
+            // animate before Begin so the surface, its children and the backdrop
+            // all lay out at the same offset this frame (doing it after Begin
+            // tears the content away from the background).
+            const float baseX = shellBaseValid ? shellBaseX : defaultPos.x;
+            const float baseY = shellBaseValid ? shellBaseY : defaultPos.y;
+            ImGui::SetNextWindowPos(ImVec2(baseX, baseY + shellOffsetY), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(defaultSize, ImGuiCond_FirstUseEver);
         }
         else
         {
@@ -1976,8 +1987,16 @@ namespace VKIntox
         // alpha applied by hand.
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, shellAlpha);
 
-        ImVec2 windowPos = ImGui::GetWindowPos();
+        const ImVec2 windowPos = ImGui::GetWindowPos();
         const ImVec2 windowSize = ImGui::GetWindowSize();
+
+        // Remember the settled position so the next show can slide from it.
+        if (!shellAnimating && visible)
+        {
+            shellBaseX = windowPos.x;
+            shellBaseY = windowPos.y;
+            shellBaseValid = true;
+        }
 
         // Subtle elevation under the shell, on the background list so it sits
         // behind the translucent surface. Like the dialogs, it only shows once
@@ -1988,31 +2007,6 @@ namespace VKIntox
             ImGuiM3DrawElevation(ImGui::GetBackgroundDrawList(),
                                  ImRect(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y)),
                                  ImGuiM3ShapeRounding{ shellR, shellR, shellR, shellR }, 3);
-        }
-
-        // Slide: the shell rises the same 100dp a dialog does, then settles. Once
-        // the clock is done the window is parked back at its true position so a
-        // later show starts from the same place.
-        if (shellAnimating)
-        {
-            if (!shellBaseValid)
-            {
-                shellBaseX = windowPos.x;
-                shellBaseY = windowPos.y;
-                shellBaseValid = true;
-            }
-            const ImVec2 animPos(shellBaseX, shellBaseY + shellOffsetY);
-            if (windowPos.x != animPos.x || windowPos.y != animPos.y)
-            {
-                ImGui::SetWindowPos(animPos);
-                windowPos = animPos;
-            }
-        }
-        else if (shellBaseValid)
-        {
-            ImGui::SetWindowPos(ImVec2(shellBaseX, shellBaseY));
-            windowPos = ImVec2(shellBaseX, shellBaseY);
-            shellBaseValid = false;
         }
 
         // Draw the blurred backdrop behind every overlay surface. The background
@@ -2072,7 +2066,8 @@ namespace VKIntox
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         ImGui::PushClipRect(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y), false);
 
-        // Raw marks below bypass ImGuiStyleVar_Alpha, so fade their own alpha.
+        // PackU32 already scales M3 colors by the style alpha, so only the raw
+        // non-M3 colors (the icon tint and the surface circle) need fading here.
         auto fadeU32 = [&](ImU32 c) -> ImU32
         {
             const float a = ((c >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f * shellAlpha;
@@ -2099,7 +2094,7 @@ namespace VKIntox
             const ImVec2 textSize = ImGui::CalcTextSize(brand);
             drawList->AddText(ImVec2(windowPos.x + (windowSize.x - textSize.x) * 0.5f,
                                      windowPos.y + (titleBarHeight - textSize.y) * 0.5f),
-                              fadeU32(ImGuiM3ColorU32(ImGuiM3Role_OnSurface)), brand);
+                              ImGuiM3ColorU32(ImGuiM3Role_OnSurface), brand);
             if (bold)
                 ImGui::PopFont();
         }
@@ -2113,11 +2108,11 @@ namespace VKIntox
         {
             const ImGuiM3State layer = ImGui::IsMouseDown(ImGuiMouseButton_Left) ? ImGuiM3State_Pressed : ImGuiM3State_Hovered;
             drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
-                                      fadeU32(ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, layer)));
+                                      ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, layer));
             ImGui::SetTooltip("Close overlay");
         }
-        const ImU32 crossColor = fadeU32(buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
-                                                       : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
+        const ImU32 crossColor = buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
+                                               : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant);
         // the `close` glyph is already rounded and evenly weighted.
         static const char kCloseGlyph[] = "\xEE\x85\x8C";
         ImFont* closeIcon = ImGuiM3IconFont();
@@ -2282,7 +2277,8 @@ namespace VKIntox
         // alpha stays pushed across the view so the whole thing fades together.
         auto renderSlidingView = [&](int key, const char* childId, float offset, float alpha) {
             ImGui::SetCursorScreenPos(ImVec2(viewPos.x + offset, viewPos.y));
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+            // multiply the shell's fade in, or the child's own alpha resets it
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha * ImGui::GetStyle().Alpha);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
             ImVec4 viewBg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
             // Transparent: the window's own surface (at BackgroundOpacity) is the
