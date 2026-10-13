@@ -7507,10 +7507,22 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
             ImU32 title_bar_col = ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow);
             if (window->ViewportOwned)
                 title_bar_col |= IM_COL32_A_MASK; // No alpha
+            else if (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasBgAlpha)
+            {
+                // Honor SetNextWindowBgAlpha: the header must fade with the rest
+                // of the surface or it stays a hard strip through the animation.
+                const int a = IM_F32_TO_INT8_SAT(g.NextWindowData.BgAlphaVal);
+                title_bar_col = (title_bar_col & ~IM_COL32_A_MASK) | ((ImU32)a << IM_COL32_A_SHIFT);
+            }
             window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max, title_bar_col, window_rounding, ImDrawFlags_RoundCornersTop);
             if (title_bar_is_highlight)
+            {
+                ImU32 hl = ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
+                if (!window->ViewportOwned && (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasBgAlpha))
+                    hl = (hl & ~IM_COL32_A_MASK) | ((ImU32)IM_F32_TO_INT8_SAT(g.NextWindowData.BgAlphaVal) << IM_COL32_A_SHIFT);
                 window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max,
-                                                ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, ImGuiM3State_Hovered), window_rounding, ImDrawFlags_RoundCornersTop);
+                                                hl, window_rounding, ImDrawFlags_RoundCornersTop);
+            }
         }
 
         // Menu bar

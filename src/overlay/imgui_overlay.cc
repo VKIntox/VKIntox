@@ -1995,19 +1995,10 @@ namespace VKIntox
         // child stays transparent so the tint is applied exactly once. The whole
         // shell fades with the appear/disappear clock.
         ImGui::SetNextWindowBgAlpha(backgroundOpacity * shellAlpha);
-        // The shell's own title bar would otherwise paint an opaque strip that
-        // ignores the fade; let the (fading) window background show instead.
-        {
-            const ImVec4 clear(0.0f, 0.0f, 0.0f, 0.0f);
-            ImGui::PushStyleColor(ImGuiCol_TitleBg, clear);
-            ImGui::PushStyleColor(ImGuiCol_TitleBgActive, clear);
-            ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, clear);
-        }
         // "##..." renders as an empty native title: the bar keeps its drag
         // rect while the brand row below owns the pixels.
         ImGui::Begin("##vkintox_overlay", nullptr,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        ImGui::PopStyleColor(3);
         ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
 
         // Fade every widget the shell draws. Raw draw-list marks below get the

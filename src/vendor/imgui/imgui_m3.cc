@@ -1382,9 +1382,11 @@ void ImGuiM3ApplyToStyle(float ui_scale)
     c[ImGuiCol_SeparatorHovered]     = on_surface_var;
     c[ImGuiCol_SeparatorActive]      = primary;
 
-    c[ImGuiCol_ResizeGrip]           = WithAlpha(outline_variant, 0.6f);
-    c[ImGuiCol_ResizeGripHovered]    = WithAlpha(primary, 0.6f);
-    c[ImGuiCol_ResizeGripActive]     = primary;
+    // no resize grip: the corners already resize, and the little triangle was
+    // pure clutter that also ignored the shell's fade.
+    c[ImGuiCol_ResizeGrip]           = WithAlpha(outline_variant, 0.0f);
+    c[ImGuiCol_ResizeGripHovered]    = WithAlpha(primary, 0.0f);
+    c[ImGuiCol_ResizeGripActive]     = WithAlpha(primary, 0.0f);
 
     // tabs: pill indicator drawn separately, background stays clear.
     c[ImGuiCol_TabHovered]           = hover_on_surface;
