@@ -1709,7 +1709,6 @@ namespace VKIntox
         {
             shellAnimTarget = visible;
             shellAnimStart = shellNow;
-            shellBaseValid = false;
         }
         const float shellClock = std::clamp(
             static_cast<float>((shellNow - shellAnimStart) / kShellAnimSeconds), 0.0f, 1.0f);
@@ -1936,38 +1935,55 @@ namespace VKIntox
         const ImVec2 avail(screenMax.x - screenMin.x, screenMax.y - screenMin.y);
 
         // default: tall panel on the right, sized off the game window so it isn't
-        // starving on a large display and doesn't overflow a small one.
+        // starving on a large display and doesn't overflow a small one. The floor
+        // scales off the window so labels, the nav and the actions never clip; it
+        // is capped by the window itself so the overlay can't exceed the game.
+        const ImGuiM3Metrics& shell_metrics = ImGuiM3GetMetrics();
         const float margin_x = avail.x * 0.04f;
         const float margin_y = avail.y * 0.03f;
-        const float panel_w = ImClamp(avail.x * 0.36f, 320.0f, ImMax(320.0f, avail.x - margin_x * 2.0f));
-        const float panel_h = ImClamp(avail.y * 0.91f, 360.0f, ImMax(360.0f, avail.y - margin_y * 2.0f));
+        const float legible_w = 520.0f * shell_metrics.density;
+        const float legible_h = 420.0f * shell_metrics.density;
+        const float panel_w = ImClamp(avail.x * 0.36f, ImMin(legible_w, avail.x), ImMax(320.0f, avail.x - margin_x * 2.0f));
+        const float panel_h = ImClamp(avail.y * 0.91f, ImMin(legible_h, avail.y), ImMax(360.0f, avail.y - margin_y * 2.0f));
         const ImVec2 defaultPos(screenMax.x - panel_w - margin_x, screenMin.y + margin_y);
         const ImVec2 defaultSize(panel_w, panel_h);
 
-        const ImVec2 minSize(ImMin(300.0f, avail.x), ImMin(200.0f, avail.y));
+        const ImVec2 minSize(ImMin(legible_w, avail.x), ImMin(legible_h, avail.y));
         const ImVec2 maxSize = avail;
+
+        // One source of truth for the shell's resting position. While the slide
+        // runs (or on the frame it settles) the position is driven from the base
+        // plus offset; once settled we stop forcing it so the user can drag the
+        // window. shellForcePos covers the settle frame, so there is no pop.
         if (resetLayoutRequested)
         {
-            ImGui::SetNextWindowPos(defaultPos, ImGuiCond_Always);
-            ImGui::SetNextWindowSize(defaultSize, ImGuiCond_Always);
-            shellBaseValid = false;
+            shellBaseX = defaultPos.x;
+            shellBaseY = defaultPos.y;
+            shellBaseValid = true;
             resetLayoutRequested = false;
+            shellForcePos = true;
         }
-        else if (shellAnimating)
+        if (!shellBaseValid)
         {
-            // animate before Begin so the surface, its children and the backdrop
-            // all lay out at the same offset this frame (doing it after Begin
-            // tears the content away from the background).
-            const float baseX = shellBaseValid ? shellBaseX : defaultPos.x;
-            const float baseY = shellBaseValid ? shellBaseY : defaultPos.y;
-            ImGui::SetNextWindowPos(ImVec2(baseX, baseY + shellOffsetY), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(defaultSize, ImGuiCond_FirstUseEver);
+            shellBaseX = defaultPos.x;
+            shellBaseY = defaultPos.y;
+            shellBaseValid = true;
+            shellForcePos = true;
+        }
+        if (shellAnimating)
+            shellForcePos = true;
+        if (shellForcePos)
+        {
+            const float keep = ImMin(avail.x, avail.y) * 0.05f;
+            shellBaseX = ImClamp(shellBaseX, screenMin.x, ImMax(screenMin.x, screenMax.x - keep));
+            shellBaseY = ImClamp(shellBaseY, screenMin.y, ImMax(screenMin.y, screenMax.y - keep));
+            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY + shellOffsetY), ImGuiCond_Always);
         }
         else
         {
-            ImGui::SetNextWindowPos(defaultPos, ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(defaultSize, ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY), ImGuiCond_FirstUseEver);
         }
+        ImGui::SetNextWindowSize(defaultSize, ImGuiCond_FirstUseEver);
 
         const float previousFramePaddingY = ImGui::GetStyle().FramePadding.y;
         ImGui::GetStyle().FramePadding.y = std::max(0.0f, (OverlayTitleBarHeight() - ImGui::GetFontSize()) * 0.5f);
@@ -1990,12 +2006,13 @@ namespace VKIntox
         const ImVec2 windowPos = ImGui::GetWindowPos();
         const ImVec2 windowSize = ImGui::GetWindowSize();
 
-        // Remember the settled position so the next show can slide from it.
-        if (!shellAnimating && visible)
+        // A settled frame writes its (possibly dragged) position back into the
+        // base and stops forcing the position, so dragging works again.
+        if (!shellAnimating)
         {
             shellBaseX = windowPos.x;
             shellBaseY = windowPos.y;
-            shellBaseValid = true;
+            shellForcePos = false;
         }
 
         // Subtle elevation under the shell, on the background list so it sits
@@ -2102,17 +2119,15 @@ namespace VKIntox
                 ImGui::PopFont();
         }
 
-        ImVec4 surfaceColor = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
-        surfaceColor.w = 1.0f;
-        // mask the moving title behind the button, then hover/press on top.
+        // a surface-container tone: brighter than the shell in dark mode, darker
+        // in light, so the button separates without reading as a black/white hole.
         drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
-                                  fadeU32(ImGui::ColorConvertFloat4ToU32(surfaceColor)));
+                                  fadeU32(ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh)));
         if (buttonHovered)
         {
             const ImGuiM3State layer = ImGui::IsMouseDown(ImGuiMouseButton_Left) ? ImGuiM3State_Pressed : ImGuiM3State_Hovered;
             drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
                                       fadeU32(ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, layer)));
-            ImGui::SetTooltip("Close overlay");
         }
         const ImU32 crossColor = fadeU32(buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
                                                        : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));

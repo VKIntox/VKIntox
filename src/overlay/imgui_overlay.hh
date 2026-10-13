@@ -362,6 +362,7 @@ namespace VKIntox
         double shellAnimStart = -1000.0;
         bool   shellAnimTarget = false;
         bool   shellBaseValid = false;
+        bool   shellForcePos = false;
         float  shellBaseX = 0.0f;
         float  shellBaseY = 0.0f;
         bool backendInitialized = false;

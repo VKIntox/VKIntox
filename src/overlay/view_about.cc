@@ -70,7 +70,7 @@ namespace VKIntox
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
         ImGui::TextDisabled("VKIntox version %s", runtimeVersion());
-        ImGui::TextDisabled("Beta-state software: mildly stable, but not the best.");
+        ImGui::TextDisabled("Software still in beta-stage.");
         ImGui::TextDisabled("Report issues:");
         ImGui::SameLine();
         ImGui::TextLinkOpenURL("github.com/buwryme/VKIntox/issues", "https://github.com/buwryme/VKIntox/issues");
