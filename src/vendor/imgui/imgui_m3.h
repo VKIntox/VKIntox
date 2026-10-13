@@ -329,7 +329,7 @@ struct ImGuiM3BlurSettings
     bool  blur = true;
     float background_opacity = 0.70f;
     float size = 7.5f;
-    int   passes = 3;
+    int   passes = 7;
 };
 
 // A background surface. The overlay shell owns the only one; its
