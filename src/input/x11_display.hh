@@ -24,4 +24,10 @@ namespace VKIntox
     // Drains pending events and hands key/button transitions to the callbacks.
     // Call once per frame; a no-op when X11 is absent.
     void pumpX11Input();
+
+    // Holds or releases a server-side keyboard+pointer grab on the game window
+    // so the game stops seeing input while the overlay is used. Call
+    // pumpX11Input() on every frame to keep the redirected events flowing.
+    void x11SetGrabState(bool grab);
+    bool x11GrabActive();
 } // namespace VKIntox

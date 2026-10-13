@@ -4,8 +4,6 @@
 #include "x11_display.hh"
 #include "logger.hh"
 
-#include <X11/Xlib.h>
-
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -24,7 +22,6 @@ namespace VKIntox
     static std::atomic<float> pointerX{-100000.0f};
     static std::atomic<float> pointerY{-100000.0f};
 
-    static bool x11Grabbed = false;
     // mirrors the wayland keyboard state so focus only flips on a crossing.
     static bool keyboardWithheld = false;
 
@@ -43,41 +40,8 @@ namespace VKIntox
         inputRects.assign(rects, rects + (count > 0 ? count : 0));
     }
 
-    // X11: the layer opens its own Display connection, so it is a distinct X
-    // client from the game. A server-side grab on that connection takes pointer
-    // and key events away from the game's connection entirely. Held only while
-    // the pointer sits over an overlay hitbox, so it stays directional.
-    static void setX11GrabState(bool grab)
-    {
-        Display* display = x11Display();
-        if (!display || grab == x11Grabbed)
-            return;
-
-        const unsigned long gameWindow = x11GameWindow();
-        const Window grabWindow = gameWindow ? (Window)gameWindow : DefaultRootWindow(display);
-
-        int keyboardStatus = GrabSuccess;
-        int pointerStatus = GrabSuccess;
-        if (grab)
-        {
-            keyboardStatus = XGrabKeyboard(display, grabWindow, False, GrabModeAsync, GrabModeAsync, CurrentTime);
-            pointerStatus = XGrabPointer(display, grabWindow, False,
-                                         ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-                                         GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
-        }
-        else
-        {
-            XUngrabKeyboard(display, CurrentTime);
-            XUngrabPointer(display, CurrentTime);
-        }
-        XFlush(display);
-        x11Grabbed = grab;
-
-        if (grab && (keyboardStatus != GrabSuccess || pointerStatus != GrabSuccess))
-            Logger::warn("X11 input grab incomplete: keyboard=" + std::to_string(keyboardStatus)
-                         + " pointer=" + std::to_string(pointerStatus));
-    }
-
+    // X11: the grab is held only while the pointer sits over an overlay
+    // hitbox, so it stays directional. See x11SetGrabState.
     void setInputBlocked(bool onScreen)
     {
         blocked.store(onScreen, std::memory_order_release);
@@ -87,7 +51,7 @@ namespace VKIntox
             const bool enabled = blockingEnabled.load(std::memory_order_acquire);
             const bool inside = enabled && onScreen
                 && pointInRects(pointerX.load(std::memory_order_acquire), pointerY.load(std::memory_order_acquire));
-            setX11GrabState(inside);
+            x11SetGrabState(inside);
             return;
         }
 
@@ -119,7 +83,7 @@ namespace VKIntox
 
         if (isX11())
         {
-            setX11GrabState(blockingEnabled.load(std::memory_order_acquire) && inside);
+            x11SetGrabState(blockingEnabled.load(std::memory_order_acquire) && inside);
             return;
         }
 

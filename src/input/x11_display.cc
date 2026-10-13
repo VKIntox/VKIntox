@@ -19,6 +19,7 @@ namespace VKIntox
 
         X11KeyCallback g_keyCallback = nullptr;
         X11ButtonCallback g_buttonCallback = nullptr;
+        bool g_grabActive = false;
 
         void initX11()
         {
@@ -45,8 +46,10 @@ namespace VKIntox
             if (XIQueryVersion(g_display, &major, &minor) != Success)
                 return;
 
-            // Raw events are delivered without focus and are unaffected by a
-            // grab, so they feed text input and wheel deltas in both states.
+            // Raw events ignore focus, so they carry keys and wheel between
+            // grabs. While a grab is active they can stop arriving entirely,
+            // so the grab's redirected core events (see x11SetGrabState) are
+            // the key source instead.
             unsigned char mask[XIMaskLen(XI_RawButtonRelease)] = {0};
             XISetMask(mask, XI_RawKeyPress);
             XISetMask(mask, XI_RawKeyRelease);
@@ -86,6 +89,50 @@ namespace VKIntox
         g_buttonCallback = cb;
     }
 
+    // The layer opens its own Display connection, so it is a distinct X client
+    // from the game. A server-side grab on that connection takes pointer and
+    // key events away from the game's connection entirely.
+    void x11SetGrabState(bool grab)
+    {
+        if (!g_display || grab == g_grabActive)
+            return;
+
+        const unsigned long gameWindow = x11GameWindow();
+        const Window grabWindow = gameWindow ? (Window)gameWindow : DefaultRootWindow(g_display);
+
+        int keyboardStatus = GrabSuccess;
+        int pointerStatus = GrabSuccess;
+        if (grab)
+        {
+            // owner_events=False reports the redirected events against the
+            // grab window, so this connection must select for them there or
+            // the grab starves the overlay of keys and wheel along with the
+            // game.
+            XSelectInput(g_display, grabWindow,
+                         KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask);
+            keyboardStatus = XGrabKeyboard(g_display, grabWindow, False, GrabModeAsync, GrabModeAsync, CurrentTime);
+            pointerStatus = XGrabPointer(g_display, grabWindow, False,
+                                         ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                                         GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+        }
+        else
+        {
+            XUngrabKeyboard(g_display, CurrentTime);
+            XUngrabPointer(g_display, CurrentTime);
+        }
+        XFlush(g_display);
+        g_grabActive = grab;
+
+        if (grab && (keyboardStatus != GrabSuccess || pointerStatus != GrabSuccess))
+            Logger::warn("X11 input grab incomplete: keyboard=" + std::to_string(keyboardStatus)
+                         + " pointer=" + std::to_string(pointerStatus));
+    }
+
+    bool x11GrabActive()
+    {
+        return g_grabActive;
+    }
+
     void pumpX11Input()
     {
         if (!x11Available())
@@ -103,7 +150,9 @@ namespace VKIntox
                 {
                 case XI_RawKeyPress:
                 case XI_RawKeyRelease:
-                    if (g_keyCallback)
+                    // the active grab makes core events authoritative; raw here
+                    // would double every press on servers that still deliver it
+                    if (!g_grabActive && g_keyCallback)
                     {
                         const bool pressed = ev.xcookie.evtype == XI_RawKeyPress;
                         g_keyCallback(((XIRawEvent*)ev.xcookie.data)->detail, pressed);
@@ -111,7 +160,7 @@ namespace VKIntox
                     break;
                 case XI_RawButtonPress:
                 case XI_RawButtonRelease:
-                    if (g_buttonCallback)
+                    if (!g_grabActive && g_buttonCallback)
                     {
                         const bool pressed = ev.xcookie.evtype == XI_RawButtonPress;
                         g_buttonCallback(((XIRawEvent*)ev.xcookie.data)->detail, pressed);
@@ -122,16 +171,17 @@ namespace VKIntox
                 }
                 XFreeEventData(g_display, &ev.xcookie);
             }
-            else if (!g_xiReady && (ev.type == KeyPress || ev.type == KeyRelease))
+            else if (ev.type == KeyPress || ev.type == KeyRelease)
             {
-                // fallback only: when XInput2 is present, raw events already
-                // delivered this key, and a grabbed core event would double it.
-                if (g_keyCallback)
+                // consumed while grabbed (raw events can stop during a core
+                // grab) or as the no-XInput2 fallback; outside both, raw
+                // already delivered this key and core would double it.
+                if ((g_grabActive || !g_xiReady) && g_keyCallback)
                     g_keyCallback(ev.xkey.keycode, ev.type == KeyPress);
             }
-            else if (!g_xiReady && (ev.type == ButtonPress || ev.type == ButtonRelease))
+            else if (ev.type == ButtonPress || ev.type == ButtonRelease)
             {
-                if (g_buttonCallback)
+                if ((g_grabActive || !g_xiReady) && g_buttonCallback)
                     g_buttonCallback(ev.xbutton.button, ev.type == ButtonPress);
             }
         }
