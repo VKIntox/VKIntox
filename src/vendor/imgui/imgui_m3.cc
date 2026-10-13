@@ -1913,8 +1913,11 @@ void ImGuiM3TreeNodeArrow(ImDrawList* draw_list, ImVec2 pos, float px, ImU32 col
         ImGui::RenderArrow(draw_list, pos, col, open ? ImGuiDir_Down : ImGuiDir_Right, 1.0f);
         return;
     }
+    // center the glyph's ink on the text line's vertical middle, not the row
+    // top, or it sits high by half a line.
+    const float cy = pos.y + ImGui::GetFontSize() * 0.5f;
     ImGuiM3DrawIcon(draw_list, open ? kExpandMore : kChevronRight,
-                    ImRect(pos + ImVec2(0.0f, 2.0f), pos + ImVec2(px, 2.0f + px)), px, col);
+                    ImRect(ImVec2(pos.x, cy - px * 0.5f), ImVec2(pos.x + px, cy + px * 0.5f)), px, col);
 }
 
 void ImGuiM3DrawElevation(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, int level)
@@ -2550,6 +2553,27 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     const float icon_px_draw = icon_px * icon_fit;
     const float icon_gap_draw = icon_gap * icon_fit;
 
+    // One segment is always a touch wider than the rest: the active one. Each
+    // segment eases toward its own target, so a click animates the balance
+    // instead of snapping. The gains are paid back out of every segment, which
+    // keeps the row's span fixed and makes the growth read directionally — the
+    // first grows right, the last grows left, a middle one grows both ways.
+    const ImGuiID group_id = window->GetID(id);
+    const ImGuiM3Metrics& gm = ImGuiM3GetMetrics();
+    const float grow = 14.0f * gm.density;
+    ImVector<float> grow_amt;
+    grow_amt.resize(count);
+    float grow_total = 0.0f;
+    for (int i = 0; i < count; i++)
+    {
+        const ImGuiID sid = group_id + (ImGuiID)(i + 1) * 0x9E3779B1u;
+        grow_amt[i] = ImGuiM3SpringStepSpatialDefault(sid, (i == *selected) ? 1.0f : 0.0f);
+        grow_total += grow_amt[i];
+    }
+    const float grow_payback = grow_total * grow / (float)count;
+    for (int i = 0; i < count; i++)
+        widths[i] = ImMax(widths[i] + grow_amt[i] * grow - grow_payback, 40.0f * gm.density);
+
     PushID(id);
     bool changed = false;
     int new_selection = *selected;
@@ -2560,20 +2584,15 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     for (int i = 0; i < count; i++)
         group_w += widths[i];
 
-    // the group is one opaque surface, so it reads solid and casts one shadow.
-    // widen the clip to the whole window (like the title bar) so the shadow
-    // isn't sheared off at the content edge when the overlay is resized.
-    const ImVec2 clip_min = window->Pos;
-    const ImVec2 clip_max = window->Pos + window->Size;
-    ImGui::PushClipRect(clip_min, clip_max, false);
+    // The group is one opaque capsule. No drop shadow: on the dark shell a
+    // full-pill shadow reads as a black blob, so the container tone carries the
+    // separation instead.
     {
         const ImRect group_bb(window->DC.CursorPos, window->DC.CursorPos + ImVec2(group_w, h));
         const float group_pill = ImGuiM3PillRadius(group_bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
         const ImGuiM3ShapeRounding group_rounding{ group_pill, group_pill, group_pill, group_pill };
-        ImGuiM3DrawElevation(window->DrawList, group_bb, group_rounding, 1);
-        ImGuiM3PathRoundedRect(window->DrawList, group_bb, group_rounding, ImGuiM3ColorU32(ImGuiM3Role_Surface));
+        ImGuiM3PathRoundedRect(window->DrawList, group_bb, group_rounding, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh));
     }
-    ImGui::PopClipRect();
 
     for (int i = 0; i < count; i++)
     {
