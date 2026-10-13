@@ -17,6 +17,7 @@
 #include "vendor/imgui/imgui_m3.h"
 #include "overlay/ui_theme.hh"
 #include "overlay/ui_icons.hh"
+#include "overlay/effect_icons.hh"
 
 namespace VKIntox
 {
@@ -88,30 +89,6 @@ namespace VKIntox
             if (parts[i] == "Shaders" || parts[i] == "Textures")
                 shaders = i;
         return (shaders + 2 < parts.size()) ? parts[shaders + 1] : std::string();
-    }
-
-    // A visual hint about what an effect does, picked from its name. First match
-    // wins, so the more specific hints come before the broad ones.
-    static const char* effectIconFor(const std::string& name)
-    {
-        const std::string n = toLower(name);
-        auto has = [&](const char* needle) { return n.find(needle) != std::string::npos; };
-
-        if (has("motionblur") || has("motion_blur") || has("motion blur")) return Icon::MotionBlurUtf8;
-        if (has("sharpen") || has("sharp") || has("clarity"))             return Icon::DiamondShineUtf8;
-        if (has("dof") || has("bokeh"))                                   return Icon::LensBlurUtf8;
-        if (has("ssr"))                                                   return Icon::GradientUtf8;
-        if (has("bloom") || has("flare") || has("glow"))                  return Icon::FlareUtf8;
-        if (has("lut") || has("color") || has("curve") || has("grade"))   return Icon::ColorizeUtf8;
-        if (has("blur"))                                                  return Icon::BlurOnUtf8;
-        if (has("film") || has("grain") || has("noise") || has("deb"))    return Icon::GrainUtf8;
-        if (has("cas") || has("aa"))                                      return Icon::StraightenUtf8;
-        if (has("light"))                                                 return Icon::BoltUtf8;
-        if (has("tone") || has("contrast") || has("hdr"))                 return Icon::ContrastUtf8;
-        if (has("ssao") || has("mxao"))                                   return Icon::ShadowUtf8;
-        if (has("depth"))                                                 return Icon::LayersUtf8;
-        if (has("shader") || has("fx") || has("effect"))                  return Icon::BrushUtf8;
-        return Icon::ExtensionUtf8;
     }
 
     void ImGuiOverlay::renderAddEffectsView()
@@ -538,8 +515,13 @@ namespace VKIntox
                     ImGuiM3DrawStateLayer(dl, bb, r, added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_OnSurface, st);
 
                     if (iconFont)
-                        ImGuiM3DrawIcon(dl, effectIconFor(e.type), ImRect(ImVec2(bb.Min.x + 16.0f * d, bb.Min.y), ImVec2(bb.Min.x + 44.0f * d, bb.Max.y)),
+                    {
+                        char iconUtf8[8] = {};
+                        const int iconLen = ImTextCharToUtf8(iconUtf8, (unsigned int)effectIconCodepointFor(e.type));
+                        iconUtf8[iconLen] = '\0';
+                        ImGuiM3DrawIcon(dl, iconUtf8, ImRect(ImVec2(bb.Min.x + 16.0f * d, bb.Min.y), ImVec2(bb.Min.x + 44.0f * d, bb.Max.y)),
                                         20.0f * d, ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_Primary));
+                    }
 
                     const float nameClip = 230.0f * d;
                     if (medium)
