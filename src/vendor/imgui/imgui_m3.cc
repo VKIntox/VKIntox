@@ -412,7 +412,7 @@ struct ThemeState
     bool                       initialised = false;
     uint32_t                   source = 0xFFE91E63;
     ImGuiM3Variant             variant = ImGuiM3Variant_Expressive;
-    ImGuiM3Contrast            contrast = ImGuiM3Contrast_Standard;
+    ImGuiM3Contrast            contrast = ImGuiM3Contrast_Medium;
     bool                       dark = true;
     ImVec4                     colors[ImGuiM3Role_COUNT];
     // per-role overrides from the .colors file; role_flags marks which are pinned.
@@ -727,7 +727,7 @@ static void LoadThemeFile(const std::string& path)
     g_theme.background_object = ImGuiM3BackgroundObject();
     g_theme.source = 0xFFE91E63;
     g_theme.variant = ImGuiM3Variant_Expressive;
-    g_theme.contrast = ImGuiM3Contrast_Standard;
+    g_theme.contrast = ImGuiM3Contrast_Medium;
     g_theme.dark = true;
     g_theme.last_error.clear();
 
@@ -1985,7 +1985,7 @@ void ImGuiM3NewFrame()
             g_theme.background_object = ImGuiM3BackgroundObject();
             g_theme.source = 0xFFE91E63;
     g_theme.variant = ImGuiM3Variant_Expressive;
-            g_theme.contrast = ImGuiM3Contrast_Standard;
+            g_theme.contrast = ImGuiM3Contrast_Medium;
             g_theme.dark = true;
             g_theme.last_reload_message = "theme file removed, back to preset";
             ResolveTheme();
