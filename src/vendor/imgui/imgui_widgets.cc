@@ -7339,7 +7339,7 @@ bool ImGui::TreeNodeBehavior(ImGuiID id, ImGuiTreeNodeFlags flags, const char* l
             if (flags & ImGuiTreeNodeFlags_Bullet)
                 RenderBullet(window->DrawList, ImVec2(text_pos.x - text_offset_x * 0.60f, text_pos.y + g.FontSize * 0.5f), text_col);
             else if (!is_leaf)
-                RenderArrow(window->DrawList, ImVec2(text_pos.x - text_offset_x + padding.x, text_pos.y), text_col, is_open ? ((flags & ImGuiTreeNodeFlags_UpsideDownArrow) ? ImGuiDir_Up : ImGuiDir_Down) : ImGuiDir_Right, 1.0f);
+                ImGuiM3TreeNodeArrow(window->DrawList, ImVec2(text_pos.x - text_offset_x + padding.x, text_pos.y), g.FontSize, text_col, is_open);
             else // Leaf without bullet, left-adjusted text
                 text_pos.x -= text_offset_x - padding.x;
             if (flags & ImGuiTreeNodeFlags_ClipLabelForTrailingButton)
@@ -7366,7 +7366,7 @@ bool ImGui::TreeNodeBehavior(ImGuiID id, ImGuiTreeNodeFlags flags, const char* l
             if (flags & ImGuiTreeNodeFlags_Bullet)
                 RenderBullet(window->DrawList, ImVec2(text_pos.x - text_offset_x * 0.5f, text_pos.y + g.FontSize * 0.5f), text_col);
             else if (!is_leaf)
-                RenderArrow(window->DrawList, ImVec2(text_pos.x - text_offset_x + padding.x, text_pos.y + g.FontSize * 0.15f), text_col, is_open ? ((flags & ImGuiTreeNodeFlags_UpsideDownArrow) ? ImGuiDir_Up : ImGuiDir_Down) : ImGuiDir_Right, 0.70f);
+                ImGuiM3TreeNodeArrow(window->DrawList, ImVec2(text_pos.x - text_offset_x + padding.x, text_pos.y + g.FontSize * 0.15f), g.FontSize, text_col, is_open);
             if (g.LogEnabled)
                 LogSetNextTextDecoration(">", NULL);
         }
@@ -7737,21 +7737,26 @@ bool ImGui::Selectable(const char* label, bool selected, ImGuiSelectableFlags fl
         const bool highlighted = hovered || (flags & ImGuiSelectableFlags_Highlight);
         const bool in_popup = (window->Flags & ImGuiWindowFlags_Popup) != 0;
         // VKIntox M3: a popup row is a capsule of on-surface tint — faint at
-        // rest so the list reads as separate items, stronger under the pointer,
-        // and lifted when selected. A list row outside a popup keeps the
+        // rest so the list reads as separate items, brighter under the pointer.
+        // The selected row is the accent: primary fill with on-primary text,
+        // lifted off the surface. A list row outside a popup keeps the
         // secondary-container selection swap instead.
         if (in_popup)
         {
             const float pill = ImGuiM3PillRadius(bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
             const ImGuiM3ShapeRounding row_rounding{ pill, pill, pill, pill };
-            const float alpha = selected ? 0.14f
-                              : (held && highlighted) ? 0.10f
-                              : highlighted ? 0.08f : 0.04f;
             if (selected)
+            {
                 ImGuiM3DrawElevation(window->DrawList, bb, row_rounding, 1);
-            ImVec4 tint = ImGuiM3StateLayer(ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
-            tint.w = alpha;
-            ImGuiM3PathRoundedRect(window->DrawList, bb, row_rounding, ImGui::ColorConvertFloat4ToU32(tint));
+                ImGuiM3PathRoundedRect(window->DrawList, bb, row_rounding, ImGuiM3ColorU32(ImGuiM3Role_Primary));
+            }
+            else
+            {
+                const float alpha = (held && highlighted) ? 0.10f : highlighted ? 0.08f : 0.04f;
+                ImVec4 tint = ImGuiM3StateLayer(ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
+                tint.w = alpha;
+                ImGuiM3PathRoundedRect(window->DrawList, bb, row_rounding, ImGui::ColorConvertFloat4ToU32(tint));
+            }
         }
         else if (highlighted || selected)
         {
@@ -7785,7 +7790,8 @@ bool ImGui::Selectable(const char* label, bool selected, ImGuiSelectableFlags fl
     if (is_visible)
     {
         const bool in_popup = (window->Flags & ImGuiWindowFlags_Popup) != 0;
-        const ImU32 row_text = in_popup ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
+        const ImU32 row_text = in_popup ? (selected ? ImGuiM3ColorU32(ImGuiM3Role_OnPrimary)
+                                                     : ImGuiM3ColorU32(ImGuiM3Role_OnSurface))
                                         : (selected ? ImGuiM3ColorU32(ImGuiM3Role_OnSecondaryContainer)
                                                     : ImGuiM3ColorU32(ImGuiM3Role_OnSurface));
         PushStyleColor(ImGuiCol_Text, row_text);

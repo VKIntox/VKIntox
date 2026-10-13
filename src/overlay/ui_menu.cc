@@ -1,6 +1,8 @@
 #include "ui_menu.hh"
 
 #include <cfloat>
+#include <cstring>
+#include <string>
 
 #include "vendor/imgui/imgui_internal.h"
 #include "vendor/imgui/imgui_m3.h"
@@ -12,6 +14,18 @@ namespace VKIntox
         namespace
         {
             constexpr float kMenuItemGap = 8.0f;
+
+            // A few rotating slots so several truncations in one expression
+            // don't stomp each other.
+            const char* RotatingBuffer(const std::string& s)
+            {
+                static std::string slots[4];
+                static int next = 0;
+                std::string& slot = slots[next];
+                next = (next + 1) & 3;
+                slot = s;
+                return slot.c_str();
+            }
 
             void PushM3MenuStyle()
             {
@@ -57,12 +71,24 @@ namespace VKIntox
             // sized down by the gap so the pitch still lands on menu_item_height.
             const float height = ImMax(ImGui::GetFrameHeight(),
                                        m.menu_item_height * m.density - ImGui::GetStyle().ItemSpacing.y);
-            const bool pressed = ImGui::Selectable(label, selected,
+            const bool pressed = ImGui::Selectable(TruncateLabel(label), selected,
                                                    ImGuiSelectableFlags_NoPadWithHalfSpacing,
                                                    ImVec2(0.0f, height));
             if (selected)
                 ImGui::SetItemDefaultFocus();
             return pressed;
+        }
+
+        const char* TruncateLabel(const char* label, size_t maxChars)
+        {
+            if (!label)
+                return "";
+            const size_t len = std::strlen(label);
+            if (len <= maxChars || maxChars < 4)
+                return label;
+            std::string out(label, maxChars - 3);
+            out += "...";
+            return RotatingBuffer(out);
         }
 
         void EndM3Menu()

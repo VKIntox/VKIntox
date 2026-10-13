@@ -180,7 +180,7 @@ namespace VKIntox
             ImGui::SameLine();
             ImGui::SetNextItemWidth(150);
             const char* shaderLabel = activeShaderProfileName.empty() ? "None" : activeShaderProfileName.c_str();
-            if (UI::BeginM3Combo("##shaderprofile", shaderLabel))
+            if (UI::BeginM3Combo("##shaderprofile", UI::TruncateLabel(shaderLabel, 16)))
             {
                 for (const auto& profile : shaderProfiles)
                 {

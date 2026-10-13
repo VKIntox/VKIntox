@@ -19,6 +19,11 @@ namespace VKIntox
         // overlay. Draw rows with M3MenuItem, then EndM3Combo().
         bool BeginM3Combo(const char* label, const char* preview);
         void EndM3Combo();
+
+        // Clip a label to a character budget, ending with an ellipsis if it was
+        // shortened. A safe ceiling for names that would otherwise overrun the
+        // narrow menu/combo surfaces. Returns a view into a thread-local buffer.
+        const char* TruncateLabel(const char* label, size_t maxChars = 22);
     }
 } // namespace VKIntox
 
