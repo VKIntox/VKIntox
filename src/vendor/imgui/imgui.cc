@@ -7504,22 +7504,24 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
         {
             // VKIntox M3: surface-container-low header, top corners only, so
             // the shell reads as one surface instead of two unrelated fills.
+            // The header sits a touch more opaque than the window body below it,
+            // but still fades with SetNextWindowBgAlpha during the animation.
+            const bool has_bg_alpha = (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasBgAlpha) != 0;
+            const float body_alpha = has_bg_alpha ? ImClamp(g.NextWindowData.BgAlphaVal, 0.0f, 1.0f) : 1.0f;
+            const float header_alpha = ImMin(1.0f, body_alpha + 0.12f);
+
             ImU32 title_bar_col = ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow);
             if (window->ViewportOwned)
                 title_bar_col |= IM_COL32_A_MASK; // No alpha
-            else if (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasBgAlpha)
-            {
-                // Honor SetNextWindowBgAlpha: the header must fade with the rest
-                // of the surface or it stays a hard strip through the animation.
-                const int a = IM_F32_TO_INT8_SAT(g.NextWindowData.BgAlphaVal);
-                title_bar_col = (title_bar_col & ~IM_COL32_A_MASK) | ((ImU32)a << IM_COL32_A_SHIFT);
-            }
+            else
+                title_bar_col = (title_bar_col & ~IM_COL32_A_MASK) | ((ImU32)IM_F32_TO_INT8_SAT(header_alpha) << IM_COL32_A_SHIFT);
             window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max, title_bar_col, window_rounding, ImDrawFlags_RoundCornersTop);
             if (title_bar_is_highlight)
             {
+                // keep the state layer's own (low) alpha, only scale it by the fade
                 ImU32 hl = ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
-                if (!window->ViewportOwned && (g.NextWindowData.HasFlags & ImGuiNextWindowDataFlags_HasBgAlpha))
-                    hl = (hl & ~IM_COL32_A_MASK) | ((ImU32)IM_F32_TO_INT8_SAT(g.NextWindowData.BgAlphaVal) << IM_COL32_A_SHIFT);
+                const int hl_a = (int)(((hl >> IM_COL32_A_SHIFT) & 0xFFu) * body_alpha);
+                hl = (hl & ~IM_COL32_A_MASK) | ((ImU32)ImClamp(hl_a, 0, 255) << IM_COL32_A_SHIFT);
                 window->DrawList->AddRectFilled(title_bar_rect.Min, title_bar_rect.Max,
                                                 hl, window_rounding, ImDrawFlags_RoundCornersTop);
             }
