@@ -2019,7 +2019,7 @@ namespace
         case ImGuiM3Button_DestructiveTonal:     return {ImGuiM3Role_ErrorContainer, ImGuiM3Role_OnErrorContainer, ImGuiM3Role_OnErrorContainer, false, 0};
         case ImGuiM3Button_DestructiveOutlined:  return {ImGuiM3Role_Surface, ImGuiM3Role_Error, ImGuiM3Role_Error, true, 0, ImGuiM3Role_Error};
         case ImGuiM3Button_Filled:
-        default:                                 return {ImGuiM3Role_Primary, ImGuiM3Role_OnPrimary, ImGuiM3Role_OnPrimary, false, 0};
+        default:                                 return {ImGuiM3Role_Primary, ImGuiM3Role_OnPrimary, ImGuiM3Role_OnPrimary, false, 1};
         }
     }
 
@@ -2539,6 +2539,13 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     PushID(id);
     bool changed = false;
     int new_selection = *selected;
+
+    // the group is one surface, so it casts one shadow behind the whole row
+    {
+        const ImRect group_bb(window->DC.CursorPos, window->DC.CursorPos + ImVec2(total, h));
+        const float group_pill = ImGuiM3PillRadius(group_bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
+        ImGuiM3DrawElevation(window->DrawList, group_bb, ImGuiM3ShapeRounding{ group_pill, group_pill, group_pill, group_pill }, 1);
+    }
 
     for (int i = 0; i < count; i++)
     {
