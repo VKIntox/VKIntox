@@ -339,6 +339,7 @@ namespace VKIntox
         bool depthPinPendingClear = false;   // Request to clear pinned depth (from UI)
         VkImageView depthPinPendingView = VK_NULL_HANDLE;  // Request to pin a specific view (from UI)
         bool depthPinChanged = false;         // Set when pin/clear was applied (triggers cmd buf reallocation)
+        bool depthTransformPending = false;   // Set when a depth transform toggle changed (rebuild resolve path)
 
         // UI state for debug window
         int debugWindowTab = 0;  // 0=Registry, 1=Log

@@ -935,11 +935,23 @@ namespace VKIntox
         return views;
     }
 
+    // A depth transform can only be applied by the shader resolve: the transfer
+    // copy has no way to decode a channel or mirror the image. So any requested
+    // transform forces the shader path even for attachment-layout depth.
+    static bool depthTransformRequested()
+    {
+        return settingsManager.getDepthInvert()
+            || settingsManager.getDepthFlip()
+            || settingsManager.getDepthFlop()
+            || settingsManager.getDepthSourceChannel() != 0;
+    }
+
     void initializeDepthResolveLayout(LogicalSwapchain* logicalSwapchain, const DepthState& depth)
     {
         LogicalDevice* logicalDevice = logicalSwapchain->logicalDevice;
         const bool isMsaa = depth.samples != VK_SAMPLE_COUNT_1_BIT;
-        const bool useShaderResolve = !isMsaa && (depth.observedLayout == VK_IMAGE_LAYOUT_GENERAL);
+        const bool useShaderResolve = !isMsaa
+            && (depth.observedLayout == VK_IMAGE_LAYOUT_GENERAL || depthTransformRequested());
         // MSAA depth resolve via depth-stencil resolve subpass (core 1.2). Works
         // for both GENERAL and non-GENERAL layouts: when GENERAL, we barrier the
         // source to attachment-optimal before the resolve subpass and restore after.
@@ -948,6 +960,11 @@ namespace VKIntox
         logicalSwapchain->depthResolveUsesShader = useShaderResolve;
         logicalSwapchain->depthResolveIsMsaa = useMsaaResolve;
         logicalSwapchain->depthResolveSourceSamples = depth.samples;
+        Logger::debug("depth resolve path: "
+                      + std::string(useShaderResolve ? "shader" : (useMsaaResolve ? "msaa" : "copy"))
+                      + " observedLayout=" + convertToString(depth.observedLayout)
+                      + " samples=" + std::to_string(depth.samples)
+                      + " transform=" + std::string(depthTransformRequested() ? "yes" : "no"));
         // The MSAA subpass and 1-sample transfer-copy paths keep the native depth
         // format. Only the 1-sample+GENERAL shader fallback uses R32_SFLOAT.
         logicalSwapchain->depthResolveFormat = useShaderResolve ? VK_FORMAT_R32_SFLOAT : depth.format;
@@ -1322,7 +1339,8 @@ namespace VKIntox
         }
 
         const bool isMsaa = depth.samples != VK_SAMPLE_COUNT_1_BIT;
-        const bool useShaderResolve = !isMsaa && (depth.observedLayout == VK_IMAGE_LAYOUT_GENERAL);
+        const bool useShaderResolve = !isMsaa
+            && (depth.observedLayout == VK_IMAGE_LAYOUT_GENERAL || depthTransformRequested());
         const bool wantsMsaaResolve = isMsaa
             && (logicalSwapchain->logicalDevice->supportedDepthResolveModes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT);
         const VkFormat wantedResolveFormat = useShaderResolve ? VK_FORMAT_R32_SFLOAT : depth.format;

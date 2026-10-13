@@ -221,6 +221,15 @@ namespace VKIntox
             logicalDevice->depthReallocPending = true;
             Logger::info("depth manual pin cleared (back to auto-promotion)");
         }
+
+        if (depthTransformPending)
+        {
+            std::lock_guard<std::mutex> l(globalLock);
+            // rebuilds the resolve path if a transform now needs the shader, and
+            // re-records the buffers so the new push constants take effect.
+            logicalDevice->depthReallocPending = true;
+            depthTransformPending = false;
+        }
     }
 
     void ImGuiOverlay::renderAdvancedView()
@@ -414,6 +423,7 @@ namespace VKIntox
                 {
                     dsc = i;
                     settingsManager.setDepthSourceChannel(dsc);
+                    depthTransformPending = true;
                     markSettingsDirty();
                 }
             }
@@ -437,6 +447,7 @@ namespace VKIntox
         if (ImGui::Checkbox("Invert depth values", &depthInvert))
         {
             settingsManager.setDepthInvert(depthInvert);
+            depthTransformPending = true;
             markSettingsDirty();
         }
         if (ImGui::IsItemHovered())
@@ -452,6 +463,7 @@ namespace VKIntox
         if (ImGui::Checkbox("Flip depth (upside down)", &depthFlip))
         {
             settingsManager.setDepthFlip(depthFlip);
+            depthTransformPending = true;
             markSettingsDirty();
         }
         if (ImGui::IsItemHovered())
@@ -467,6 +479,7 @@ namespace VKIntox
         if (ImGui::Checkbox("Flop depth (mirror)", &depthFlop))
         {
             settingsManager.setDepthFlop(depthFlop);
+            depthTransformPending = true;
             markSettingsDirty();
         }
         if (ImGui::IsItemHovered())
