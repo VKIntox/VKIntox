@@ -7795,19 +7795,7 @@ bool ImGui::Selectable(const char* label, bool selected, ImGuiSelectableFlags fl
                                         : (selected ? ImGuiM3ColorU32(ImGuiM3Role_OnSecondaryContainer)
                                                     : ImGuiM3ColorU32(ImGuiM3Role_OnSurface));
         PushStyleColor(ImGuiCol_Text, row_text);
-        if (in_popup)
-        {
-            // a menu row leads with a small solid dot and centres the name.
-            const ImGuiM3Metrics& m3 = ImGuiM3GetMetrics();
-            const float bullet_r = ImMax(2.0f, ImGui::GetFontSize() * 0.17f);
-            const float bullet_x = ImMin(bb.Min.x + 14.0f * m3.density, bb.GetCenter().x);
-            window->DrawList->AddCircleFilled(ImVec2(bullet_x, bb.GetCenter().y), bullet_r, row_text);
-            RenderTextClipped(bb.Min, bb.Max, label, NULL, &label_size, ImVec2(0.5f, 0.5f), &bb);
-        }
-        else
-        {
-            RenderTextClipped(pos, ImVec2(ImMin(pos.x + size.x, window->WorkRect.Max.x), pos.y + size.y), label, NULL, &label_size, style.SelectableTextAlign, &bb);
-        }
+        RenderTextClipped(pos, ImVec2(ImMin(pos.x + size.x, window->WorkRect.Max.x), pos.y + size.y), label, NULL, &label_size, style.SelectableTextAlign, &bb);
         PopStyleColor();
     }
 

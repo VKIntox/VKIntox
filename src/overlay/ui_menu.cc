@@ -91,6 +91,34 @@ namespace VKIntox
             return RotatingBuffer(out);
         }
 
+        bool M3MenuRadioItem(const char* label, bool selected)
+        {
+            const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+            const float height = ImMax(ImGui::GetFrameHeight(),
+                                       m.menu_item_height * m.density - ImGui::GetStyle().ItemSpacing.y);
+            const char* shown = TruncateLabel(label);
+            // draw the row without its own label, then emplace the dot and the
+            // centred name so the pill stays empty for our own layout
+            ImGui::PushID(label);
+            const bool pressed = ImGui::Selectable("##row", selected,
+                                                   ImGuiSelectableFlags_NoPadWithHalfSpacing,
+                                                   ImVec2(0.0f, height));
+            const ImVec2 mn = ImGui::GetItemRectMin();
+            const ImVec2 mx = ImGui::GetItemRectMax();
+            const ImU32 text = selected ? ImGuiM3ColorU32(ImGuiM3Role_OnPrimary)
+                                        : ImGuiM3ColorU32(ImGuiM3Role_OnSurface);
+            const float bullet_r = ImMax(2.0f, ImGui::GetFontSize() * 0.19f);
+            ImGui::GetWindowDrawList()->AddCircleFilled(
+                ImVec2(mn.x + 14.0f * m.density, (mn.y + mx.y) * 0.5f), bullet_r, text);
+            const ImVec2 ts = ImGui::CalcTextSize(shown);
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2((mn.x + mx.x - ts.x) * 0.5f, (mn.y + mx.y - ts.y) * 0.5f), text, shown);
+            ImGui::PopID();
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+            return pressed;
+        }
+
         void EndM3Menu()
         {
             ImGui::EndPopup();

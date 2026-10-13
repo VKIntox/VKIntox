@@ -185,7 +185,7 @@ namespace VKIntox
                 for (const auto& profile : shaderProfiles)
                 {
                     const bool selected = profile == activeShaderProfileName;
-                    if (UI::M3MenuItem(profile.c_str(), selected) && !selected)
+                    if (UI::M3MenuRadioItem(profile.c_str(), selected) && !selected)
                     {
                         if (!switchShaderProfile(profile))
                             pushToast(LogLevel::Error, "Could not save the active shader profile.");

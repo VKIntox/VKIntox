@@ -13,6 +13,9 @@ namespace VKIntox
         bool BeginM3Menu(const char* id);
         bool BeginM3MenuContext(const char* id);
         bool M3MenuItem(const char* label, bool selected = false);
+        // Preset-style row: a leading dot with the name centred. Used by the
+        // shader INI dropdown; the plain M3MenuItem keeps the default layout.
+        bool M3MenuRadioItem(const char* label, bool selected = false);
         void EndM3Menu();
 
         // Combo wrapper: caps the popup height so long lists scroll inside the
