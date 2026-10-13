@@ -2681,6 +2681,32 @@ namespace VKIntox
             readOnlyBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
             logicalDevice->vkd.CmdPipelineBarrier(copyCB, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &readOnlyBarrier);
 
+            // Restore the source to the layout the layer observed: the shader
+            // resolve barriers from that layout, so leaving it in TRANSFER_SRC
+            // here makes the two disagree and faults the GPU.
+            if (captureDepth.image != storageImage)
+            {
+                const VkImageLayout restoreLayout = (sourceLayout != VK_IMAGE_LAYOUT_UNDEFINED)
+                    ? sourceLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                VkImageMemoryBarrier restoreBarrier = {};
+                restoreBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                restoreBarrier.image = captureDepth.image;
+                restoreBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                restoreBarrier.newLayout = restoreLayout;
+                restoreBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                restoreBarrier.dstAccessMask = (restoreLayout == VK_IMAGE_LAYOUT_GENERAL)
+                    ? (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
+                    : (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+                restoreBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                restoreBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                restoreBarrier.subresourceRange = {depthAspect, 0, 1, 0, 1};
+                const VkPipelineStageFlags restoreDstStages = (restoreLayout == VK_IMAGE_LAYOUT_GENERAL)
+                    ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+                    : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
+                logicalDevice->vkd.CmdPipelineBarrier(copyCB, VK_PIPELINE_STAGE_TRANSFER_BIT, restoreDstStages,
+                                                      0, 0, nullptr, 0, nullptr, 1, &restoreBarrier);
+            }
+
             logicalDevice->vkd.EndCommandBuffer(copyCB);
 
             Logger::debug("QueueSubmit v3: depth copy via ring CB index=" + std::to_string(slotIndex)
