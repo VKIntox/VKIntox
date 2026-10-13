@@ -88,7 +88,7 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 **effects**
 
 -   **reshade fx compat:** runtime compilation of `.fx` shaders to spir-v, cached per shader and extent.
--   **depth resolve:** auto-detects or manually selects the correct depth buffer (reverse-z included) to fix z-fighting in ao and dof. the source can be decoded, inverted, and mirrored (flip/flop) at runtime without a pipeline rebuild. depth capture is on by default, so depth effects work on a game's first launch without a restart, and per-game defaults seed themselves; sober starts with inverted depth, everything else does not.
+-   **depth resolve:** auto-detects or manually selects the correct depth buffer (reverse-z included) to fix z-fighting in ao and dof. the source can be decoded, inverted, and mirrored (flip/flop) at runtime without a pipeline rebuild. depth capture is on by default, so depth effects work on a game's first launch without a restart, and per-game defaults seed themselves; sober starts with inverted depth and macoblox (mldr) with flipped depth, everything else does not.
 -   **effect list:** card-based and scrolls independently of the view, with the preset actions right-aligned on the effects row.
 -   **add effects:** a dedicated view with a back breadcrumb, package tabs (all / vkintox / every installed pack), ranked search, recents, keyboard navigation, and a per-effect duplicate stepper (`-` count `+`) that stops at the max-effects limit.
 -   **shader presets:** create (inherits the active preset), rename, delete behind a confirm, and import a reshade `.ini` through the desktop portal, with an in-overlay browser as the fallback.

@@ -60,8 +60,8 @@ namespace VKIntox::DefaultConfig
         return settings;
     }
 
-    // per-game depth orientation. sober's depth reads inverted; flip and flop
-    // are image mirrors, off for every game unless it is listed here.
+    // per-game depth orientation. sober's depth reads inverted; macoblox (mldr)
+    // renders upside down, so it starts flipped. flop stays off for every game.
     inline bool depthInvertForGame(const std::string& executableName)
     {
         return executableName == "sober";
@@ -69,7 +69,7 @@ namespace VKIntox::DefaultConfig
 
     inline bool depthFlipForGame(const std::string& executableName)
     {
-        return false;
+        return executableName == "mldr";
     }
 
     inline void applyGameDefaults(VkBasaltSettings& settings, const std::string& executableName)
