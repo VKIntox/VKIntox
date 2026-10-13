@@ -481,6 +481,11 @@ IMGUI_API ImGuiM3ShapeRounding ImGuiM3ConnectedSegmentRounding(ImVec2 size, int 
 
 // Draws an M3 state layer over a rect: `role` at `state`'s opacity.
 IMGUI_API void ImGuiM3DrawStateLayer(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, ImGuiM3Role role, ImGuiM3State state);
+
+// Material Symbols disclosure mark for a tree/expander: prefers the icon face's
+// `expand_more` when open and `chevron_right` when closed, falling back to the
+// stock triangle when no icon font is loaded. `px` is the glyph advance.
+IMGUI_API void ImGuiM3TreeNodeArrow(ImDrawList* draw_list, ImVec2 pos, float px, ImU32 col, bool open);
 // centres a lone Material Symbols glyph on its ink box, not the text line box.
 IMGUI_API void ImGuiM3DrawIcon(ImDrawList* draw_list, const char* glyph, const ImRect& bb, float px, ImU32 col);
 // ink-box centre as offsets from the layout position; false when the glyph will
