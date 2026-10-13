@@ -371,6 +371,11 @@ IMGUI_API ImGuiM3Contrast ImGuiM3ContrastFromName(const char* name);
 IMGUI_API bool        ImGuiM3SetThemeFile(const char* path);
 IMGUI_API const char* ImGuiM3GetThemeFile();
 
+// overrides the baseline the theme falls back to when a `.colors` file is
+// absent or omits a key. the app owns these defaults, not the vendor.
+IMGUI_API void        ImGuiM3SetThemePreset(ImU32 source, ImGuiM3Variant variant,
+                                            ImGuiM3Contrast contrast, bool dark);
+
 // Default location: $VKINTOX_THEME, else $XDG_CONFIG_HOME/VKIntox/theme.colors,
 // else $HOME/.config/VKIntox/theme.colors.
 IMGUI_API const char* ImGuiM3DefaultThemeFilePath();

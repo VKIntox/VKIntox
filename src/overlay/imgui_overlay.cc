@@ -10,6 +10,7 @@
 #include "keyboard_input.hh"
 #include "input_blocker.hh"
 #include "config_serializer.hh"
+#include "default_config.hh"
 #include "async_writer.hh"
 #include "shader_sources.hh"
 #include "image.hh"
@@ -198,10 +199,13 @@ namespace VKIntox
         if (!iniContent.empty())
             ImGui::LoadIniSettingsFromDisk(iniPath.c_str());
 
-        // ── Material 3 Expressive theme ────────────────────────────────────
-        // The whole skin lives in vendor/imgui/imgui_m3.{h,cc}: the token set,
-        // the `.colors` file, live reload, and the M3 widget painting. Here we
-        // only point it at a file and let it populate the style.
+        // the whole skin lives in vendor/imgui/imgui_m3.{h,cc}: the token set,
+        // the `.colors` file, live reload, and the M3 widget painting. here we
+        // seed the shipped defaults and then point it at a file.
+        ImGuiM3SetThemePreset(DefaultConfig::kThemeSource, DefaultConfig::kThemeVariant,
+                              DefaultConfig::kThemeContrast, DefaultConfig::kThemeDark);
+        ImGuiM3GetBlurSettings() = DefaultConfig::blurSettings();
+        ImGuiM3GetBackgroundObject() = DefaultConfig::backgroundObject();
         ImGuiM3SetThemeFile(ImGuiM3DefaultThemeFilePath());
         if (const char* themePath = ImGuiM3GetThemeFile())
             Logger::info("ImGui: Material 3 Expressive theme from " + std::string(themePath));

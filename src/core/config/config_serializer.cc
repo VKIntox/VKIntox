@@ -1,4 +1,5 @@
 #include "config_serializer.hh"
+#include "default_config.hh"
 #include "config_paths.hh"
 #include "c_resource.hh"
 #include "logger.hh"
@@ -168,7 +169,8 @@ namespace VKIntox
 
     VkBasaltSettings ConfigSerializer::loadSettings()
     {
-        VkBasaltSettings settings;
+        VkBasaltSettings settings = DefaultConfig::appSettings();
+        const std::string gameName = detectGameName();
 
         // Check user config first, then fall back to system paths (same order as Config)
         std::string userConfig = getBaseConfigDir() + "/VKIntox.conf";
@@ -191,14 +193,21 @@ namespace VKIntox
         }
 
         if (configPath.empty())
+        {
+            DefaultConfig::applyGameDefaults(settings, gameName);
             return settings;
+        }
 
         Logger::info("SettingsManager loading from: " + configPath);
 
         std::ifstream file(configPath);
         if (!file.is_open())
+        {
+            DefaultConfig::applyGameDefaults(settings, gameName);
             return settings;
+        }
 
+        bool sawDepthInvert = false;
         std::string line;
         while (std::getline(file, line))
         {
@@ -301,8 +310,16 @@ namespace VKIntox
                 catch (...) { Logger::err("invalid depthSourceChannel value: " + value); }
             }
             else if (key == "depthInvert")
+            {
                 settings.depthInvert = (value == "true" || value == "1");
+                sawDepthInvert = true;
+            }
         }
+
+        // an existing config predating the per-game default has no depthInvert
+        // key; seed it so old installs match a fresh one.
+        if (!sawDepthInvert)
+            DefaultConfig::applyGameDefaults(settings, gameName);
 
         return settings;
     }
@@ -391,7 +408,8 @@ namespace VKIntox
         if (stat(configPath.c_str(), &st) == 0)
             return;
 
-        VkBasaltSettings defaults;
+        VkBasaltSettings defaults = DefaultConfig::appSettings();
+        DefaultConfig::applyGameDefaults(defaults, detectGameName());
         saveSettings(defaults);
         Logger::info("Created default VKIntox.conf");
     }

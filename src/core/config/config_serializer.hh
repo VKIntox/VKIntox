@@ -39,23 +39,24 @@ namespace VKIntox
         std::vector<ShaderProfileInstance> instances;
     };
 
-    // Global VKIntox settings (from VKIntox.conf)
+    // global VKIntox settings (from VKIntox.conf); construct through
+    // DefaultConfig::appSettings so these members are never left uninitialised.
     struct VkBasaltSettings
     {
-        int maxEffects = 10;
-        bool overlayBlockInput = true;
-        std::string toggleKey = "End";
-        std::string reloadKey = "F10";
-        std::string overlayKey = "Home";
-        bool enableOnLaunch = true;
-        bool depthCapture = false;
-        bool autoApply = true;  // Auto-apply changes without clicking Apply
-        int autoApplyDelay = 200;  // ms delay before auto-applying changes
-        bool showDebugWindow = false;  // Show debug window with raw effect registry data
+        int maxEffects;
+        bool overlayBlockInput;
+        std::string toggleKey;
+        std::string reloadKey;
+        std::string overlayKey;
+        bool enableOnLaunch;
+        bool depthCapture;
+        bool autoApply;  // Auto-apply changes without clicking Apply
+        int autoApplyDelay;  // ms delay before auto-applying changes
+        bool showDebugWindow;  // Show debug window with raw effect registry data
         // Depth buffer resolve mode for MSAA sources (Advanced tab).
         // 0 = auto (prefer average, fall back to sample-zero),
         // 1 = sample-zero, 2 = average. Only applied when supported by the device.
-        int depthResolveMode = 0;
+        int depthResolveMode;
         // Optional manual depth buffer pin (Advanced tab). When non-empty, the
         // layer pins depth capture to this tracked image view key instead of
         // using the best-candidate heuristic. "" = auto-promotion.
@@ -63,12 +64,12 @@ namespace VKIntox
         // Workaround for transient multisampled depth attachments (Advanced tab).
         // When true, VKIntox injects its own depth resolve attachment so the
         // resolved depth survives past the render pass for effects to sample.
-        bool depthTransientWorkaround = true;
+        bool depthTransientWorkaround;
         // Depth capture method for persistent storage path (Advanced tab).
         // 0 = off (use legacy per-swapchain resolve only),
         // 1 = Option A: RenderPassEnd hook (recommended, blit inline at CmdEndRenderPass),
         // 2 = Option B: QueueSubmit interception (robust fallback, inject blit at submit).
-        int depthCaptureMethod = 2;
+        int depthCaptureMethod;
 
         // --- Alternative depth buffer handling ---
         // Depth source channel/mode selection (Advanced tab).
@@ -80,10 +81,10 @@ namespace VKIntox
         //   4 = View-space Z (raw view-space Z value)
         //   5 = Normalized Device Coordinates / NDC
         //   6 = Reversed-Z (inverted depth range for precision)
-        int depthSourceChannel = 0;
+        int depthSourceChannel;
         // Invert depth values after reading from source.
         // When enabled, depth = 1.0 - depth (flips near/far planes).
-        bool depthInvert = false;
+        bool depthInvert;
     };
 
     // Shader Manager configuration (from shader_manager.conf)

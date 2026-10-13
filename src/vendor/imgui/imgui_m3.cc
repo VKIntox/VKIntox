@@ -414,6 +414,12 @@ struct ThemeState
     ImGuiM3Variant             variant = ImGuiM3Variant_Expressive;
     ImGuiM3Contrast            contrast = ImGuiM3Contrast_Medium;
     bool                       dark = true;
+    // baseline the theme falls back to when a `.colors` file is absent or omits
+    // a key. the app overrides it so it, not the vendor, owns the defaults.
+    uint32_t                   preset_source = 0xFFE91E63;
+    ImGuiM3Variant             preset_variant = ImGuiM3Variant_Expressive;
+    ImGuiM3Contrast            preset_contrast = ImGuiM3Contrast_Medium;
+    bool                       preset_dark = true;
     ImVec4                     colors[ImGuiM3Role_COUNT];
     // per-role overrides from the .colors file; role_flags marks which are pinned.
     uint64_t                   role_flags[2] = {0, 0};
@@ -725,10 +731,10 @@ static void LoadThemeFile(const std::string& path)
     g_theme.metrics = ImGuiM3Metrics();
     g_theme.blur = ImGuiM3BlurSettings();
     g_theme.background_object = ImGuiM3BackgroundObject();
-    g_theme.source = 0xFFE91E63;
-    g_theme.variant = ImGuiM3Variant_Expressive;
-    g_theme.contrast = ImGuiM3Contrast_Medium;
-    g_theme.dark = true;
+    g_theme.source = g_theme.preset_source;
+    g_theme.variant = g_theme.preset_variant;
+    g_theme.contrast = g_theme.preset_contrast;
+    g_theme.dark = g_theme.preset_dark;
     g_theme.last_error.clear();
 
     bool in_metrics_section = false;
@@ -1268,6 +1274,19 @@ bool ImGuiM3SetThemeFile(const char* path)
 const char* ImGuiM3GetThemeFile()
 {
     return g_theme.file_path.empty() ? nullptr : g_theme.file_path.c_str();
+}
+
+void ImGuiM3SetThemePreset(ImU32 source, ImGuiM3Variant variant, ImGuiM3Contrast contrast, bool dark)
+{
+    g_theme.preset_source = source;
+    g_theme.preset_variant = variant;
+    g_theme.preset_contrast = contrast;
+    g_theme.preset_dark = dark;
+    g_theme.source = source;
+    g_theme.variant = variant;
+    g_theme.contrast = contrast;
+    g_theme.dark = dark;
+    ResolveTheme();
 }
 
 void ImGuiM3Shutdown()
@@ -1988,10 +2007,10 @@ void ImGuiM3NewFrame()
             g_theme.metrics = ImGuiM3Metrics();
             g_theme.blur = ImGuiM3BlurSettings();
             g_theme.background_object = ImGuiM3BackgroundObject();
-            g_theme.source = 0xFFE91E63;
-    g_theme.variant = ImGuiM3Variant_Expressive;
-            g_theme.contrast = ImGuiM3Contrast_Medium;
-            g_theme.dark = true;
+            g_theme.source = g_theme.preset_source;
+            g_theme.variant = g_theme.preset_variant;
+            g_theme.contrast = g_theme.preset_contrast;
+            g_theme.dark = g_theme.preset_dark;
             g_theme.last_reload_message = "theme file removed, back to preset";
             ResolveTheme();
             ImGuiM3ApplyToStyle(1.0f);

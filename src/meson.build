@@ -62,10 +62,10 @@ VKIntox_src = [
     'render/buffer.cc',
     'render/command_buffer.cc',
     'render/vk_handle.cc',
-    'core/config.cc',
-    'core/config_serializer.cc',
-    'core/config_serializer_profile.cc',
-    'core/settings_manager.cc',
+    'core/config/config.cc',
+    'core/config/config_serializer.cc',
+    'core/config/config_serializer_profile.cc',
+    'core/config/settings_manager.cc',
     'render/descriptor_set.cc',
     'effects/effect.cc',
     'effects/effect_registry.cc',
@@ -139,9 +139,9 @@ configure_file(output: 'version.hh',
 
 # X11/X.h library contains many definitions (e.g. None)
 # which conflicts with the rest codebase with with Meson --unity=on option
-keyboard_input_x11_lib = static_library('keyboard_input_x11', 'input/keyboard_input_x11.cc', include_directories: [include_directories('core')])
-mouse_input_lib = static_library('mouse_input', 'input/mouse_input.cc', include_directories: [include_directories('core')])
-input_blocker_lib = static_library('input_blocker', 'input/input_blocker.cc', include_directories: [include_directories('core')])
+keyboard_input_x11_lib = static_library('keyboard_input_x11', 'input/keyboard_input_x11.cc', include_directories: [include_directories('core', 'core/config')])
+mouse_input_lib = static_library('mouse_input', 'input/mouse_input.cc', include_directories: [include_directories('core', 'core/config')])
+input_blocker_lib = static_library('input_blocker', 'input/input_blocker.cc', include_directories: [include_directories('core', 'core/config')])
 
 # X11 input backends. The shared connection (x11_display) owns the single event
 # queue; keyboard and mouse register callbacks into it and the blocker grabs on
@@ -149,33 +149,33 @@ input_blocker_lib = static_library('input_blocker', 'input/input_blocker.cc', in
 # defines symbols (None, ...) that collide with the codebase.
 x11_display_lib = static_library('x11_display',
     'input/x11_display.cc',
-    include_directories: [include_directories('core')])
+    include_directories: [include_directories('core', 'core/config')])
 mouse_input_x11_lib = static_library('mouse_input_x11',
     'input/mouse_input_x11.cc',
-    include_directories: [include_directories('core')])
+    include_directories: [include_directories('core', 'core/config')])
 
 # Wayland input backends — built as static libs to isolate wayland-client headers.
 # wayland_input_common provides a shared seat/queue used by both keyboard and mouse.
 wayland_input_common_lib = static_library('wayland_input_common',
     'input/wayland_input_common.cc', 'input/wayland_display.cc',
     dependencies: [wayland_client_dep],
-    include_directories: [include_directories('core')])
+    include_directories: [include_directories('core', 'core/config')])
 keyboard_input_wayland_lib = static_library('keyboard_input_wayland',
     'input/keyboard_input_wayland.cc',
     link_with: [wayland_input_common_lib],
     dependencies: [wayland_client_dep, xkbcommon_dep],
-    include_directories: [include_directories('core')])
+    include_directories: [include_directories('core', 'core/config')])
 mouse_input_wayland_lib = static_library('mouse_input_wayland',
     'input/mouse_input_wayland.cc',
     link_with: [wayland_input_common_lib],
     dependencies: [wayland_client_dep],
-    include_directories: [include_directories('core')])
+    include_directories: [include_directories('core', 'core/config')])
 wayland_pointer_constraints_lib = static_library('wayland_pointer_constraints',
     'input/wayland_pointer_constraints.cc', pointer_constraints_code,
     pointer_constraints_client_h,
     link_with: [wayland_input_common_lib],
     dependencies: [wayland_client_dep],
-    include_directories: [include_directories('core')])
+    include_directories: [include_directories('core', 'core/config')])
 # Wayland event interposition — wraps game's pointer/keyboard listeners to
 # suppress events when overlay has input blocked. Needs default visibility
 # for the wl_proxy_add_listener symbol override.
@@ -184,17 +184,17 @@ wayland_interpose_lib = static_library('wayland_interpose',
     dependencies: [wayland_client_dep],
     c_args: ['-fvisibility=default'],
     cpp_args: ['-fvisibility=default'],
-    include_directories: [include_directories('core')])
+    include_directories: [include_directories('core', 'core/config')])
 
 imgui_inc = include_directories('vendor/imgui')
 overlay_inc = include_directories('overlay')
 effects_inc = include_directories('effects')
 effects_params_inc = include_directories('effects/params')
-core_inc = include_directories('core')
+core_inc = include_directories('core', 'core/config')
 input_inc = include_directories('input')
 render_inc = include_directories('render')
 vendor_inc = include_directories('vendor')
-source_inc = include_directories('.', 'core', 'input', 'render', 'effects', 'overlay')
+source_inc = include_directories('.', 'core', 'core/config', 'input', 'render', 'effects', 'overlay')
 stb_inc = include_directories('vendor/stb')
 shader_asset_inc = include_directories('effects/shaders')
 
@@ -232,9 +232,9 @@ executable('vkintox-shader-check',
     'vendor/reshade/effect_preprocessor.cc',
     'vendor/reshade/effect_symbol_table.cc',
     'render/vk_handle.cc',
-    'core/config.cc',
-    'core/config_serializer.cc',
-    'core/config_serializer_profile.cc',
+    'core/config/config.cc',
+    'core/config/config_serializer.cc',
+    'core/config/config_serializer_profile.cc',
     'core/logger.cc',
     'core/util.cc',
     include_directories : [VKIntox_include_path, imgui_inc, overlay_inc, effects_inc, effects_params_inc, core_inc, input_inc, render_inc, vendor_inc, include_directories('vendor/reshade'), stb_inc, source_inc],
@@ -243,12 +243,12 @@ executable('vkintox-shader-check',
 
 config_serializer_tests = executable('vkintox-config-serializer-tests',
     'tests/config_serializer_test.cc',
-    'core/config_serializer.cc',
-    'core/config_serializer_profile.cc',
-    'core/config.cc',
+    'core/config/config_serializer.cc',
+    'core/config/config_serializer_profile.cc',
+    'core/config/config.cc',
     'core/logger.cc',
     'core/util.cc',
-    include_directories : [core_inc, render_inc, effects_inc, effects_params_inc, vendor_inc, source_inc])
+    include_directories : [core_inc, render_inc, effects_inc, effects_params_inc, vendor_inc, source_inc, imgui_inc])
 test('config serializer', config_serializer_tests)
 
 # The M3 theme is the one part of the UI that cannot be eyeballed in CI: it needs

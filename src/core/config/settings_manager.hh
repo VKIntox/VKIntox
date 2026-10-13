@@ -6,6 +6,7 @@
 #include <mutex>
 
 #include "config_serializer.hh"
+#include "default_config.hh"
 
 namespace VKIntox
 {
