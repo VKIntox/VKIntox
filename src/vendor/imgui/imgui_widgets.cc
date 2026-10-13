@@ -7735,25 +7735,29 @@ bool ImGui::Selectable(const char* label, bool selected, ImGuiSelectableFlags fl
     if (is_visible)
     {
         const bool highlighted = hovered || (flags & ImGuiSelectableFlags_Highlight);
-        // VKIntox M3: selection is a container swap to secondary-container, not
-        // a header tint. Inside a popup every row is a pill, so dropdowns open
-        // as a stack of capsules; a list row keeps the expressive list-item
-        // radius and morphs a little on press.
-        if (highlighted || selected)
+        const bool in_popup = (window->Flags & ImGuiWindowFlags_Popup) != 0;
+        // VKIntox M3: a popup row is a capsule of on-surface tint — faint at
+        // rest so the list reads as separate items, stronger under the pointer,
+        // and lifted when selected. A list row outside a popup keeps the
+        // secondary-container selection swap instead.
+        if (in_popup)
         {
-            const bool in_popup = (window->Flags & ImGuiWindowFlags_Popup) != 0;
-            ImGuiM3ShapeRounding row_rounding;
-            if (in_popup)
-            {
-                const float pill = ImGuiM3PillRadius(bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
-                row_rounding = ImGuiM3ShapeRounding{ pill, pill, pill, pill };
-            }
-            else
-            {
-                const ImGuiM3Metrics& m3 = ImGuiM3GetMetrics();
-                const float rest_r = selected ? ImGuiM3Radius(ImGuiM3Shape_Medium) : m3.list_item_radius_expressive * m3.density;
-                row_rounding = ImGuiM3MorphedRounding(bb.GetSize(), rest_r, ImGuiM3Radius(ImGuiM3Shape_Large), highlighted && held, id);
-            }
+            const float pill = ImGuiM3PillRadius(bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
+            const ImGuiM3ShapeRounding row_rounding{ pill, pill, pill, pill };
+            const float alpha = selected ? 0.14f
+                              : (held && highlighted) ? 0.10f
+                              : highlighted ? 0.08f : 0.04f;
+            if (selected)
+                ImGuiM3DrawElevation(window->DrawList, bb, row_rounding, 1);
+            ImVec4 tint = ImGuiM3StateLayer(ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
+            tint.w = alpha;
+            ImGuiM3PathRoundedRect(window->DrawList, bb, row_rounding, ImGui::ColorConvertFloat4ToU32(tint));
+        }
+        else if (highlighted || selected)
+        {
+            const ImGuiM3Metrics& m3 = ImGuiM3GetMetrics();
+            const float rest_r = selected ? ImGuiM3Radius(ImGuiM3Shape_Medium) : m3.list_item_radius_expressive * m3.density;
+            const ImGuiM3ShapeRounding row_rounding = ImGuiM3MorphedRounding(bb.GetSize(), rest_r, ImGuiM3Radius(ImGuiM3Shape_Large), highlighted && held, id);
             if (selected)
                 ImGuiM3PathRoundedRect(window->DrawList, bb, row_rounding, ImGuiM3ColorU32(ImGuiM3Role_SecondaryContainer));
             else
@@ -7780,9 +7784,24 @@ bool ImGui::Selectable(const char* label, bool selected, ImGuiSelectableFlags fl
     // Text stays at the submission position. Alignment/clipping extents ignore SpanAllColumns.
     if (is_visible)
     {
-        PushStyleColor(ImGuiCol_Text, selected ? ImGuiM3ColorU32(ImGuiM3Role_OnSecondaryContainer)
-                                               : ImGuiM3ColorU32(ImGuiM3Role_OnSurface));
-        RenderTextClipped(pos, ImVec2(ImMin(pos.x + size.x, window->WorkRect.Max.x), pos.y + size.y), label, NULL, &label_size, style.SelectableTextAlign, &bb);
+        const bool in_popup = (window->Flags & ImGuiWindowFlags_Popup) != 0;
+        const ImU32 row_text = in_popup ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
+                                        : (selected ? ImGuiM3ColorU32(ImGuiM3Role_OnSecondaryContainer)
+                                                    : ImGuiM3ColorU32(ImGuiM3Role_OnSurface));
+        PushStyleColor(ImGuiCol_Text, row_text);
+        if (in_popup)
+        {
+            // a menu row leads with a small solid dot and centres the name.
+            const ImGuiM3Metrics& m3 = ImGuiM3GetMetrics();
+            const float bullet_r = ImMax(2.0f, ImGui::GetFontSize() * 0.17f);
+            const float bullet_x = ImMin(bb.Min.x + 14.0f * m3.density, bb.GetCenter().x);
+            window->DrawList->AddCircleFilled(ImVec2(bullet_x, bb.GetCenter().y), bullet_r, row_text);
+            RenderTextClipped(bb.Min, bb.Max, label, NULL, &label_size, ImVec2(0.5f, 0.5f), &bb);
+        }
+        else
+        {
+            RenderTextClipped(pos, ImVec2(ImMin(pos.x + size.x, window->WorkRect.Max.x), pos.y + size.y), label, NULL, &label_size, style.SelectableTextAlign, &bb);
+        }
         PopStyleColor();
     }
 

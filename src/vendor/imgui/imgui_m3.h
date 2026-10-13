@@ -195,10 +195,10 @@ struct ImGuiM3Metrics
     float       chip_icon = 18.0f;
     float       dialog_radius = 28.0f;
     float       dialog_min_width = 280.0f;
-    float       menu_radius = 4.0f;
+    float       menu_radius = 24.0f;
     float       menu_padding_x = 12.0f;
     float       menu_padding_y = 8.0f;
-    float       menu_item_height = 48.0f;
+    float       menu_item_height = 40.0f;
     float       snackbar_radius = 4.0f;
     float       snackbar_height_1 = 48.0f;
     float       snackbar_height_2 = 68.0f;
@@ -282,8 +282,8 @@ struct ImGuiM3Metrics
     float       ambient_shadow_y[6]   = {0.0f, 1.0f, 2.0f, 4.0f, 6.0f, 8.0f};
     float       ambient_shadow_blur[6]= {0.0f, 3.0f, 6.0f, 8.0f, 10.0f, 12.0f};
     float       ambient_shadow_spread[6]={0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 6.0f};
-    float       key_shadow_opacity    = 0.30f;
-    float       ambient_shadow_opacity= 0.15f;
+    float       key_shadow_opacity    = 0.22f;
+    float       ambient_shadow_opacity= 0.10f;
     float       elevation_tint[6]     = {0.0f, 0.05f, 0.08f, 0.11f, 0.12f, 0.14f};
 
     // Motion: the expressive spring system, spatial + effects x fast/default/slow.

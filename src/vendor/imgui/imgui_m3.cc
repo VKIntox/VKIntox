@@ -1928,7 +1928,7 @@ void ImGuiM3DrawElevation(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeR
                  ImVec2(bb.Max.x + grow, bb.Max.y + grow + dy));
         ImGuiM3ShapeRounding rr = rounding;
         rr.tl += grow; rr.tr += grow; rr.br += grow; rr.bl += grow;
-        const float alpha = total_alpha * (1.0f - t) * 0.45f;
+        const float alpha = total_alpha * (1.0f - t) * 0.42f;
         ImGuiM3PathRoundedRect(draw_list, r, rr, PackU32(WithAlpha(shadow_color, alpha)));
     }
 }
