@@ -2578,22 +2578,9 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     bool changed = false;
     int new_selection = *selected;
 
-    // Recompute the true width after the fit pass so the group's surface and its
-    // shadow span exactly the segments (the resize path rescales each width).
-    float group_w = gap * (count - 1);
-    for (int i = 0; i < count; i++)
-        group_w += widths[i];
-
-    // The group is one opaque capsule. No drop shadow: on the dark shell a
-    // full-pill shadow reads as a black blob, so the container tone carries the
-    // separation instead.
-    {
-        const ImRect group_bb(window->DC.CursorPos, window->DC.CursorPos + ImVec2(group_w, h));
-        const float group_pill = ImGuiM3PillRadius(group_bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
-        const ImGuiM3ShapeRounding group_rounding{ group_pill, group_pill, group_pill, group_pill };
-        ImGuiM3PathRoundedRect(window->DrawList, group_bb, group_rounding, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh));
-    }
-
+    // No group surface: the row sits directly on the shell, so only the active
+    // segment carries a background (its accent container) and a lift. A group
+    // fill read as a stray slab behind the buttons.
     for (int i = 0; i < count; i++)
     {
         if (i > 0)
@@ -2623,7 +2610,12 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
 
             // selected segments use secondary-container; the rest rely on the 1dp outline.
             if (is_selected)
+            {
+                // the active segment lifts a touch more than the old flat look so
+                // it reads as the raised "current" item.
+                ImGuiM3DrawElevation(window->DrawList, bb, rounding, 2);
                 ImGuiM3PathRoundedRect(window->DrawList, bb, rounding, ImGuiM3ColorU32(ImGuiM3Role_SecondaryContainer));
+            }
 
             const ImGuiM3State state = (hovered && held) ? ImGuiM3State_Pressed : hovered ? ImGuiM3State_Hovered : ImGuiM3State_Enabled;
             ImGuiM3DrawStateLayer(window->DrawList, bb, rounding,
