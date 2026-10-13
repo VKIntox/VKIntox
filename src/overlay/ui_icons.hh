@@ -33,6 +33,7 @@ namespace VKIntox::Icon
     constexpr ImWchar Search         = 0xE8B6;
     constexpr ImWchar Delete         = 0xE872;
     constexpr ImWchar ExpandMore     = 0xE5CF;
+    constexpr ImWchar ArrowDropDown  = 0xE5C5;
     constexpr ImWchar ChevronRight   = 0xE409;
     constexpr ImWchar ChevronLeft    = 0xE408;
     constexpr ImWchar Refresh        = 0xE5D5;
@@ -101,6 +102,7 @@ namespace VKIntox::Icon
     constexpr const char* SearchUtf8        = "\xEE\xA2\xB6";
     constexpr const char* DeleteUtf8        = "\xEE\xA1\xB2";
     constexpr const char* ExpandMoreUtf8    = "\xEE\x97\x8F";
+    constexpr const char* ArrowDropDownUtf8 = "\xEE\x97\x85";
     constexpr const char* ChevronRightUtf8  = "\xEE\x90\x89";
     constexpr const char* ChevronLeftUtf8   = "\xEE\x90\x88";
     constexpr const char* RefreshUtf8       = "\xEE\x97\x95";
@@ -159,7 +161,7 @@ namespace VKIntox::Icon
     {
         static const ImWchar ranges[] = {
             AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport,
-            Add, Edit, Close, Search, Delete, ExpandMore, ChevronRight, ChevronLeft, Refresh, Save,
+            Add, Edit, Close, Search, Delete, ExpandMore, ArrowDropDown, ChevronRight, ChevronLeft, Refresh, Save,
             FolderOpen, Upload, Check, Minus, CheckCircle, Cancel, Warning, Error, Info,
             Visibility, VisibilityOff, Power, PlayArrow,
             Speed, Bolt, Joystick, Science, Build, Extension, Brush, Image, Layers, Texture,

@@ -2091,10 +2091,20 @@ bool ImGui::BeginCombo(const char* label, const char* preview_value, ImGuiComboF
     if (!(flags & ImGuiComboFlags_NoArrowButton))
     {
         const ImU32 arrow_col = ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant);
-        const float arrow_px = ImMin(arrow_size, g.FontSize);
-        RenderArrow(window->DrawList,
-                    ImVec2(value_x2 + (arrow_size - arrow_px) * 0.5f, bb.GetCenter().y - arrow_px * 0.5f),
-                    arrow_col, ImGuiDir_Down, 1.0f);
+        static const char kDropdownGlyph[] = "\xEE\x97\x85";
+        ImFont* icon = ImGuiM3IconFont();
+        if (icon)
+        {
+            const ImRect arrow_bb(ImVec2(value_x2, bb.Min.y), ImVec2(bb.Max.x, bb.Max.y));
+            ImGuiM3DrawIcon(window->DrawList, kDropdownGlyph, arrow_bb, arrow_size * 0.8f, arrow_col);
+        }
+        else
+        {
+            const float arrow_px = ImMin(arrow_size, g.FontSize);
+            RenderArrow(window->DrawList,
+                        ImVec2(value_x2 + (arrow_size - arrow_px) * 0.5f, bb.GetCenter().y - arrow_px * 0.5f),
+                        arrow_col, ImGuiDir_Down, 1.0f);
+        }
     }
 
     // Custom preview
