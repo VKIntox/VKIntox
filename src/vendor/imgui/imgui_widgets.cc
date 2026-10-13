@@ -2157,7 +2157,6 @@ bool ImGui::BeginComboPopup(ImGuiID popup_id, const ImRect& bb, ImGuiComboFlags 
     // This is essentially a specialized version of BeginPopupEx()
     char name[16];
     ImFormatString(name, IM_COUNTOF(name), "##Combo_%02d", g.BeginComboDepth); // Recycle windows based on depth
-
     // Set position given a custom constraint (peak into expected window size so we can position it)
     // FIXME: This might be easier to express with an hypothetical SetNextWindowPosConstraints() function?
     // FIXME: This might be moved to Begin() or at least around the same spot where Tooltips and other Popups are calling FindBestWindowPosForPopupEx()?
@@ -2174,9 +2173,14 @@ bool ImGui::BeginComboPopup(ImGuiID popup_id, const ImRect& bb, ImGuiComboFlags 
 
     // We don't use BeginPopupEx() solely because we have a custom name string, which we could make an argument to BeginPopupEx()
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_Popup | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
-    PushStyleVarX(ImGuiStyleVar_WindowPadding, g.Style.FramePadding.x); // Horizontally align ourselves with the framed text
+
+    // VKIntox M3: the menu popup carries its own insets and corner instead of
+    // the dialog-scale window padding it used to inherit.
+    const ImGuiM3Metrics& m3m = ImGuiM3GetMetrics();
+    PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(m3m.menu_padding_x * m3m.density, m3m.menu_padding_y * m3m.density));
+    PushStyleVar(ImGuiStyleVar_PopupRounding, m3m.menu_radius * m3m.density);
     bool ret = Begin(name, NULL, window_flags);
-    PopStyleVar();
+    PopStyleVar(2);
     if (!ret)
     {
         EndPopup();

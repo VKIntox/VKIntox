@@ -586,7 +586,7 @@ static void ApplyMetricToken(const char* key, const char* value, ImGuiM3Metrics&
     MET(card_radius) MET(card_outline_width)
     MET(chip_height) MET(chip_radius) MET(chip_icon)
     MET(dialog_radius) MET(dialog_min_width)
-    MET(menu_radius) MET(menu_item_height)
+    MET(menu_radius) MET(menu_padding_x) MET(menu_padding_y) MET(menu_item_height)
     MET(snackbar_radius) MET(snackbar_height_1) MET(snackbar_height_2)
     MET(search_bar_height)
     MET(nav_bar_height) MET(nav_rail_width) MET(nav_indicator_width) MET(nav_indicator_height)

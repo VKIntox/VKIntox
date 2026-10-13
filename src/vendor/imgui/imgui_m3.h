@@ -196,6 +196,8 @@ struct ImGuiM3Metrics
     float       dialog_radius = 28.0f;
     float       dialog_min_width = 280.0f;
     float       menu_radius = 4.0f;
+    float       menu_padding_x = 12.0f;
+    float       menu_padding_y = 8.0f;
     float       menu_item_height = 48.0f;
     float       snackbar_radius = 4.0f;
     float       snackbar_height_1 = 48.0f;
