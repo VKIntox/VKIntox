@@ -2520,7 +2520,7 @@ void ImGui::M3StatusChip(const char* label, ImGuiM3Role role)
 
 // Connected button group.
 
-bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons)
+bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons, bool allow_overflow)
 {
     ImGuiWindow* window = GetCurrentWindow();
     if (window->SkipItems || count <= 0 || !labels || !selected || *selected < 0 || *selected >= count)
@@ -2560,16 +2560,17 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
         for (int i = 0; i < count; i++)
             widths[i] += extra;
     }
-    else
+    else if (!allow_overflow)
     {
         const float scale = avail / total;
         for (int i = 0; i < count; i++)
             widths[i] *= scale;
     }
+    // allow_overflow keeps the natural widths; the caller scrolls the row.
 
     // scale the icon with the (possibly shrunken) segment, quantized so the dynamic
     // font atlas only bakes a couple of sizes.
-    const float fit = (total <= avail) ? 1.0f : avail / total;
+    const float fit = (total <= avail || allow_overflow) ? 1.0f : avail / total;
     const float icon_fit = ImMax(0.5f, ImFloor(fit * 4.0f + 0.5f) / 4.0f);
     const float icon_px_draw = icon_px * icon_fit;
     const float icon_gap_draw = icon_gap * icon_fit;

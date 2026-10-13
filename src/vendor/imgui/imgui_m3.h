@@ -534,7 +534,7 @@ namespace ImGui
     IMGUI_API void M3StatusChip(const char* label, ImGuiM3Role role);
     // segments sharing one shape with 2dp padding; `icons` is one codepoint per
     // segment.
-    IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL);
+    IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL, bool allow_overflow = false);
     // full theme editor: generation knobs, every token, and the file path with
     // reload status.
     IMGUI_API void M3ThemeEditor();
