@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 using namespace ImGuiM3Palette;
 
@@ -377,19 +378,26 @@ static void testVariants()
     const std::string path = dir + "/variants.colors";
 
     const char* variants[] = {"tonal-spot", "expressive", "vibrant", "neutral", "monochrome"};
-    ImVec4 previous_primary;
+    // the dark primary sits at tone 90 under the default medium contrast, where
+    // sRGB is too gamut-limited to separate the variants. compare the accent
+    // roles so the check reflects the variant, not the sampled tone.
+    std::vector<ImVec4> previous;
     int distinct = 0;
     for (const char* v : variants)
     {
         writeFile(path, std::string("mode = dark\nsource = #6750A4\nvariant = ") + v + "\n");
         ImGuiM3SetThemeFile(path.c_str());
         expect(strcmp(ImGuiM3VariantName(ImGuiM3GetVariant()), v) == 0, "variant round-trips through the file");
-        const ImVec4 primary = ImGuiM3Color(ImGuiM3Role_Primary);
-        if (v != variants[0] && (primary.x != previous_primary.x || primary.y != previous_primary.y || primary.z != previous_primary.z))
+        const std::vector<ImVec4> scheme = {
+            ImGuiM3Color(ImGuiM3Role_Primary),
+            ImGuiM3Color(ImGuiM3Role_Secondary),
+            ImGuiM3Color(ImGuiM3Role_Tertiary),
+        };
+        if (!previous.empty() && scheme != previous)
             distinct++;
-        previous_primary = primary;
+        previous = scheme;
     }
-    expect(distinct >= 3, "variants produce visibly different primaries");
+    expect(distinct >= 3, "variants produce different schemes");
 
     // Monochrome is the acid test: every accent must be achromatic.
     writeFile(path, "mode = dark\nsource = #6750A4\nvariant = monochrome\n");
