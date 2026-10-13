@@ -8,6 +8,7 @@
 #include "overlay/ui_theme.hh"
 #include "overlay/ui_icons.hh"
 #include "overlay/ui_dialog.hh"
+#include "overlay/ui_menu.hh"
 #include "util.hh"
 
 #include <algorithm>
@@ -80,14 +81,14 @@ namespace VKIntox
                     ImGui::SetTooltip("Modified from default");
             }
 
-            if (ImGui::BeginPopupContextItem("##preproc_reset"))
+            if (UI::BeginM3MenuContext("##preproc_reset"))
             {
-                if (ImGui::MenuItem("Reset to default"))
+                if (UI::M3MenuItem("Reset to default"))
                 {
                     registry->setPreprocessorDefValue(effectName, def.name, def.defaultValue);
                     changed = true;
                 }
-                ImGui::EndPopup();
+                UI::EndM3Menu();
             }
 
             ImGui::PopID();
@@ -179,24 +180,18 @@ namespace VKIntox
             ImGui::SameLine();
             ImGui::SetNextItemWidth(150);
             const char* shaderLabel = activeShaderProfileName.empty() ? "None" : activeShaderProfileName.c_str();
-            // cap the dropdown height so a long preset list scrolls instead of
-            // running off the bottom of the overlay.
-            ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
-                                                ImVec2(FLT_MAX, 280.0f * ImGuiM3GetMetrics().density));
-            if (ImGui::BeginCombo("##shaderprofile", shaderLabel))
+            if (UI::BeginM3Combo("##shaderprofile", shaderLabel))
             {
                 for (const auto& profile : shaderProfiles)
                 {
                     const bool selected = profile == activeShaderProfileName;
-                    if (ImGui::Selectable(profile.c_str(), selected) && !selected)
+                    if (UI::M3MenuItem(profile.c_str(), selected) && !selected)
                     {
                         if (!switchShaderProfile(profile))
                             pushToast(LogLevel::Error, "Could not save the active shader profile.");
                     }
-                    if (selected)
-                        ImGui::SetItemDefaultFocus();
                 }
-                ImGui::EndCombo();
+                UI::EndM3Combo();
             }
             // the profile actions sit flush right, like the effects row below
             const ImGuiM3Metrics& profileMetrics = ImGuiM3GetMetrics();
@@ -554,10 +549,10 @@ namespace VKIntox
                 ImGui::PopStyleColor();
 
             // Right-click context menu
-            if (ImGui::BeginPopupContextItem("effect_context"))
+            if (UI::BeginM3MenuContext("effect_context"))
             {
                 // Toggle ON/OFF
-                if (ImGui::MenuItem(effectEnabled ? "Disable" : "Enable"))
+                if (UI::M3MenuItem(effectEnabled ? "Disable" : "Enable"))
                 {
                     if (effectRegistry)
                     {
@@ -569,7 +564,7 @@ namespace VKIntox
                 }
 
                 // Reset to defaults
-                if (ImGui::MenuItem("Reset to Defaults"))
+                if (UI::M3MenuItem("Reset to Defaults"))
                 {
                     for (auto* param : effectRegistry->getParametersForEffect(effectName))
                     {
@@ -584,7 +579,7 @@ namespace VKIntox
                 ImGui::Separator();
 
                 // Insert effects here
-                if (ImGui::MenuItem("Insert effects here..."))
+                if (UI::M3MenuItem("Insert effects here..."))
                 {
                     auto baseIt = std::find(selectedEffects.begin(), selectedEffects.end(), effectName);
                     insertPosition = (baseIt != selectedEffects.end())
@@ -598,12 +593,12 @@ namespace VKIntox
                 }
 
                 // Remove effect
-                if (ImGui::MenuItem("Remove"))
+                if (UI::M3MenuItem("Remove"))
                 {
                     auto removeIt = std::find(selectedEffects.begin(), selectedEffects.end(), effectName);
                     if (removeIt == selectedEffects.end())
                     {
-                        ImGui::EndPopup();
+                        UI::EndM3Menu();
                         if (treeOpen) ImGui::TreePop();
                         ImGui::PopID();
                         break;
@@ -616,14 +611,14 @@ namespace VKIntox
                     lastChangeTime = std::chrono::steady_clock::now();
                     applyRequested = true;
                     profileDirty = true;
-                    ImGui::EndPopup();
+                    UI::EndM3Menu();
                     // CRITICAL: Must TreePop before break if tree was opened, else assertion failure
                     if (treeOpen) ImGui::TreePop();
                     ImGui::PopID();
                     break;  // Iterator invalidated — exit loop safely
                 }
 
-                ImGui::EndPopup();
+                UI::EndM3Menu();
             }
 
             // Row drop target for reordering

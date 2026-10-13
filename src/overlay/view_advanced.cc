@@ -3,6 +3,7 @@
 #include "logger.hh"
 #include "overlay/ui_theme.hh"
 #include "overlay/ui_icons.hh"
+#include "overlay/ui_menu.hh"
 
 #include <algorithm>
 #include <sstream>
@@ -405,10 +406,18 @@ namespace VKIntox
         ImGui::Text("Encoding");
         ImGui::SameLine(150.0f);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::Combo("##depthSourceChannelCombo", &dsc, depthModeNames, IM_ARRAYSIZE(depthModeNames)))
+        if (UI::BeginM3Combo("##depthSourceChannelCombo", depthModeNames[dsc]))
         {
-            settingsManager.setDepthSourceChannel(dsc);
-            markSettingsDirty();
+            for (int i = 0; i < IM_ARRAYSIZE(depthModeNames); ++i)
+            {
+                if (UI::M3MenuItem(depthModeNames[i], i == dsc))
+                {
+                    dsc = i;
+                    settingsManager.setDepthSourceChannel(dsc);
+                    markSettingsDirty();
+                }
+            }
+            UI::EndM3Combo();
         }
         if (ImGui::IsItemHovered())
         {

@@ -2,6 +2,7 @@
 #include "../../../vendor/imgui/imgui.h"
 #include "../../../vendor/imgui/imgui_internal.h"
 #include "../../ui_dialog.hh"
+#include "../../ui_menu.hh"
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -54,9 +55,9 @@ namespace VKIntox
             }
 
             // === Right-click context menu ===
-            if (ImGui::BeginPopupContextItem(contextId))
+            if (UI::BeginM3MenuContext(contextId))
             {
-                if (ImGui::MenuItem("Type in manually..."))
+                if (UI::M3MenuItem("Type in manually..."))
                 {
                     activeModalParam = paramAddr;
                     // Format current values into buffer based on component count
@@ -65,12 +66,12 @@ namespace VKIntox
                     focusCustomValueInput = true;
                     modalOpenRequested = true;
                 }
-                if (ImGui::MenuItem("Reset to default"))
+                if (UI::M3MenuItem("Reset to default"))
                 {
                     resetToDefault(param);
                     changed = true;
                 }
-                ImGui::EndPopup();
+                UI::EndM3Menu();
             }
 
             bool popupOpenedThisFrame = false;

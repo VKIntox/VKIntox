@@ -2,6 +2,7 @@
 #include "../../../vendor/imgui/imgui.h"
 #include "../../../vendor/imgui/imgui_internal.h"
 #include "../../ui_dialog.hh"
+#include "../../ui_menu.hh"
 #include <cstring>
 #include <cstdio>
 #include <string>
@@ -31,8 +32,20 @@ namespace VKIntox
             if (!p.items.empty())
             {
                 // Combo box mode for enumerated values
-                if (ImGui::Combo(p.label.c_str(), &p.value, p.getItemsBuffer()))
-                    changed = true;
+                const int itemCount = static_cast<int>(p.items.size());
+                const int previewIdx = (p.value >= 0 && p.value < itemCount) ? p.value : 0;
+                if (UI::BeginM3Combo(p.label.c_str(), p.items[previewIdx].c_str()))
+                {
+                    for (int i = 0; i < itemCount; ++i)
+                    {
+                        if (UI::M3MenuItem(p.items[i].c_str(), i == p.value))
+                        {
+                            p.value = i;
+                            changed = true;
+                        }
+                    }
+                    UI::EndM3Combo();
+                }
             }
             else
             {
@@ -50,12 +63,12 @@ namespace VKIntox
             }
 
             // === Right-click context menu ===
-            if (ImGui::BeginPopupContextItem(contextId))
+            if (UI::BeginM3MenuContext(contextId))
             {
                 if (!p.items.empty())
                 {
                     // Combo mode: only show reset option
-                    if (ImGui::MenuItem("Reset to default"))
+                    if (UI::M3MenuItem("Reset to default"))
                     {
                         resetToDefault(param);
                         changed = true;
@@ -64,7 +77,7 @@ namespace VKIntox
                 else
                 {
                     // Slider mode: show custom value AND reset
-                    if (ImGui::MenuItem("Type in manually..."))
+                    if (UI::M3MenuItem("Type in manually..."))
                     {
                         activeModalParam = paramAddr;
                         snprintf(customValueBuf, sizeof(customValueBuf), "%d", p.value);
@@ -72,13 +85,13 @@ namespace VKIntox
                         focusCustomValueInput = true;
                     modalOpenRequested = true;
                     }
-                    if (ImGui::MenuItem("Reset to default"))
+                    if (UI::M3MenuItem("Reset to default"))
                     {
                         resetToDefault(param);
                         changed = true;
                     }
                 }
-                ImGui::EndPopup();
+                UI::EndM3Menu();
             }
 
             bool popupOpenedThisFrame = false;
