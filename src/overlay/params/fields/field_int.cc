@@ -64,7 +64,7 @@ namespace VKIntox
                 else
                 {
                     // Slider mode: show custom value AND reset
-                    if (ImGui::MenuItem("Enter Custom Value..."))
+                    if (ImGui::MenuItem("Type in manually..."))
                     {
                         activeModalParam = paramAddr;
                         snprintf(customValueBuf, sizeof(customValueBuf), "%d", p.value);

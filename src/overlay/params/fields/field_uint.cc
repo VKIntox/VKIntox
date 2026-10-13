@@ -42,7 +42,7 @@ namespace VKIntox
             // === Right-click context menu ===
             if (ImGui::BeginPopupContextItem(contextId))
             {
-                if (ImGui::MenuItem("Enter Custom Value..."))
+                if (ImGui::MenuItem("Type in manually..."))
                 {
                     activeModalParam = paramAddr;
                     snprintf(customValueBuf, sizeof(customValueBuf), "%u", p.value);

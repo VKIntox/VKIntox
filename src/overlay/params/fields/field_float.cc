@@ -39,7 +39,7 @@ namespace VKIntox
             // === Right-click context menu ===
             if (ImGui::BeginPopupContextItem(contextId))
             {
-                if (ImGui::MenuItem("Enter Custom Value..."))
+                if (ImGui::MenuItem("Type in manually..."))
                 {
                     // Mark modal as pending for THIS parameter, initialize buffer
                     activeModalParam = paramAddr;
