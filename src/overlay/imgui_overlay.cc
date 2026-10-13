@@ -1999,9 +1999,9 @@ namespace VKIntox
         }
 
         // Subtle elevation under the shell, on the background list so it sits
-        // behind the translucent surface. Like the dialogs, it only shows once
-        // the motion has settled.
-        if (shellAlpha >= 1.0f)
+        // behind the translucent surface. PackU32 scales the shadow by the
+        // shell alpha pushed above, so it fades in and out with the surface
+        // instead of popping in once the motion stops.
         {
             const float shellR = ImGui::GetStyle().WindowRounding;
             ImGuiM3DrawElevation(ImGui::GetBackgroundDrawList(),
@@ -2066,8 +2066,11 @@ namespace VKIntox
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         ImGui::PushClipRect(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y), false);
 
-        // PackU32 already scales M3 colors by the style alpha, so only the raw
-        // non-M3 colors (the icon tint and the surface circle) need fading here.
+        // The bar mixes raw draw-list colors with M3 colors (which PackU32 already
+        // scales by the style alpha). Pin the style alpha to 1 here and fade every
+        // mark by hand, so the logo, wordmark and close button all fade together
+        // and can't double-dim against the shell.
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
         auto fadeU32 = [&](ImU32 c) -> ImU32
         {
             const float a = ((c >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f * shellAlpha;
@@ -2094,7 +2097,7 @@ namespace VKIntox
             const ImVec2 textSize = ImGui::CalcTextSize(brand);
             drawList->AddText(ImVec2(windowPos.x + (windowSize.x - textSize.x) * 0.5f,
                                      windowPos.y + (titleBarHeight - textSize.y) * 0.5f),
-                              ImGuiM3ColorU32(ImGuiM3Role_OnSurface), brand);
+                              fadeU32(ImGuiM3ColorU32(ImGuiM3Role_OnSurface)), brand);
             if (bold)
                 ImGui::PopFont();
         }
@@ -2108,11 +2111,11 @@ namespace VKIntox
         {
             const ImGuiM3State layer = ImGui::IsMouseDown(ImGuiMouseButton_Left) ? ImGuiM3State_Pressed : ImGuiM3State_Hovered;
             drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
-                                      ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, layer));
+                                      fadeU32(ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, layer)));
             ImGui::SetTooltip("Close overlay");
         }
-        const ImU32 crossColor = buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
-                                               : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant);
+        const ImU32 crossColor = fadeU32(buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
+                                                       : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
         // the `close` glyph is already rounded and evenly weighted.
         static const char kCloseGlyph[] = "\xEE\x85\x8C";
         ImFont* closeIcon = ImGuiM3IconFont();
@@ -2130,6 +2133,7 @@ namespace VKIntox
             drawList->AddLine(ImVec2(buttonCenter.x + crossInset, buttonCenter.y - crossInset),
                               ImVec2(buttonCenter.x - crossInset, buttonCenter.y + crossInset), crossColor, crossThickness);
         }
+        ImGui::PopStyleVar();  // title bar alpha pin
         ImGui::PopClipRect();
 
         // Clamp position after the window is created (prevents dragging offscreen).
