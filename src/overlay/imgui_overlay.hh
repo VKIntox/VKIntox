@@ -356,6 +356,14 @@ namespace VKIntox
         std::chrono::steady_clock::time_point lastChangeTime;
         bool visible = false;
         bool initialized = false;
+        // Shell appear/disappear. Mirrors the dialog motion exactly: same
+        // 0.28s clock, same rise, same bezier, run backwards on hide.
+        float  shellAlpha = 1.0f;
+        double shellAnimStart = -1000.0;
+        bool   shellAnimTarget = false;
+        bool   shellBaseValid = false;
+        float  shellBaseX = 0.0f;
+        float  shellBaseY = 0.0f;
         bool backendInitialized = false;
         bool resetLayoutRequested = false;  // When true, reset window position/size next frame
         bool titleRightDragging = false;

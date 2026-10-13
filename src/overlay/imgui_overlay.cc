@@ -63,6 +63,13 @@ namespace VKIntox
         constexpr uint32_t kBlurDownsample = 2;
         constexpr float    kBlurSigma = 2.0f;
 
+        // Shell appear/disappear. Same clock, rise and bezier as the M3 dialogs
+        // so the overlay opens and closes the way every popup does.
+        constexpr float kShellAnimSeconds = 0.28f;
+        constexpr float kShellAnimDropDp  = 100.0f;
+        constexpr float kShellBezX1 = 0.05f, kShellBezY1 = 0.90f;
+        constexpr float kShellBezX2 = 0.10f, kShellBezY2 = 1.06f;
+
         // Matches the push_constant block in overlay_blur.frag.glsl exactly.
         struct BlurPushConstants
         {
@@ -315,6 +322,9 @@ namespace VKIntox
         // Restore UI preferences from persistent state
         if (pPersistentState)
             visible = pPersistentState->visible;
+        // start settled: no animation for the state the overlay boots into
+        shellAnimTarget = visible;
+        shellAlpha = visible ? 1.0f : 0.0f;
         setInputBlocked(visible);
 
         initialized = true;
@@ -1690,10 +1700,33 @@ namespace VKIntox
 
     VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height)
     {
+        // Shell appear/disappear. The clock lives on steady_clock so it runs even
+        // on frames where ImGui hasn't ticked yet. Same curve and rise as the
+        // dialogs, reversed on hide, so the overlay opens and closes like a popup.
+        const double shellNow = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (shellAnimTarget != visible)
+        {
+            shellAnimTarget = visible;
+            shellAnimStart = shellNow;
+            shellBaseValid = false;
+        }
+        const float shellClock = std::clamp(
+            static_cast<float>((shellNow - shellAnimStart) / kShellAnimSeconds), 0.0f, 1.0f);
+        const float shellEase = UI::CubicBezierEase(shellClock, kShellBezX1, kShellBezY1, kShellBezX2, kShellBezY2);
+        shellAlpha = visible ? shellEase : 1.0f - shellEase;
+        const bool  shellActive = visible || shellAlpha > 0.001f || shellBaseValid;
+        const bool  shellAnimating = shellClock < 1.0f;
+        // appears by rising from below, disappears by sinking back down: the
+        // reverse of the dialog's entrance.
+        const float shellDrop = kShellAnimDropDp * ImGuiM3GetMetrics().density;
+        const float shellOffsetY = shellDrop * (visible ? (1.0f - shellEase) : shellEase);
+
         // Render even when the main overlay is hidden if there are pending
-        // toast notifications — fatal errors must stay visible to the user.
+        // toast notifications — fatal errors must stay visible to the user. The
+        // main shell keeps rendering through its disappear animation.
         const bool hasToasts = hasPendingToasts();
-        if (!backendInitialized || (!visible && !hasToasts))
+        if (!backendInitialized || (!shellActive && !hasToasts))
         {
             // drop last frame's hitboxes, or they keep swallowing input.
             frameInputRects.clear();
@@ -1706,7 +1739,7 @@ namespace VKIntox
         // hitboxes are rebuilt below; the gate is only on while the overlay (or
         // a toast) is actually on screen.
         frameInputRects.clear();
-        setInputBlocked((visible || hasToasts) && settingsManager.getOverlayBlockInput());
+        setInputBlocked((shellActive || hasToasts) && settingsManager.getOverlayBlockInput());
 
         // Store current resolution for VRAM estimates in settings
         currentWidth = width;
@@ -1721,7 +1754,7 @@ namespace VKIntox
         const float backgroundOpacity = std::clamp(blurSettings.background_opacity, 0.0f, 1.0f);
         const bool  blurRequested = blurSettings.blur && backgroundObject.BackgroundBlur && backgroundOpacity <= 0.99f;
         bool        blurActive    = false;
-        if (visible && blurRequested)
+        if (shellActive && blurRequested)
         {
             ensureBlurResources(width, height);
             blurActive = blurReady && imageIndex < blurResources.size();
@@ -1864,8 +1897,9 @@ namespace VKIntox
         ImGui::NewFrame();
 
         // When the overlay is hidden but toasts are showing, skip the main
-        // window — toasts are standalone floating windows.
-        if (!visible)
+        // window — toasts are standalone floating windows. During the disappear
+        // animation the shell is still drawn.
+        if (!visible && !shellActive)
         {
             // toasts render on their own so fatal errors stay visible
             renderToasts();
@@ -1929,16 +1963,57 @@ namespace VKIntox
         ImGui::SetNextWindowSizeConstraints(minSize, maxSize, overlayTitleHeightConstraint);
         // The shell surface is translucent by BackgroundOpacity over the game
         // frame (and over the blurred backdrop when blur is active). The content
-        // child stays transparent so the tint is applied exactly once.
-        ImGui::SetNextWindowBgAlpha(backgroundOpacity);
+        // child stays transparent so the tint is applied exactly once. The whole
+        // shell fades with the appear/disappear clock.
+        ImGui::SetNextWindowBgAlpha(backgroundOpacity * shellAlpha);
         // "##..." renders as an empty native title: the bar keeps its drag
         // rect while the brand row below owns the pixels.
         ImGui::Begin("##vkintox_overlay", nullptr,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
 
-        const ImVec2 windowPos = ImGui::GetWindowPos();
+        // Fade every widget the shell draws. Raw draw-list marks below get the
+        // alpha applied by hand.
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, shellAlpha);
+
+        ImVec2 windowPos = ImGui::GetWindowPos();
         const ImVec2 windowSize = ImGui::GetWindowSize();
+
+        // Subtle elevation under the shell, on the background list so it sits
+        // behind the translucent surface. Like the dialogs, it only shows once
+        // the motion has settled.
+        if (shellAlpha >= 1.0f)
+        {
+            const float shellR = ImGui::GetStyle().WindowRounding;
+            ImGuiM3DrawElevation(ImGui::GetBackgroundDrawList(),
+                                 ImRect(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y)),
+                                 ImGuiM3ShapeRounding{ shellR, shellR, shellR, shellR }, 3);
+        }
+
+        // Slide: the shell rises the same 100dp a dialog does, then settles. Once
+        // the clock is done the window is parked back at its true position so a
+        // later show starts from the same place.
+        if (shellAnimating)
+        {
+            if (!shellBaseValid)
+            {
+                shellBaseX = windowPos.x;
+                shellBaseY = windowPos.y;
+                shellBaseValid = true;
+            }
+            const ImVec2 animPos(shellBaseX, shellBaseY + shellOffsetY);
+            if (windowPos.x != animPos.x || windowPos.y != animPos.y)
+            {
+                ImGui::SetWindowPos(animPos);
+                windowPos = animPos;
+            }
+        }
+        else if (shellBaseValid)
+        {
+            ImGui::SetWindowPos(ImVec2(shellBaseX, shellBaseY));
+            windowPos = ImVec2(shellBaseX, shellBaseY);
+            shellBaseValid = false;
+        }
 
         // Draw the blurred backdrop behind every overlay surface. The background
         // draw list is rendered before any window, so the shell/nav/child surfaces
@@ -1952,11 +2027,14 @@ namespace VKIntox
             const ImVec2 uv0(windowPos.x * invW, windowPos.y * invH);
             const ImVec2 uv1((windowPos.x + windowSize.x) * invW, (windowPos.y + windowSize.y) * invH);
 
+            // The backdrop rides the same clock as the shell, so it fades in and
+            // out with the surface instead of popping in fully formed.
+            const int backdropAlpha = static_cast<int>(255.0f * std::clamp(shellAlpha, 0.0f, 1.0f));
             ImDrawList* backgroundDrawList = ImGui::GetBackgroundDrawList();
             backgroundDrawList->AddImageRounded(
                 ImTextureRef(reinterpret_cast<ImTextureID>(blurResources[imageIndex].imguiTexture)),
                 windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y),
-                uv0, uv1, IM_COL32_WHITE, ImGui::GetStyle().WindowRounding);
+                uv0, uv1, IM_COL32(255, 255, 255, backdropAlpha), ImGui::GetStyle().WindowRounding);
         }
         const float titleBarHeight = ImGui::GetCurrentWindowRead()->TitleBarHeight;
         const ImGuiM3Metrics& m3metrics = ImGuiM3GetMetrics();
@@ -1994,6 +2072,13 @@ namespace VKIntox
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         ImGui::PushClipRect(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y), false);
 
+        // Raw marks below bypass ImGuiStyleVar_Alpha, so fade their own alpha.
+        auto fadeU32 = [&](ImU32 c) -> ImU32
+        {
+            const float a = ((c >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f * shellAlpha;
+            return (c & ~IM_COL32_A_MASK) | (static_cast<ImU32>(a * 255.0f + 0.5f) << IM_COL32_A_SHIFT);
+        };
+
         // brand row: icon pinned to the leading edge, wordmark centred on the
         // bar independently of it.
         {
@@ -2003,7 +2088,8 @@ namespace VKIntox
                 const float iconSize = ImTrunc(titleBarHeight * 0.62f);
                 const ImVec2 iconMin(windowPos.x + leftPad, windowPos.y + (titleBarHeight - iconSize) * 0.5f);
                 drawList->AddImage(ImTextureRef(reinterpret_cast<ImTextureID>(titleIconDescriptor)),
-                                   iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize));
+                                   iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize),
+                                   ImVec2(0, 0), ImVec2(1, 1), fadeU32(IM_COL32_WHITE));
             }
             ImFont* bold = ImGuiM3FontBold();
             const float titleSize = ImGui::GetFontSize() * 1.2f;
@@ -2013,7 +2099,7 @@ namespace VKIntox
             const ImVec2 textSize = ImGui::CalcTextSize(brand);
             drawList->AddText(ImVec2(windowPos.x + (windowSize.x - textSize.x) * 0.5f,
                                      windowPos.y + (titleBarHeight - textSize.y) * 0.5f),
-                              ImGuiM3ColorU32(ImGuiM3Role_OnSurface), brand);
+                              fadeU32(ImGuiM3ColorU32(ImGuiM3Role_OnSurface)), brand);
             if (bold)
                 ImGui::PopFont();
         }
@@ -2022,16 +2108,16 @@ namespace VKIntox
         surfaceColor.w = 1.0f;
         // mask the moving title behind the button, then hover/press on top.
         drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
-                                  ImGui::ColorConvertFloat4ToU32(surfaceColor));
+                                  fadeU32(ImGui::ColorConvertFloat4ToU32(surfaceColor)));
         if (buttonHovered)
         {
             const ImGuiM3State layer = ImGui::IsMouseDown(ImGuiMouseButton_Left) ? ImGuiM3State_Pressed : ImGuiM3State_Hovered;
             drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
-                                      ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, layer));
+                                      fadeU32(ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, layer)));
             ImGui::SetTooltip("Close overlay");
         }
-        const ImU32 crossColor = buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
-                                               : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant);
+        const ImU32 crossColor = fadeU32(buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
+                                                       : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
         // the `close` glyph is already rounded and evenly weighted.
         static const char kCloseGlyph[] = "\xEE\x85\x8C";
         ImFont* closeIcon = ImGuiM3IconFont();
@@ -2052,17 +2138,21 @@ namespace VKIntox
         ImGui::PopClipRect();
 
         // Clamp position after the window is created (prevents dragging offscreen).
-        // the keep-on-screen margin scales with the game window too.
+        // the keep-on-screen margin scales with the game window too. Skipped while
+        // animating so it can't fight the rise.
         ImVec2 winPos = ImGui::GetWindowPos();
         ImVec2 winSize = ImGui::GetWindowSize();
         const float keep = ImMin(avail.x, avail.y) * 0.05f;
         bool clamped = false;
-        if (winPos.x + winSize.x < screenMin.x + keep) { winPos.x = screenMin.x; clamped = true; }
-        if (winPos.y < screenMin.y)                    { winPos.y = screenMin.y; clamped = true; }
-        if (winPos.x > screenMax.x - keep)              { winPos.x = screenMax.x - keep; clamped = true; }
-        if (winPos.y > screenMax.y - keep)              { winPos.y = screenMax.y - keep; clamped = true; }
-        if (clamped)
-            ImGui::SetWindowPos(winPos);
+        if (!shellAnimating)
+        {
+            if (winPos.x + winSize.x < screenMin.x + keep) { winPos.x = screenMin.x; clamped = true; }
+            if (winPos.y < screenMin.y)                    { winPos.y = screenMin.y; clamped = true; }
+            if (winPos.x > screenMax.x - keep)              { winPos.x = screenMax.x - keep; clamped = true; }
+            if (winPos.y > screenMax.y - keep)              { winPos.y = screenMax.y - keep; clamped = true; }
+            if (clamped)
+                ImGui::SetWindowPos(winPos);
+        }
         frameInputRects.push_back(InputRect{winPos.x, winPos.y, winSize.x, winSize.y});
 
         // Process shader test (one per frame) regardless of active tab
@@ -2230,6 +2320,7 @@ namespace VKIntox
         ImGui::PopClipRect();
         ImGui::SetCursorScreenPos(viewPos);
 
+        ImGui::PopStyleVar();  // shell alpha
         ImGui::End();  // VKIntox Overlay
 
         if (closeRequested)
