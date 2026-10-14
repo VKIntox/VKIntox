@@ -25,6 +25,8 @@ namespace VKIntox::Icon
     constexpr ImWchar Tune           = 0xE429;  // Advanced
     constexpr ImWchar MonitorHeart   = 0xEAA2;  // Diagnostics
     constexpr ImWchar BugReport      = 0xE868;  // Debug
+    constexpr ImWchar WandShine      = 0xF31F;  // Effects (wand with sparkle)
+    constexpr ImWchar Function       = 0xF866;  // Shaders (fx)
 
     // Actions.
     constexpr ImWchar Add            = 0xE145;
@@ -76,6 +78,7 @@ namespace VKIntox::Icon
     constexpr ImWchar MotionBlur     = 0xF0D0;  // motion blur
     constexpr ImWchar Shadow         = 0xE9DF;  // ambient occlusion
     constexpr ImWchar Memory         = 0xE322;
+    constexpr ImWchar Keyboard       = 0xE312;
     constexpr ImWchar Terminal       = 0xEB8E;
     constexpr ImWchar Code           = 0xE86F;
     constexpr ImWchar Movie          = 0xE02C;
@@ -97,6 +100,8 @@ namespace VKIntox::Icon
     constexpr const char* TuneUtf8          = "\xEE\x90\xA9";
     constexpr const char* MonitorHeartUtf8  = "\xEE\xAA\xA2";
     constexpr const char* BugReportUtf8     = "\xEE\xA1\xA8";
+    constexpr const char* WandShineUtf8     = "\xEF\x8C\x9F";
+    constexpr const char* FunctionUtf8      = "\xEF\xA1\xA6";
     constexpr const char* AddUtf8           = "\xEE\x85\x85";
     constexpr const char* EditUtf8          = "\xEE\x8F\x89";
     constexpr const char* CloseUtf8         = "\xEE\x85\x8C";
@@ -143,6 +148,7 @@ namespace VKIntox::Icon
     constexpr const char* MotionBlurUtf8    = "\xEF\x83\x90";
     constexpr const char* ShadowUtf8        = "\xEE\xA7\x9F";
     constexpr const char* MemoryUtf8        = "\xEE\x8C\xA2";
+    constexpr const char* KeyboardUtf8      = "\xEE\x8C\x92";
     constexpr const char* TerminalUtf8      = "\xEE\xAE\x8E";
     constexpr const char* CodeUtf8          = "\xEE\xA1\xAF";
     constexpr const char* MovieUtf8         = "\xEE\x80\xAC";
@@ -161,13 +167,13 @@ namespace VKIntox::Icon
     inline const ImWchar* GlyphRanges()
     {
         static const ImWchar ranges[] = {
-            AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport,
+            AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport, WandShine, Function,
             Add, Edit, Close, Search, Delete, ExpandMore, ArrowDropDown, KeyboardArrowDown, ChevronRight, ChevronLeft, Refresh, Save,
             FolderOpen, Upload, Check, Minus, CheckCircle, Cancel, Warning, Error, Info,
             Visibility, VisibilityOff, Power, PlayArrow,
             Speed, Bolt, Joystick, Science, Build, Extension, Brush, Image, Layers, Texture,
             BlurOn, Grain, Colorize, Contrast, Straighten, Gradient, DiamondShine,
-            LensBlur, Flare, MotionBlur, Shadow, Memory, Terminal, Code,
+            LensBlur, Flare, MotionBlur, Shadow, Memory, Terminal, Code, Keyboard,
             Movie, VideoSettings, List, GridView, DragIndicator, MoreVert, FilterAlt,
             Star, DarkMode, LightMode,
             0,

@@ -36,7 +36,6 @@ overlay_src = [
     'overlay/view_add_effects.cc',
     'overlay/view_advanced.cc',
     'overlay/view_configs.cc',
-    'overlay/view_debug.cc',
     'overlay/view_diagnostics.cc',
     'overlay/view_about.cc',
     'overlay/view_settings.cc',
@@ -263,6 +262,14 @@ m3_theme_tests = executable('vkintox-m3-theme-tests',
     'vendor/imgui/imgui_m3.cc',
     include_directories : [imgui_inc])
 test('m3 theme', m3_theme_tests)
+
+# The variable-font extension to stb_truetype is pure but invisible to CI: a bad
+# download or a gvar/HVAR regression would only show as wrong-looking text. This
+# links the header directly and checks the axes, outlines and advances.
+variable_font_tests = executable('vkintox-variable-font-tests',
+    'tests/variable_font_test.cc',
+    include_directories : [imgui_inc])
+test('variable font', variable_font_tests)
 
 # The deferred destroy queue's release order is load-bearing for driver
 # stability and impossible to observe without a real GPU, so it is tested

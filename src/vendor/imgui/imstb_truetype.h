@@ -727,6 +727,14 @@ struct stbtt_fontinfo
    int index_map;                     // a cmap mapping for our chosen character encoding
    int indexToLocFormat;              // format needed to map from glyph index to glyph
 
+   // OpenType variations (0 / unset when the face is static).
+   int fvar, gvar, avar, hvar, mvar;
+   int hasVariations;
+   stbtt_uint16 numAxes;
+   stbtt_uint32 axisTag[16];
+   float        axisMin[16], axisDef[16], axisMax[16];
+   float        axisNorm[16];         // normalized coordinate, avar-mapped, in [-1,1]
+
    stbtt__buf cff;                    // cff font data
    stbtt__buf charstrings;            // the charstring index
    stbtt__buf gsubrs;                 // global charstring subroutines index
@@ -860,6 +868,15 @@ STBTT_DEF int stbtt_GetGlyphShape(const stbtt_fontinfo *info, int glyph_index, s
 // its x,y, using cx,cy as the bezier control point.
 
 STBTT_DEF void stbtt_FreeShape(const stbtt_fontinfo *info, stbtt_vertex *vertices);
+// OpenType variable fonts (fvar/avar/gvar/HVAR/MVAR). Zero axes means a static face.
+// Axis values are in design units (e.g. wght 400, ROND 100).
+STBTT_DEF int  stbtt_GetVariationAxisCount(const stbtt_fontinfo *info);
+STBTT_DEF stbtt_uint32 stbtt_GetVariationAxisTag(const stbtt_fontinfo *info, int axis);
+STBTT_DEF float stbtt_GetVariationAxisMin(const stbtt_fontinfo *info, int axis);
+STBTT_DEF float stbtt_GetVariationAxisDefault(const stbtt_fontinfo *info, int axis);
+STBTT_DEF float stbtt_GetVariationAxisMax(const stbtt_fontinfo *info, int axis);
+// tags/values are matched by tag; any axis not listed snaps back to its default.
+STBTT_DEF void stbtt_SetVariationCoords(stbtt_fontinfo *info, const stbtt_uint32 *tags, const float *values, int count);
 // frees the data allocated above
 
 STBTT_DEF unsigned char *stbtt_FindSVGDoc(const stbtt_fontinfo *info, int gl);
@@ -1385,6 +1402,473 @@ static int stbtt__get_svg(stbtt_fontinfo *info)
    return info->svg;
 }
 
+//////////////////////////////////////////////////////////////////////////////
+//
+// Variable fonts: fvar / avar / gvar / HVAR / MVAR.
+//
+// stb_truetype historically rasterises the default instance of a variable
+// font because it ignores gvar. This block parses the variation tables and
+// applies deltas for the coordinates set via stbtt_SetVariationCoords(), so a
+// single variable file yields real weights, optical sizes, widths, optical
+// rounding (ROND), slant, etc.
+
+#define STBTT_MAX_AXES 16
+
+static float stbtt__f2dot14(const stbtt_uint8 *p) { return (float)ttSHORT((stbtt_uint8 *)p) / 16384.0f; }
+static stbtt_int32 stbtt__s32(const stbtt_uint8 *p) { return ttLONG((stbtt_uint8 *)p); }
+static stbtt_uint32 stbtt__u32(const stbtt_uint8 *p) { return ttULONG((stbtt_uint8 *)p); }
+
+// avar remaps a normalized coordinate through a per-axis piecewise-linear map.
+static float stbtt__AvarMap(const stbtt_fontinfo *info, int axis, float n)
+{
+   if (!info->avar)
+      return n;
+   stbtt_uint8 *a = info->data + info->avar;
+   int axisCount = ttUSHORT(a + 6);
+   if (axis >= axisCount)
+      return n;
+   stbtt_uint8 *p = a + 8;
+   for (int i = 0; i < axisCount; i++)
+   {
+      int mapCount = ttUSHORT(p); p += 2;
+      if (i == axis)
+      {
+         float prevX = 0.0f, prevY = 0.0f;
+         int have = 0;
+         for (int j = 0; j < mapCount; j++)
+         {
+            float from = stbtt__f2dot14(p + j * 4);
+            float to   = stbtt__f2dot14(p + j * 4 + 2);
+            if (n <= from)
+            {
+               if (!have) return to;
+               return prevY + (n - prevX) / (from - prevX) * (to - prevY);
+            }
+            prevX = from; prevY = to; have = 1;
+         }
+         return prevY;
+      }
+      p += mapCount * 4;
+   }
+   return n;
+}
+
+static float stbtt__NormalizeAxis(const stbtt_fontinfo *info, int axis, float value)
+{
+   float d = info->axisDef[axis];
+   float n;
+   if (value == d)      n = 0.0f;
+   else if (value < d)  { float r = d - info->axisMin[axis]; n = r > 0.0f ? (value - d) / r : -1.0f; }
+   else                 { float r = info->axisMax[axis] - d; n = r > 0.0f ? (value - d) / r : 1.0f; }
+   if (n < -1.0f) n = -1.0f; else if (n > 1.0f) n = 1.0f;
+   return stbtt__AvarMap(info, axis, n);
+}
+
+static void stbtt__InitVariations(stbtt_fontinfo *info)
+{
+   info->numAxes = 0;
+   info->hasVariations = 0;
+   info->fvar = stbtt__find_table(info->data, info->fontstart, "fvar");
+   info->gvar = stbtt__find_table(info->data, info->fontstart, "gvar");
+   info->avar = stbtt__find_table(info->data, info->fontstart, "avar");
+   info->hvar = stbtt__find_table(info->data, info->fontstart, "HVAR");
+   info->mvar = stbtt__find_table(info->data, info->fontstart, "MVAR");
+   if (!info->fvar)
+      return;
+   stbtt_uint8 *f = info->data + info->fvar;
+   int axesOffset = ttUSHORT(f + 4);
+   int axisCount  = ttUSHORT(f + 8);
+   int axisSize   = ttUSHORT(f + 10);
+   if (axisCount > STBTT_MAX_AXES)
+      axisCount = STBTT_MAX_AXES;
+   info->numAxes = (stbtt_uint16)axisCount;
+   for (int i = 0; i < axisCount; i++)
+   {
+      stbtt_uint8 *a = f + axesOffset + i * axisSize;
+      info->axisTag[i] = stbtt__u32(a);
+      info->axisMin[i] = stbtt__s32(a + 4) / 65536.0f;
+      info->axisDef[i] = stbtt__s32(a + 8) / 65536.0f;
+      info->axisMax[i] = stbtt__s32(a + 12) / 65536.0f;
+      info->axisNorm[i] = 0.0f;
+   }
+   info->hasVariations = 1;
+}
+
+STBTT_DEF int stbtt_GetVariationAxisCount(const stbtt_fontinfo *info) { return info->numAxes; }
+STBTT_DEF stbtt_uint32 stbtt_GetVariationAxisTag(const stbtt_fontinfo *info, int axis) { return (axis >= 0 && axis < info->numAxes) ? info->axisTag[axis] : 0; }
+STBTT_DEF float stbtt_GetVariationAxisMin(const stbtt_fontinfo *info, int axis) { return (axis >= 0 && axis < info->numAxes) ? info->axisMin[axis] : 0.0f; }
+STBTT_DEF float stbtt_GetVariationAxisDefault(const stbtt_fontinfo *info, int axis) { return (axis >= 0 && axis < info->numAxes) ? info->axisDef[axis] : 0.0f; }
+STBTT_DEF float stbtt_GetVariationAxisMax(const stbtt_fontinfo *info, int axis) { return (axis >= 0 && axis < info->numAxes) ? info->axisMax[axis] : 0.0f; }
+
+STBTT_DEF void stbtt_SetVariationCoords(stbtt_fontinfo *info, const stbtt_uint32 *tags, const float *values, int count)
+{
+   if (!info->hasVariations)
+      return;
+   for (int i = 0; i < info->numAxes; i++)
+   {
+      float v = info->axisDef[i];
+      for (int k = 0; k < count; k++)
+         if (tags[k] == info->axisTag[i]) { v = values[k]; break; }
+      info->axisNorm[i] = stbtt__NormalizeAxis(info, i, v);
+   }
+}
+
+// scalar weight of a variation region / tuple for one axis.
+static float stbtt__RegionScalar(float coord, float start, float peak, float end)
+{
+   if (peak == 0.0f)   return 1.0f;
+   if (coord == 0.0f)  return 0.0f;
+   if (coord == peak)  return 1.0f;
+   if (coord < start || coord > end) return 0.0f;
+   return (coord < peak) ? (coord - start) / (peak - start) : (end - coord) / (end - peak);
+}
+
+static float stbtt__TupleScalar(float coord, float peak, int hasInter, float istart, float iend)
+{
+   if (peak == 0.0f)  return 1.0f;
+   if (coord == 0.0f) return 0.0f;
+   if (coord == peak) return 1.0f;
+   if (!hasInter)
+      return ((coord < peak && peak < 0.0f) || (coord > peak && peak > 0.0f)) ? 0.0f : coord / peak;
+   if (coord <= istart || coord >= iend) return 0.0f;
+   return (coord < peak) ? (coord - istart) / (peak - istart) : (iend - coord) / (iend - peak);
+}
+
+static void stbtt__DecodeDeltas(stbtt_uint8 **pp, stbtt_uint8 *end, int count, stbtt_int32 *out)
+{
+   stbtt_uint8 *p = *pp;
+   int i = 0;
+   while (i < count && p < end)
+   {
+      stbtt_int8 control = (stbtt_int8)*p++;
+      int run;
+      if (control & 0x80)      { run = (control & 0x7f) + 1; while (run-- && i < count) out[i++] = 0; }
+      else if (control & 0x40) { run = (control & 0x3f) + 1; while (run-- && i < count) { out[i++] = ttSHORT(p); p += 2; } }
+      else                     { run = (control & 0x3f) + 1; while (run-- && i < count) { out[i++] = (stbtt_int8)*p++; } }
+   }
+   while (i < count) out[i++] = 0;
+   *pp = p;
+}
+
+static int stbtt__DecodePoints(stbtt_uint8 **pp, stbtt_uint8 *end, stbtt_uint16 *out, int maxOut)
+{
+   stbtt_uint8 *p = *pp;
+   if (p >= end) { *pp = p; return 0; }
+   int count = *p++;
+   if (count & 0x80) { if (p >= end) { *pp = p; return 0; } count = ((count & 0x7f) << 8) | *p++; }
+   int i = 0, val = 0;
+   while (i < count && p < end)
+   {
+      stbtt_int8 control = (stbtt_int8)*p++;
+      int run;
+      if (control & 0x80)      { run = (control & 0x7f) + 1; while (run-- && i < count) { if (i < maxOut) out[i] = (stbtt_uint16)val; i++; } }
+      else if (control & 0x40) { run = (control & 0x3f) + 1; while (run-- && i < count) { val += ttSHORT(p); p += 2; if (i < maxOut) out[i] = (stbtt_uint16)val; i++; } }
+      else                     { run = (control & 0x3f) + 1; while (run-- && i < count) { val += (stbtt_int8)*p++; if (i < maxOut) out[i] = (stbtt_uint16)val; i++; } }
+   }
+   *pp = p;
+   return count < maxOut ? count : maxOut;
+}
+
+// IUP: infer the delta of a point the tuple didn't reference from its
+// neighbours on the same contour.
+static void stbtt__IUP1(const stbtt_int32 *orig, stbtt_int32 *d, int p1, int p2, int i)
+{
+   stbtt_int32 o1 = orig[p1], o2 = orig[p2], oi = orig[i];
+   if (oi <= o1 && oi <= o2)      d[i] = (o1 <= o2) ? d[p1] : d[p2];
+   else if (oi >= o1 && oi >= o2) d[i] = (o1 >= o2) ? d[p1] : d[p2];
+   else if (o2 != o1)             d[i] = d[p1] + (stbtt_int32)((float)(oi - o1) / (float)(o2 - o1) * (float)(d[p2] - d[p1]));
+   else                           d[i] = d[p1];
+}
+
+static void stbtt__IUP(const stbtt_int32 *ox, const stbtt_int32 *oy, stbtt_int32 *dx, stbtt_int32 *dy,
+                       const unsigned char *touched, int npts, const stbtt_uint16 *endPts, int ncontours)
+{
+   int start = 0;
+   for (int c = 0; c < ncontours; c++)
+   {
+      int end = endPts[c];
+      if (end >= npts) end = npts - 1;
+      int first = -1;
+      for (int i = start; i <= end; i++) if (touched[i]) { first = i; break; }
+      if (first < 0) { start = end + 1; continue; }
+      int span = end - start + 1;
+      int prev = first;
+      for (int k = 1; k < span; k++)
+      {
+         int i = start + (first - start + k) % span;
+         if (touched[i]) { prev = i; continue; }
+         int next = -1;
+         for (int m = 1; m < span; m++) { int j = start + (i - start + m) % span; if (touched[j]) { next = j; break; } }
+         if (next < 0) next = prev;
+         stbtt__IUP1(ox, dx, prev, next, i);
+         stbtt__IUP1(oy, dy, prev, next, i);
+      }
+      start = end + 1;
+   }
+}
+
+// applies the glyph's gvar deltas for the current coords to (xs, ys).
+static void stbtt__ApplyGlyphVariation(const stbtt_fontinfo *info, int glyph_index,
+                                       int npts, const stbtt_uint16 *endPts, int ncontours,
+                                       stbtt_int32 *xs, stbtt_int32 *ys)
+{
+   if (!info->hasVariations || !info->gvar || info->numAxes == 0 || npts <= 0)
+      return;
+   stbtt_uint8 *gvar = info->data + info->gvar;
+   int axisCount = info->numAxes;
+   stbtt_uint32 sharedTuplesOffset = stbtt__u32(gvar + 8);
+   int glyphCount = ttUSHORT(gvar + 12);
+   int flags = ttUSHORT(gvar + 14);
+   stbtt_uint32 dataArrayOffset = stbtt__u32(gvar + 16);
+   if (glyph_index >= glyphCount)
+      return;
+   stbtt_uint8 *offsets = gvar + 20;
+   int longOffsets = flags & 1;
+   stbtt_uint32 off1, off2;
+   if (longOffsets) { off1 = stbtt__u32(offsets + glyph_index * 4); off2 = stbtt__u32(offsets + (glyph_index + 1) * 4); }
+   else             { off1 = (stbtt_uint32)ttUSHORT(offsets + glyph_index * 2) * 2; off2 = (stbtt_uint32)ttUSHORT(offsets + (glyph_index + 1) * 2) * 2; }
+   if (off1 == off2)
+      return;
+   stbtt_uint8 *gv = gvar + dataArrayOffset + off1;
+   stbtt_uint8 *gvEnd = gvar + dataArrayOffset + off2;
+   int tupleVariationCount = ttUSHORT(gv);
+   int sharedPoints = (tupleVariationCount & 0x8000) ? 1 : 0;
+   int tupleCount = tupleVariationCount & 0x0fff;
+   int dataOffset = ttUSHORT(gv + 2);
+   stbtt_uint8 *tupleHeaders = gv + 4;
+   stbtt_uint8 *serialized = gv + dataOffset;
+
+   stbtt_int32 *allx = (stbtt_int32 *)STBTT_malloc(sizeof(stbtt_int32) * npts, info->userdata);
+   stbtt_int32 *ally = (stbtt_int32 *)STBTT_malloc(sizeof(stbtt_int32) * npts, info->userdata);
+   stbtt_int32 *dx = (stbtt_int32 *)STBTT_malloc(sizeof(stbtt_int32) * (npts + 4), info->userdata);
+   stbtt_int32 *dy = (stbtt_int32 *)STBTT_malloc(sizeof(stbtt_int32) * (npts + 4), info->userdata);
+   stbtt_int32 *tx = (stbtt_int32 *)STBTT_malloc(sizeof(stbtt_int32) * npts, info->userdata);
+   stbtt_int32 *ty = (stbtt_int32 *)STBTT_malloc(sizeof(stbtt_int32) * npts, info->userdata);
+   unsigned char *tmask = (unsigned char *)STBTT_malloc(npts, info->userdata);
+   stbtt_uint16 *pts = (stbtt_uint16 *)STBTT_malloc(sizeof(stbtt_uint16) * (npts + 4), info->userdata);
+   stbtt_uint16 *sharedPts = (stbtt_uint16 *)STBTT_malloc(sizeof(stbtt_uint16) * (npts + 4), info->userdata);
+   if (!allx || !ally || !dx || !dy || !tx || !ty || !tmask || !pts || !sharedPts)
+   {
+      STBTT_free(sharedPts, info->userdata);
+      STBTT_free(pts, info->userdata);
+      STBTT_free(tmask, info->userdata);
+      STBTT_free(ty, info->userdata);
+      STBTT_free(tx, info->userdata);
+      STBTT_free(dy, info->userdata);
+      STBTT_free(dx, info->userdata);
+      STBTT_free(ally, info->userdata);
+      STBTT_free(allx, info->userdata);
+      return;
+   }
+   int sharedCount = 0;
+   for (int i = 0; i < npts; i++) { allx[i] = 0; ally[i] = 0; tmask[i] = 0; }
+   if (sharedPoints)
+      sharedCount = stbtt__DecodePoints(&serialized, gvEnd, sharedPts, npts + 4);
+
+   for (int t = 0; t < tupleCount; t++)
+   {
+      if (tupleHeaders + 4 > gvEnd)
+         break;
+      int variationDataSize = ttUSHORT(tupleHeaders);
+      int tupleIndex = ttUSHORT(tupleHeaders + 2);
+      tupleHeaders += 4;
+      float peak[STBTT_MAX_AXES], istart[STBTT_MAX_AXES], iend[STBTT_MAX_AXES];
+      if (tupleIndex & 0x8000)
+      {
+         for (int a = 0; a < axisCount; a++) peak[a] = stbtt__f2dot14(tupleHeaders + a * 2);
+         tupleHeaders += axisCount * 2;
+      }
+      else
+      {
+         stbtt_uint8 *st = gvar + sharedTuplesOffset + (tupleIndex & 0x0fff) * axisCount * 2;
+         for (int a = 0; a < axisCount; a++) peak[a] = stbtt__f2dot14(st + a * 2);
+      }
+      int hasInter = (tupleIndex & 0x4000) ? 1 : 0;
+      if (hasInter)
+      {
+         for (int a = 0; a < axisCount; a++) istart[a] = stbtt__f2dot14(tupleHeaders + a * 2);
+         tupleHeaders += axisCount * 2;
+         for (int a = 0; a < axisCount; a++) iend[a] = stbtt__f2dot14(tupleHeaders + a * 2);
+         tupleHeaders += axisCount * 2;
+      }
+      float scalar = 1.0f;
+      for (int a = 0; a < axisCount; a++)
+         scalar *= stbtt__TupleScalar(info->axisNorm[a], peak[a], hasInter, istart[a], iend[a]);
+
+      stbtt_uint8 *data = serialized;
+      serialized += variationDataSize;
+      if (scalar == 0.0f)
+         continue;
+
+      int pointCount;
+      const stbtt_uint16 *pointList = pts;
+      if (tupleIndex & 0x2000)
+         pointCount = stbtt__DecodePoints(&data, gvEnd, pts, npts + 4);
+      else if (sharedPoints)
+      {
+         pointCount = sharedCount;
+         pointList = sharedPts;
+      }
+      else
+         pointCount = 0;
+
+      if (pointCount == 0)
+      {
+         // deltas for every point (plus the 4 phantom points, which we drop)
+         stbtt__DecodeDeltas(&data, gvEnd, npts + 4, dx);
+         stbtt__DecodeDeltas(&data, gvEnd, npts + 4, dy);
+         for (int i = 0; i < npts; i++) { allx[i] += (stbtt_int32)(scalar * dx[i]); ally[i] += (stbtt_int32)(scalar * dy[i]); }
+      }
+      else
+      {
+         stbtt__DecodeDeltas(&data, gvEnd, pointCount, dx);
+         stbtt__DecodeDeltas(&data, gvEnd, pointCount, dy);
+         for (int i = 0; i < npts; i++) { tx[i] = 0; ty[i] = 0; tmask[i] = 0; }
+         for (int i = 0; i < pointCount; i++)
+         {
+            int pi = pointList[i];
+            if (pi < npts) { tx[pi] = (stbtt_int32)(scalar * dx[i]); ty[pi] = (stbtt_int32)(scalar * dy[i]); tmask[pi] = 1; }
+         }
+         if (ncontours > 0)
+            stbtt__IUP(xs, ys, tx, ty, tmask, npts, endPts, ncontours);
+         for (int i = 0; i < npts; i++) { allx[i] += tx[i]; ally[i] += ty[i]; }
+      }
+   }
+   for (int i = 0; i < npts; i++) { xs[i] += allx[i]; ys[i] += ally[i]; }
+
+   STBTT_free(sharedPts, info->userdata);
+   STBTT_free(pts, info->userdata);
+   STBTT_free(tmask, info->userdata);
+   STBTT_free(ty, info->userdata);
+   STBTT_free(tx, info->userdata);
+   STBTT_free(dy, info->userdata);
+   STBTT_free(dx, info->userdata);
+   STBTT_free(ally, info->userdata);
+   STBTT_free(allx, info->userdata);
+}
+
+// --- ItemVariationStore (shared by HVAR and MVAR) ---
+
+static void stbtt__DeltaSetIndexMap(const stbtt_uint8 *m, int index, int *outer, int *inner)
+{
+   int format = m[0];
+   int entryFormat = m[1];
+   int entrySize = ((entryFormat & 0x30) >> 4) + 1;
+   int innerBits = (entryFormat & 0x0f) + 1;
+   const stbtt_uint8 *entries;
+   int mapCount;
+   if (format == 0) { mapCount = ttUSHORT((stbtt_uint8 *)m + 2); entries = m + 4; }
+   else             { mapCount = (int)stbtt__u32(m + 2);        entries = m + 6; }
+   if (mapCount <= 0) { *outer = 0; *inner = 0; return; }
+   if (index >= mapCount) index = mapCount - 1;
+   if (index < 0) index = 0;
+   const stbtt_uint8 *e = entries + index * entrySize;
+   stbtt_uint32 v = 0;
+   for (int i = 0; i < entrySize; i++) v = (v << 8) | e[i];
+   int innerMask = (1 << innerBits) - 1;
+   *inner = (int)(v & innerMask);
+   *outer = (int)(v >> innerBits);
+}
+
+static float stbtt__ItemVariationDelta(const stbtt_fontinfo *info, const stbtt_uint8 *ivs, int outer, int inner)
+{
+   stbtt_uint32 regionListOffset = stbtt__u32(ivs + 2);
+   int dataCount = ttUSHORT((stbtt_uint8 *)ivs + 6);
+   if (outer < 0 || outer >= dataCount)
+      return 0.0f;
+   stbtt_uint32 dataOffset = stbtt__u32(ivs + 8 + outer * 4);
+   const stbtt_uint8 *ivd = ivs + dataOffset;
+   int itemCount = ttUSHORT((stbtt_uint8 *)ivd);
+   int wordDeltaCount = ttUSHORT((stbtt_uint8 *)ivd + 2);
+   int regionIndexCount = ttUSHORT((stbtt_uint8 *)ivd + 4);
+   if (inner < 0 || inner >= itemCount || regionIndexCount <= 0)
+      return 0.0f;
+   const stbtt_uint8 *regionIndexes = ivd + 6;
+   int rowSize = wordDeltaCount * 2 + (regionIndexCount - wordDeltaCount);
+   const stbtt_uint8 *row = regionIndexes + regionIndexCount * 2 + inner * rowSize;
+   const stbtt_uint8 *regions = ivs + regionListOffset;
+   int axisCount = ttUSHORT((stbtt_uint8 *)regions);
+   const stbtt_uint8 *rp = regions + 4;
+   float delta = 0.0f;
+   for (int r = 0; r < regionIndexCount; r++)
+   {
+      int regionIndex = ttUSHORT((stbtt_uint8 *)regionIndexes + r * 2);
+      const stbtt_uint8 *reg = rp + regionIndex * axisCount * 6;
+      float scalar = 1.0f;
+      for (int a = 0; a < axisCount && a < info->numAxes; a++)
+      {
+         float start = stbtt__f2dot14(reg + a * 6);
+         float peak  = stbtt__f2dot14(reg + a * 6 + 2);
+         float end   = stbtt__f2dot14(reg + a * 6 + 4);
+         scalar *= stbtt__RegionScalar(info->axisNorm[a], start, peak, end);
+      }
+      stbtt_int32 d = (r < wordDeltaCount) ? ttSHORT((stbtt_uint8 *)row + r * 2)
+                                           : (stbtt_int8)row[wordDeltaCount * 2 + (r - wordDeltaCount)];
+      delta += scalar * d;
+   }
+   return delta;
+}
+
+static float stbtt__HVARAdvanceDelta(const stbtt_fontinfo *info, int glyph_index)
+{
+   if (!info->hvar)
+      return 0.0f;
+   const stbtt_uint8 *h = info->data + info->hvar;
+   stbtt_uint32 ivsOffset = stbtt__u32(h + 4);
+   stbtt_uint32 mapOffset = stbtt__u32(h + 8);
+   if (ivsOffset == 0)
+      return 0.0f;
+   int outer = 0, inner = glyph_index;
+   if (mapOffset != 0)
+      stbtt__DeltaSetIndexMap(h + mapOffset, glyph_index, &outer, &inner);
+   return stbtt__ItemVariationDelta(info, h + ivsOffset, outer, inner);
+}
+
+static float stbtt__MVARDelta(const stbtt_fontinfo *info, stbtt_uint32 tag)
+{
+   if (!info->mvar)
+      return 0.0f;
+   const stbtt_uint8 *m = info->data + info->mvar;
+   int recordSize = ttUSHORT((stbtt_uint8 *)m + 6);
+   int recordCount = ttUSHORT((stbtt_uint8 *)m + 8);
+   int ivsOffset = ttUSHORT((stbtt_uint8 *)m + 10);
+   if (ivsOffset == 0 || recordSize <= 0)
+      return 0.0f;
+   const stbtt_uint8 *ivs = m + ivsOffset;
+   for (int i = 0; i < recordCount; i++)
+   {
+      const stbtt_uint8 *r = m + 12 + i * recordSize;
+      if (stbtt__u32(r) == tag)
+      {
+         int outer = ttUSHORT((stbtt_uint8 *)r + 4);
+         int inner = ttUSHORT((stbtt_uint8 *)r + 6);
+         return stbtt__ItemVariationDelta(info, ivs, outer, inner);
+      }
+   }
+   return 0.0f;
+}
+
+static int stbtt__CompositeComponentCount(const stbtt_uint8 *data, int g)
+{
+   stbtt_uint8 *comp = (stbtt_uint8 *)data + g + 10;
+   int more = 1, count = 0;
+   while (more)
+   {
+      stbtt_uint16 flags = ttSHORT(comp);
+      comp += 2;
+      comp += 2; // glyph index
+      if (flags & 2)
+         comp += (flags & 1) ? 4 : 2;
+      if (flags & (1 << 3))       comp += 2;
+      else if (flags & (1 << 6))  comp += 4;
+      else if (flags & (1 << 7))  comp += 8;
+      more = (flags & (1 << 5)) ? 1 : 0;
+      count++;
+      if (count > 4096) break;
+   }
+   return count;
+}
+
 static int stbtt_InitFont_internal(stbtt_fontinfo *info, unsigned char *data, int fontstart)
 {
    stbtt_uint32 cmap, t;
@@ -1495,6 +1979,7 @@ static int stbtt_InitFont_internal(stbtt_fontinfo *info, unsigned char *data, in
       return 0;
 
    info->indexToLocFormat = ttUSHORT(data+info->head + 50);
+   stbtt__InitVariations(info);
    return 1;
 }
 
@@ -1627,6 +2112,8 @@ static int stbtt__GetGlyfOffset(const stbtt_fontinfo *info, int glyph_index)
 
 static int stbtt__GetGlyphInfoT2(const stbtt_fontinfo *info, int glyph_index, int *x0, int *y0, int *x1, int *y1);
 
+static int stbtt__GetGlyphShapeTT(const stbtt_fontinfo *info, int glyph_index, stbtt_vertex **pvertices);
+
 STBTT_DEF int stbtt_GetGlyphBox(const stbtt_fontinfo *info, int glyph_index, int *x0, int *y0, int *x1, int *y1)
 {
    if (info->cff.size) {
@@ -1634,6 +2121,31 @@ STBTT_DEF int stbtt_GetGlyphBox(const stbtt_fontinfo *info, int glyph_index, int
    } else {
       int g = stbtt__GetGlyfOffset(info, glyph_index);
       if (g < 0) return 0;
+
+      // the glyf header stores the default-instance bbox, which is wrong once
+      // variations fatten or shift the outline; derive it from the varied path.
+      if (info->hasVariations) {
+         stbtt_vertex *verts = 0;
+         int n = stbtt__GetGlyphShapeTT(info, glyph_index, &verts);
+         if (n > 0) {
+            stbtt_int32 minx = 0x7fffffff, miny = 0x7fffffff, maxx = -0x7fffffff - 1, maxy = -0x7fffffff - 1;
+            int i;
+            for (i = 0; i < n; ++i) {
+               stbtt_vertex *v = &verts[i];
+               if (v->x < minx) minx = v->x; if (v->x > maxx) maxx = v->x;
+               if (v->y < miny) miny = v->y; if (v->y > maxy) maxy = v->y;
+               if (v->type == STBTT_vcurve) {
+                  if (v->cx < minx) minx = v->cx; if (v->cx > maxx) maxx = v->cx;
+                  if (v->cy < miny) miny = v->cy; if (v->cy > maxy) maxy = v->cy;
+               }
+            }
+            if (x0) *x0 = minx; if (y0) *y0 = miny;
+            if (x1) *x1 = maxx; if (y1) *y1 = maxy;
+            STBTT_free(verts, info->userdata);
+            return 1;
+         }
+         STBTT_free(verts, info->userdata);
+      }
 
       if (x0) *x0 = ttSHORT(info->data + g + 2);
       if (y0) *y0 = ttSHORT(info->data + g + 4);
@@ -1760,6 +2272,23 @@ static int stbtt__GetGlyphShapeTT(const stbtt_fontinfo *info, int glyph_index, s
          vertices[off+i].y = (stbtt_int16) y;
       }
 
+      // apply variable-font deltas to the raw coordinates before reconstructing
+      // the contours, so weight/rounding/width/opsz all take effect.
+      if (info->hasVariations) {
+         stbtt_int32 *vx = (stbtt_int32*)STBTT_malloc(sizeof(stbtt_int32)*n, info->userdata);
+         stbtt_int32 *vy = (stbtt_int32*)STBTT_malloc(sizeof(stbtt_int32)*n, info->userdata);
+         stbtt_uint16 *ep = (stbtt_uint16*)STBTT_malloc(sizeof(stbtt_uint16)*numberOfContours, info->userdata);
+         if (vx && vy && ep) {
+            for (i=0; i<n; ++i) { vx[i]=(stbtt_int16)vertices[off+i].x; vy[i]=(stbtt_int16)vertices[off+i].y; }
+            for (i=0; i<numberOfContours; ++i) ep[i]=ttUSHORT(endPtsOfContours+i*2);
+            stbtt__ApplyGlyphVariation(info, glyph_index, n, ep, numberOfContours, vx, vy);
+            for (i=0; i<n; ++i) { vertices[off+i].x=(stbtt_int16)vx[i]; vertices[off+i].y=(stbtt_int16)vy[i]; }
+         }
+         STBTT_free(ep, info->userdata);
+         STBTT_free(vy, info->userdata);
+         STBTT_free(vx, info->userdata);
+      }
+
       // now convert them to our format
       num_vertices=0;
       sx = sy = cx = cy = scx = scy = 0;
@@ -1818,8 +2347,23 @@ static int stbtt__GetGlyphShapeTT(const stbtt_fontinfo *info, int glyph_index, s
       // Compound shapes.
       int more = 1;
       stbtt_uint8 *comp = data + g + 10;
+      int comp_index = 0;
+      stbtt_int32 *comp_dx = 0, *comp_dy = 0;
       num_vertices = 0;
       vertices = 0;
+      // a composite glyph's gvar deltas translate its components.
+      if (info->hasVariations) {
+         int ncomp = stbtt__CompositeComponentCount(data, g);
+         if (ncomp > 0) {
+            comp_dx = (stbtt_int32*)STBTT_malloc(sizeof(stbtt_int32)*ncomp, info->userdata);
+            comp_dy = (stbtt_int32*)STBTT_malloc(sizeof(stbtt_int32)*ncomp, info->userdata);
+            if (comp_dx && comp_dy) {
+               int ci;
+               for (ci = 0; ci < ncomp; ++ci) { comp_dx[ci] = 0; comp_dy[ci] = 0; }
+               stbtt__ApplyGlyphVariation(info, glyph_index, ncomp, NULL, 0, comp_dx, comp_dy);
+            }
+         }
+      }
       while (more) {
          stbtt_uint16 flags, gidx;
          int comp_num_verts = 0, i;
@@ -1842,6 +2386,8 @@ static int stbtt__GetGlyphShapeTT(const stbtt_fontinfo *info, int glyph_index, s
             // @TODO handle matching point
             STBTT_assert(0);
          }
+         if (comp_dx) { mtx[4] += comp_dx[comp_index]; mtx[5] += comp_dy[comp_index]; }
+         comp_index++;
          if (flags & (1<<3)) { // WE_HAVE_A_SCALE
             mtx[0] = mtx[3] = ttSHORT(comp)/16384.0f; comp+=2;
             mtx[1] = mtx[2] = 0;
@@ -1891,6 +2437,8 @@ static int stbtt__GetGlyphShapeTT(const stbtt_fontinfo *info, int glyph_index, s
          // More components ?
          more = flags & (1<<5);
       }
+      STBTT_free(comp_dy, info->userdata);
+      STBTT_free(comp_dx, info->userdata);
    } else {
       // numberOfCounters == 0, do nothing
    }
@@ -2317,6 +2865,10 @@ STBTT_DEF void stbtt_GetGlyphHMetrics(const stbtt_fontinfo *info, int glyph_inde
       if (advanceWidth)     *advanceWidth    = ttSHORT(info->data + info->hmtx + 4*(numOfLongHorMetrics-1));
       if (leftSideBearing)  *leftSideBearing = ttSHORT(info->data + info->hmtx + 4*numOfLongHorMetrics + 2*(glyph_index - numOfLongHorMetrics));
    }
+   if (info->hasVariations && advanceWidth && info->hvar) {
+      float d = stbtt__HVARAdvanceDelta(info, glyph_index);
+      *advanceWidth += (int)(d + (d >= 0.0f ? 0.5f : -0.5f));
+   }
 }
 
 STBTT_DEF int  stbtt_GetKerningTableLength(const stbtt_fontinfo *info)
@@ -2641,6 +3193,16 @@ STBTT_DEF void stbtt_GetFontVMetrics(const stbtt_fontinfo *info, int *ascent, in
    if (ascent ) *ascent  = ttSHORT(info->data+info->hhea + 4);
    if (descent) *descent = ttSHORT(info->data+info->hhea + 6);
    if (lineGap) *lineGap = ttSHORT(info->data+info->hhea + 8);
+   if (info->hasVariations && info->mvar)
+   {
+      // MVAR value tags: hasc / hdsc / hlgp.
+      float da = stbtt__MVARDelta(info, 0x68617363u);
+      float dd = stbtt__MVARDelta(info, 0x68647363u);
+      float dg = stbtt__MVARDelta(info, 0x686c6770u);
+      if (ascent)  *ascent  += (int)(da + (da >= 0.0f ? 0.5f : -0.5f));
+      if (descent) *descent += (int)(dd + (dd >= 0.0f ? 0.5f : -0.5f));
+      if (lineGap) *lineGap += (int)(dg + (dg >= 0.0f ? 0.5f : -0.5f));
+   }
 }
 
 STBTT_DEF int  stbtt_GetFontVMetricsOS2(const stbtt_fontinfo *info, int *typoAscent, int *typoDescent, int *typoLineGap)
