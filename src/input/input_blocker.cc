@@ -73,6 +73,27 @@ namespace VKIntox
         return blocked.load(std::memory_order_acquire);
     }
 
+    bool inputBlockingEnabled()
+    {
+        return blockingEnabled.load(std::memory_order_acquire);
+    }
+
+    bool inputGrabActive()
+    {
+        return isX11() && x11GrabActive();
+    }
+
+    bool inputKeyboardWithheld()
+    {
+        return keyboardWithheld;
+    }
+
+    bool inputPointerOverOverlay()
+    {
+        return blocked.load(std::memory_order_acquire)
+            && pointInRects(pointerX.load(std::memory_order_acquire), pointerY.load(std::memory_order_acquire));
+    }
+
     void updatePointerPosition(float x, float y)
     {
         pointerX.store(x, std::memory_order_release);

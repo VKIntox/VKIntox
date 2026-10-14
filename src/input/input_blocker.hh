@@ -33,4 +33,10 @@ namespace VKIntox
 
     // True when the overlay is on screen (regardless of hitbox).
     bool isInputBlocked();
+
+    // Diagnostics: the configured gate plus the live per-backend state.
+    bool inputBlockingEnabled();
+    bool inputGrabActive();        // X11 server-side pointer+keyboard grab
+    bool inputKeyboardWithheld();  // Wayland keys withheld from the game
+    bool inputPointerOverOverlay();
 } // namespace VKIntox

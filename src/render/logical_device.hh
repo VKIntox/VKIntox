@@ -10,6 +10,7 @@
 #include "vkdispatch.hh"
 #include "depth_state.hh"
 #include "depth_copy_state.hh"
+#include <chrono>
 #include <mutex>
 
 namespace VKIntox
@@ -127,6 +128,8 @@ namespace VKIntox
         // Instead, set this flag and handle the reallocation in QueuePresentKHR
         // where we can safely QueueWaitIdle first.
         bool depthReallocPending = false;
+        // when the pending rebuild was first armed, so a burst coalesces into one
+        std::chrono::steady_clock::time_point depthReallocFirstArmed{};
 
         // Persistent depth storage — layer-internal depth image that outlives
         // app depth image destruction. NOT stored in the parallel

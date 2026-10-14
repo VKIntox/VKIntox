@@ -55,6 +55,16 @@ namespace VKIntox
             return true;
         }
 
+        // Drops a published-but-not-yet-submitted copy. Used when the persistent
+        // depth storage is torn down: a stale pending blit would target a freed
+        // image.
+        void discardPending()
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_pending = false;
+            m_pendingDepthState = DepthState{};
+        }
+
         // --- ring of pre-allocated copy command buffers ---
 
         class RingAccess

@@ -84,6 +84,29 @@
 
 namespace VKIntox
 {
+
+    namespace
+    {
+        // latched at settings load
+        bool g_depthCaptureLatched = false;
+        bool g_depthCaptureLatchedValid = false;
+    }
+
+    // reads the persisted setting once
+    void latchDepthCaptureSetting()
+    {
+        g_depthCaptureLatched = settingsManager.getDepthCapture();
+        g_depthCaptureLatchedValid = true;
+    }
+
+    // what the hooks ask instead of the live setting; see the latch above
+    bool depthCaptureActive()
+    {
+        if (!g_depthCaptureLatchedValid)
+            latchDepthCaptureSetting();
+        return g_depthCaptureLatched;
+    }
+
     std::shared_ptr<Config> baseConfig = nullptr;  // Always VKIntox.conf
     std::shared_ptr<Config> config = nullptr;      // Current config (base + overlay)
     EffectRegistry effectRegistry;                   // Single source of truth for effect configs
@@ -887,6 +910,10 @@ namespace VKIntox
 
             // Initialize settings manager (single source of truth for settings)
             settingsManager.initialize();
+
+            // latch depth capture for the process: the hooks run inside the game's
+            // command recording, so a mid-frame re-arm is off the table
+            latchDepthCaptureSetting();
 
             // Load base config (VKIntox.conf) - used for paths, effect definitions
             baseConfig = std::make_shared<Config>();
@@ -2439,7 +2466,7 @@ namespace VKIntox
 
         const int method = settingsManager.getDepthCaptureMethod();
         if (!logicalDevice || method < 1 || method > 2
-            || !settingsManager.getDepthCapture()
+            || !depthCaptureActive()
             || logicalDevice->softDisabled.load(std::memory_order_acquire)
             || submitCount == 0 || !pSubmits)
         {
@@ -3066,11 +3093,14 @@ namespace VKIntox
                 logicalDevice->imguiOverlay->clearToggleEffectsRequest();
             }
 
-            // Depth pin changed — trigger reload so command buffers pick up the new depth
+            // only the resolve path needs rebuilding, which the deferred realloc
+            // below does per swapchain under its own fence gate. the full chain
+            // reload this used to trigger recompiles every shader and re-records
+            // every command buffer for a change that does not touch the chain.
             if (logicalDevice->imguiOverlay && logicalDevice->imguiOverlay->hasDepthPinChanged())
             {
                 logicalDevice->imguiOverlay->clearDepthPinChanged();
-                shouldReload = true;
+                logicalDevice->depthReallocPending = true;
             }
 
             if (logicalDevice->imguiOverlay && logicalDevice->imguiOverlay->hasModifiedParams())
@@ -3233,10 +3263,26 @@ namespace VKIntox
             // a full config reload (F10/Delete) occurs.
             if (logicalDevice->depthReallocPending)
             {
-                for (const auto& [_, sc] : swapchainMap)
-                    if (sc && sc->logicalDevice == logicalDevice)
-                        sc->depthReallocPending = true;
-                logicalDevice->depthReallocPending = false;
+                // let the input settle: a burst of transform clicks used to arm a
+                // rebuild per frame, each freeing and re-recording the whole chain
+                const auto now = std::chrono::steady_clock::now();
+                if (!logicalDevice->depthReallocFirstArmed.time_since_epoch().count())
+                    logicalDevice->depthReallocFirstArmed = now;
+
+                constexpr auto kDepthRebuildSettle = std::chrono::milliseconds(150);
+                if (now - logicalDevice->depthReallocFirstArmed < kDepthRebuildSettle)
+                {
+                    // stay armed; the recorded buffers are still valid and just carry
+                    // the previous transform for another frame or two
+                }
+                else
+                {
+                    for (const auto& [_, sc] : swapchainMap)
+                        if (sc && sc->logicalDevice == logicalDevice)
+                            sc->depthReallocPending = true;
+                    logicalDevice->depthReallocPending = false;
+                    logicalDevice->depthReallocFirstArmed = {};
+                }
             }
 
             DepthState effectiveDepth = getDepthState(logicalDevice);
@@ -3517,7 +3563,7 @@ namespace VKIntox
         if (logicalDevice == nullptr)
             return VK_ERROR_DEVICE_LOST;
         VkResult vr;
-        if (!VKIntox::settingsManager.getDepthCapture() || !pCreateInfo || pCreateInfo->attachmentCount == 0)
+        if (!VKIntox::depthCaptureActive() || !pCreateInfo || pCreateInfo->attachmentCount == 0)
         {
             vr = logicalDevice->vkd.CreateRenderPass(device, pCreateInfo, pAllocator, pRenderPass);
             if (vr == VK_SUCCESS && pRenderPass)
@@ -3588,7 +3634,7 @@ namespace VKIntox
         if (logicalDevice == nullptr)
             return VK_ERROR_DEVICE_LOST;
         VkResult vr;
-        if (!VKIntox::settingsManager.getDepthCapture() || !pCreateInfo || pCreateInfo->attachmentCount == 0)
+        if (!VKIntox::depthCaptureActive() || !pCreateInfo || pCreateInfo->attachmentCount == 0)
         {
             vr = logicalDevice->vkd.CreateRenderPass2(device, pCreateInfo, pAllocator, pRenderPass);
             if (vr == VK_SUCCESS && pRenderPass)
@@ -3659,7 +3705,7 @@ namespace VKIntox
         if (logicalDevice == nullptr)
             return VK_ERROR_DEVICE_LOST;
         VkResult vr;
-        if (!VKIntox::settingsManager.getDepthCapture() || !pCreateInfo || pCreateInfo->attachmentCount == 0)
+        if (!VKIntox::depthCaptureActive() || !pCreateInfo || pCreateInfo->attachmentCount == 0)
         {
             vr = logicalDevice->vkd.CreateRenderPass2KHR(device, pCreateInfo, pAllocator, pRenderPass);
             if (vr == VK_SUCCESS && pRenderPass)
@@ -3736,7 +3782,7 @@ namespace VKIntox
                                                        const VkAllocationCallbacks* pAllocator,
                                                        VkImage*                     pImage)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
@@ -3810,7 +3856,7 @@ namespace VKIntox
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_BindImageMemory(VkDevice device, VkImage image, VkDeviceMemory memory, VkDeviceSize memoryOffset)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
@@ -3835,7 +3881,7 @@ namespace VKIntox
                                                            const VkAllocationCallbacks* pAllocator,
                                                            VkImageView* view)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
@@ -3908,7 +3954,7 @@ namespace VKIntox
         if (!imageView)
             return;
 
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
@@ -3960,7 +4006,7 @@ namespace VKIntox
                                                              const VkAllocationCallbacks* pAllocator,
                                                              VkFramebuffer* pFramebuffer)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
@@ -4015,7 +4061,7 @@ namespace VKIntox
         if (!framebuffer)
             return;
 
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
@@ -4039,7 +4085,7 @@ namespace VKIntox
                                                           const VkRenderPassBeginInfo* pRenderPassBegin,
                                                           VkSubpassContents contents)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4075,7 +4121,7 @@ namespace VKIntox
                                                            const VkRenderPassBeginInfo* pRenderPassBegin,
                                                            const VkSubpassBeginInfo* pSubpassBeginInfo)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4111,7 +4157,7 @@ namespace VKIntox
                                                               const VkRenderPassBeginInfo* pRenderPassBegin,
                                                               const VkSubpassBeginInfo* pSubpassBeginInfo)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4160,7 +4206,7 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdBeginRendering(VkCommandBuffer commandBuffer, const VkRenderingInfo* pRenderingInfo)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4218,7 +4264,7 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdBeginRenderingKHR(VkCommandBuffer commandBuffer, const VkRenderingInfo* pRenderingInfo)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4276,7 +4322,7 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdEndRenderPass(VkCommandBuffer commandBuffer)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4330,7 +4376,7 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdEndRenderPass2(VkCommandBuffer commandBuffer, const VkSubpassEndInfo* pSubpassEndInfo)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4382,7 +4428,7 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdEndRenderPass2KHR(VkCommandBuffer commandBuffer, const VkSubpassEndInfo* pSubpassEndInfo)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4434,7 +4480,7 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdEndRendering(VkCommandBuffer commandBuffer)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4486,7 +4532,7 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdEndRenderingKHR(VkCommandBuffer commandBuffer)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4544,7 +4590,7 @@ namespace VKIntox
                                                     uint32_t regionCount,
                                                     const VkImageCopy* pRegions)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4573,7 +4619,7 @@ namespace VKIntox
                                                           uint32_t commandBufferCount,
                                                           const VkCommandBuffer* pCommandBuffers)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4606,7 +4652,7 @@ namespace VKIntox
                                                     const VkImageBlit* pRegions,
                                                     VkFilter filter)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4643,7 +4689,7 @@ namespace VKIntox
                                                            uint32_t rectCount,
                                                            const VkClearRect* pRects)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4708,7 +4754,7 @@ namespace VKIntox
                                                                  uint32_t rangeCount,
                                                                  const VkImageSubresourceRange* pRanges)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4753,7 +4799,7 @@ namespace VKIntox
                                                uint32_t firstVertex,
                                                uint32_t firstInstance)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4784,7 +4830,7 @@ namespace VKIntox
                                                       int32_t vertexOffset,
                                                       uint32_t firstInstance)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4814,7 +4860,7 @@ namespace VKIntox
                                                        uint32_t drawCount,
                                                        uint32_t stride)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4844,7 +4890,7 @@ namespace VKIntox
                                                               uint32_t drawCount,
                                                               uint32_t stride)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4876,7 +4922,7 @@ namespace VKIntox
                                                             uint32_t maxDrawCount,
                                                             uint32_t stride)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4908,7 +4954,7 @@ namespace VKIntox
                                                                uint32_t maxDrawCount,
                                                                uint32_t stride)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4940,7 +4986,7 @@ namespace VKIntox
                                                                    uint32_t maxDrawCount,
                                                                    uint32_t stride)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
@@ -4972,7 +5018,7 @@ namespace VKIntox
                                                                       uint32_t maxDrawCount,
                                                                       uint32_t stride)
     {
-        if (!VKIntox::settingsManager.getDepthCapture())
+        if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
             auto devIt = deviceMap.find(GetKey(commandBuffer));
