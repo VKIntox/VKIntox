@@ -18,13 +18,6 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 > [!WARNING]
 > this is the `v0.2.0-experimental` line: expect breakage and active development. the `main` branch is the stable one, and this readme describes the experimental branch.
 
-## building from source
-
-the ImGui fork and the reshade compiler are git submodules, and every build path
-fetches them for you: `just configure`, `just build` and `just flatpak-build` all
-run `git submodule update --init --recursive` first, and the installers build
-through those recipes. a plain `git clone --recurse-submodules` works too.
-
 ## showcase
 
 <div align="center">
@@ -95,7 +88,7 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 **effects**
 
 -   **reshade fx compat:** runtime compilation of `.fx` shaders to spir-v, cached per shader and extent.
--   **depth resolve:** auto-detects or manually selects the correct depth buffer (reverse-z included) to fix z-fighting in ao and dof. the source can be decoded, inverted, and mirrored (flip/flop) at runtime without a pipeline rebuild. depth capture is on by default, so depth effects work on a game's first launch without a restart, and per-game defaults seed themselves; sober starts with inverted depth and macoblox (mldr) with flipped depth, everything else does not.
+-   **depth resolve:** auto-detects or manually selects the correct depth buffer to fix z-fighting in ao and dof. depth capture is on by default, so depth effects work on a game's first launch without a restart, and per-game defaults seed themselves; sober starts with inverted depth, everything else does not.
 -   **effect list:** card-based and scrolls independently of the view, with the preset actions right-aligned on the effects row.
 -   **add effects:** a dedicated view with a back breadcrumb, package tabs (all / vkintox / every installed pack), ranked search, recents, keyboard navigation, and a per-effect duplicate stepper (`-` count `+`) that stops at the max-effects limit.
 -   **shader presets:** create (inherits the active preset), rename, delete behind a confirm, and import a reshade `.ini` through the desktop portal, with an in-overlay browser as the fallback.
@@ -186,6 +179,6 @@ thanks to **slobodaapl** (vkshade), **dadschoorse** (vkbasalt), **daaboulex** (w
 
 <div align="center">
 
-made with ♡ by [buwryme](https://github.com/buwryme)
+maintained with ♡ by [buwryme](https://github.com/buwryme)
 
 </div>
