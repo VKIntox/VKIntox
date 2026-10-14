@@ -277,13 +277,75 @@ mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$FONT_DIR"
 cp "$SCRIPT_DIR/VERSION" "$APP_CONFIG/version"
 ok "created config dirs"
 
-# the overlay loads the whole M3 set: regular plus the three emphasized weights,
-# the Material Symbols font for icons, and font.ttf as the legacy regular
-# fallback. scripts/setup mirrors this list.
-for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded.ttf LICENSE LICENSE-SIL-OFL-1.1.txt LICENSE-Apache-2.0.txt; do
-    cp "$SCRIPT_DIR/assets/font/$font" "$FONT_DIR/" || die "missing assets/font/$font"
+# Faces come from Google Fonts at install time, so the repository does not carry
+# them. The text families are taken whole from the google/fonts repo, because the
+# css endpoint splits a text family into unicode-range subsets and that would
+# leave the overlay with latin only; Material Symbols has no repo entry, but its
+# css file is the entire icon font. scripts/setup mirrors this.
+google_font_url() {
+    local family="$1" spec="${2:-}" css
+    css=$(curl -fsSL -A "Mozilla/4.0" \
+        "https://fonts.googleapis.com/css2?family=${family}${spec:+:$spec}" 2>/dev/null) || css=""
+    printf '%s\n' "$css" | grep -om1 'https://[^)]*\.ttf' || true
+}
+
+repo_font_url() {
+    curl -fsSL "https://api.github.com/repos/google/fonts/contents/ofl/$1" 2>/dev/null |
+        jq -r '[.[]? | select(.name | test("\\.ttf$"))] | .[0].download_url // empty' 2>/dev/null || true
+}
+
+is_font_file() {
+    local magic
+    magic=$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    case "$magic" in
+        00010000 | 4f54544f | 74727565) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# <installed name> <url>...  - the first url that comes back as a font wins
+fetch_font() {
+    local dest="$1"
+    shift
+    local url
+    for url in "$@"; do
+        [[ -n "$url" ]] || continue
+        if curl -fsSL "$url" -o "$FONT_DIR/$dest" 2>/dev/null &&
+            [[ -s "$FONT_DIR/$dest" ]] && is_font_file "$FONT_DIR/$dest"; then
+            return 0
+        fi
+        rm -f "$FONT_DIR/$dest"
+    done
+    warn "couldn't fetch $dest; the overlay will use its fallback"
+    return 1
+}
+
+fetch_license() {
+    local dir="$1" dest="$2"
+    [[ -s "$FONT_DIR/$dest" ]] && return 0
+    curl -fsSL "https://raw.githubusercontent.com/google/fonts/main/ofl/$dir/OFL.txt" \
+        -o "$FONT_DIR/$dest" 2>/dev/null || rm -f "$FONT_DIR/$dest"
+    return 0
+}
+
+fetch_font RobotoFlex.ttf "$(repo_font_url robotoflex)" || true
+fetch_font GoogleSansFlex.ttf "$(repo_font_url googlesansflex)" "$(google_font_url "Google+Sans+Flex")" || true
+fetch_font MaterialSymbolsRounded.ttf "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
+fetch_font MaterialSymbolsRoundedBold.ttf "$(google_font_url "Material+Symbols+Rounded" "wght@700")" \
+    "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
+[[ -s "$FONT_DIR/MaterialSymbolsRoundedBold.ttf" ]] ||
+    cp "$FONT_DIR/MaterialSymbolsRounded.ttf" "$FONT_DIR/MaterialSymbolsRoundedBold.ttf" 2>/dev/null || true
+fetch_license robotoflex LICENSE-SIL-OFL-1.1.txt
+fetch_license materialsymbolsrounded LICENSE-Apache-2.0.txt
+# the licence texts ship with the repository; a family's OFL file is not part of
+# the font download
+for licence in LICENSE LICENSE-SIL-OFL-1.1.txt LICENSE-Apache-2.0.txt LICENSE-GoogleSansFlex-OFL.txt; do
+    [[ -f "$SCRIPT_DIR/assets/font/$licence" ]] && cp "$SCRIPT_DIR/assets/font/$licence" "$FONT_DIR/"
 done
-cp "$FONT_DIR/GoogleSans-Regular.ttf" "$FONT_DIR/font.ttf"
+
+# the historical filename is what a library that predates Flex still opens
+[[ -s "$FONT_DIR/RobotoFlex.ttf" ]] && cp "$FONT_DIR/RobotoFlex.ttf" "$FONT_DIR/font.ttf"
+[[ -s "$FONT_DIR/font.ttf" ]] || warn "no body face was seeded; the overlay will use its built-in font"
 ok "installed fonts"
 
 section "reshade shaders"
