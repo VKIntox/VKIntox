@@ -19,7 +19,7 @@ flatpak_manifest := repo_root / "packaging/flatpak/org.freedesktop.Platform.Vulk
 flatpak_build_dir := repo_root / "build/flatpak"
 flatpak_repo_dir := repo_root / "build/flatpak-repo"
 
-flatpak-build:
+flatpak-build: submodules
     flatpak-builder \
       --force-clean \
       --install-deps-from=flathub \
@@ -34,12 +34,20 @@ nsight_dir := "/opt/nsight-graphics/NVIDIA-Nsight-Graphics-2026.1/host/linux-des
 nsight_capture_bin := nsight_dir / "ngfx-capture.bin"
 nsight_capture_dir := "/tmp/nsight-captures"
 
-build:
+# Fetch the vendor sources. The widgets and the reshade compiler are git
+# submodules, and every build path here goes through this recipe, so a plain
+# `just build` on a fresh clone fetches exactly what it needs - same idea as the
+# spirv-headers source the flatpak manifest declares for the local layer build.
+# A source tree without git (a release tarball) is left alone.
+submodules:
+    @if [ -d .git ]; then git submodule update --init --recursive; fi
+
+build: submodules
     meson compile -C {{ build_dir }}
 
 # Configure a native build with Clang and ccache. Meson records the compiler
 # in the build directory, so use a separate build dir if changing toolchains.
-configure:
+configure: submodules
     CC='ccache clang' CXX='ccache clang++' meson setup --buildtype=release --prefix=/usr {{ build_dir }}
 
 prepare-layer:
