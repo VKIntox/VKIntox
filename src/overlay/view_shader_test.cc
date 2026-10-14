@@ -2,6 +2,7 @@
 #include "reshade_parser.hh"
 #include "config_serializer.hh"
 #include "logger.hh"
+#include "overlay/ui_icons.hh"
 #include "overlay/ui_theme.hh"
 
 #include <filesystem>
@@ -18,7 +19,9 @@ namespace VKIntox
 {
     void ImGuiOverlay::startShaderTest()
     {
-        if (shaderTestRunning || (shaderTestComplete && overlayStateVersion == shaderTestStateVersion))
+        // Only an in-flight run blocks a new one: pressing the button again is an
+        // explicit "refresh the paths and compile them all over".
+        if (shaderTestRunning)
             return;
 
         // Ensure shader manager paths are loaded
@@ -125,35 +128,34 @@ namespace VKIntox
 
     void ImGuiOverlay::renderShaderTestSection()
     {
-        // Compile-test shaders button
-        ImGui::Spacing();
+        // The action never greys out on its own: a finished run just changes what
+        // it offers, from the first compile-test to a re-run over refreshed paths.
+        // Only an in-flight run blocks it.
         if (shaderTestRunning)
         {
-            // Show progress while testing
-            float progress = shaderTestQueue.empty() ? 1.0f :
+            const float progress = shaderTestQueue.empty() ? 1.0f :
                 static_cast<float>(shaderTestCurrentIndex) / static_cast<float>(shaderTestQueue.size());
-            ImGui::ProgressBar(progress, ImVec2(-1, 0),
-                ("Testing " + std::to_string(shaderTestCurrentIndex) + "/" +
-                 std::to_string(shaderTestQueue.size())).c_str());
+            ImGui::M3LinearProgress(progress, ImVec2(-1, 0), true);
+            UI::TextSupport(("Testing " + std::to_string(shaderTestCurrentIndex) + "/" +
+                             std::to_string(shaderTestQueue.size()) + " shaders...").c_str());
         }
         else
         {
-            // gray out once the finished run still matches the live shader set
             const bool alreadyTested = shaderTestComplete && overlayStateVersion == shaderTestStateVersion;
-            ImGui::BeginDisabled(alreadyTested);
-            if (ImGui::Button("Compile-test shaders"))
+            const std::string label = alreadyTested
+                ? std::string(Icon::RefreshUtf8) + "  Refresh paths and compile-test again"
+                : std::string(Icon::ScienceUtf8) + "  Compile-test shaders";
+            if (ImGui::M3Button(label.c_str(), alreadyTested ? ImGuiM3Button_Tonal : ImGuiM3Button_Filled))
                 startShaderTest();
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(alreadyTested
-                    ? "Shaders already tested. Install or change shaders to test again."
-                    : "Test all .fx shaders for compilation errors");
+                    ? "Re-scan every shader path and compile-test them all again."
+                    : "Test every .fx shader for compilation errors.");
         }
 
-        // Show test results summary if complete
+        // summary line
         if (shaderTestComplete && !shaderTestResults.empty())
         {
-            ImGui::SameLine();
             int passCount = 0, failCount = 0;
             for (const auto& [name, path, success, error] : shaderTestResults)
             {
@@ -162,33 +164,31 @@ namespace VKIntox
                 else
                     failCount++;
             }
-            int depthCount = static_cast<int>(depthShaders.size());
+            const int depthCount = static_cast<int>(depthShaders.size());
+            UI::PushSupport();
             if (failCount == 0)
-                ImGui::TextColored(UI::Success(), "All %d passed!", passCount);
+                ImGui::TextColored(UI::Success(), "All %d passed", passCount);
             else
                 ImGui::TextColored(UI::Warning(), "%d passed, %d failed", passCount, failCount);
             if (depthCount > 0)
             {
                 ImGui::SameLine();
-                ImGui::TextColored(UI::Secondary(), "(%d use depth)", depthCount);
+                ImGui::TextDisabled("\xC2\xB7 %d use depth", depthCount);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("These shaders require depth buffer access.");
             }
-
-            // Show duplicate warning if any were skipped
             if (shaderTestDuplicateCount > 0)
             {
-                ImGui::TextColored(UI::Attention(), "(%d duplicates skipped)", shaderTestDuplicateCount);
+                ImGui::SameLine();
+                ImGui::TextDisabled("\xC2\xB7 %d duplicates skipped", shaderTestDuplicateCount);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Identical files (symlinks or copies) found in multiple shader paths.\nEach unique file is tested exactly once.");
             }
+            UI::PopSupport();
         }
 
-        ImGui::PushFont(ImGui::GetFont(), ImGui::GetFontSize() * 0.85f);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("This resulting in success doesn't guarantee that all shaders will look and/or behave correctly.");
-        ImGui::PopTextWrapPos();
-        ImGui::PopFont();
+        ImGui::Spacing();
+        UI::TextSupport("A clean compile does not guarantee that a shader looks or behaves correctly.");
     }
 
     // Render detailed test results in collapsible sections
@@ -200,114 +200,103 @@ namespace VKIntox
         if (results.empty())
             return;
 
-        // Count failures and depth shaders for headers
-        int failCount = 0;
-        int depthCount = 0;
-        for (const auto& [name, path, success, error] : results)
+        const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+        const float d = m.density;
+        const float rowStride = 30.0f * d;
+        const float maxBodyH = 240.0f * d;
+
+        // bucket the results once, so the bodies can be virtualized
+        std::vector<size_t> failed, depth, safe;
+        for (size_t i = 0; i < results.size(); ++i)
         {
+            const auto& [name, path, success, error] = results[i];
             if (!success)
-                failCount++;
+                failed.push_back(i);
             else if (depthShaderNames.count(name))
-                depthCount++;
+                depth.push_back(i);
+            else
+                safe.push_back(i);
         }
 
-        // Show failed shaders first (if any)
-        if (failCount > 0)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, UI::Warning());
-            bool failedOpen = ImGui::TreeNode("FailedShaders", "Failed Shaders (%d)", failCount);
-            ImGui::PopStyleColor();
+        static bool failedOpen = false;
+        static bool depthOpen = false;
+        static bool safeOpen = false;
 
-            if (failedOpen)
+        auto renderGroup = [&](const char* id, const char* label, const std::vector<size_t>& indices,
+                               const char* tooltip, bool* open, ImVec4 nameColor) {
+            if (indices.empty())
+                return;
+            const std::string badge = std::to_string(indices.size());
+            const float reveal = UI::FoldHeader(id, label, badge.c_str(), open);
+            if (!UI::FoldBodyBegin(id, reveal, indices.size() * rowStride, maxBodyH))
+                return;
+
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float gap = 4.0f * d;
+            ImFont* nameFont = ImGuiM3FontMedium();
+            const float namePx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyMedium).size * d;
+            const ImU32 nameCol = ImGui::GetColorU32(nameColor);
+
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(indices.size()), rowStride);
+            while (clipper.Step())
             {
-                for (const auto& [name, path, success, error] : results)
+                for (int k = clipper.DisplayStart; k < clipper.DisplayEnd; ++k)
                 {
-                    if (success)
-                        continue;
+                    const auto& [name, path, success, error] = results[indices[static_cast<size_t>(k)]];
+                    ImGui::PushID(k);
+                    const ImVec2 itemMin = ImGui::GetCursorScreenPos();
+                    const float itemW = ImMax(ImGui::GetContentRegionAvail().x, 1.0f);
+                    ImGui::InvisibleButton("##shader_row", ImVec2(itemW, rowStride));
+                    const bool hovered = ImGui::IsItemHovered();
+                    const ImRect itemRect(ImVec2(itemMin.x, itemMin.y + gap * 0.5f),
+                                          ImVec2(itemMin.x + itemW, itemMin.y + rowStride - gap * 0.5f));
+                    const float rr = ImGuiM3Radius(ImGuiM3Shape_Small);
+                    const ImGuiM3ShapeRounding round{ rr, rr, rr, rr };
+                    ImGuiM3PathRoundedRect(dl, itemRect, round, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainer));
+                    if (hovered)
+                        ImGuiM3DrawStateLayer(dl, itemRect, round, ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
 
-                    ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
-                    // Use path as unique ID to avoid conflicts with duplicate names
-                    if (ImGui::TreeNode(path.c_str(), "%s", name.c_str()))
-                    {
-                        ImGui::PopStyleColor();
-                        ImGui::TextDisabled("Path: %s", path.c_str());
-                        ImGui::TextWrapped("Error: %s", error.c_str());
-                        ImGui::TreePop();
-                    }
-                    else
-                    {
-                        ImGui::PopStyleColor();
-                        if (ImGui::IsItemHovered() && !error.empty())
-                            ImGui::SetTooltip("%s", error.c_str());
-                    }
-                }
-                ImGui::TreePop();
-            }
-        }
-
-        // Show depth shaders (if any)
-        if (depthCount > 0)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, UI::Secondary());
-            bool depthOpen = ImGui::TreeNode("DepthShaders", "Depth Shaders (%d)", depthCount);
-            ImGui::PopStyleColor();
-
-            if (depthOpen)
-            {
-                for (const auto& [name, path, success, error] : results)
-                {
-                    if (!success || !depthShaderNames.count(name))
-                        continue;
-
-                    ImGui::TextColored(UI::Secondary(), "%s", name.c_str());
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s", path.c_str());
+                    const ImVec2 nameSize = ImGui::CalcTextSize(name.c_str());
+                    dl->AddText(nameFont, namePx,
+                                ImVec2(itemMin.x + 14.0f * d, itemRect.GetCenter().y - nameSize.y * 0.5f),
+                                nameCol, name.c_str());
 
                     if (!error.empty())
                     {
-                        ImGui::SameLine();
-                        ImGui::TextColored(UI::Attention(), "(warnings)");
-                        if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("%s", error.c_str());
+                        const float warnPx = 11.0f * d;
+                        ImFont* bodyBold = ImGuiM3FontBodyBold();
+                        dl->AddText(bodyBold, warnPx,
+                                    ImVec2(itemRect.Max.x - 16.0f * d - ImGui::CalcTextSize("warnings").x * 0.75f,
+                                           itemRect.GetCenter().y - warnPx * 0.7f),
+                                    ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant), "warnings");
                     }
-                }
-                ImGui::TreePop();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("These shaders require depth buffer access.");
-        }
 
-        // Show passed shaders (excluding depth shaders — they have their own section)
-        int safeCount = static_cast<int>(results.size()) - failCount - depthCount;
-        if (safeCount > 0)
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, UI::Success());
-            bool passedOpen = ImGui::TreeNode("PassedShaders", "Safe Shaders (%d)", safeCount);
-            ImGui::PopStyleColor();
-
-            if (passedOpen)
-            {
-                for (const auto& [name, path, success, error] : results)
-                {
-                    if (!success || depthShaderNames.count(name))
-                        continue;
-
-                    ImGui::TextColored(UI::Success(), "%s", name.c_str());
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s", path.c_str());
-
-                    // Show warnings if any
-                    if (!error.empty())
+                    if (hovered)
                     {
-                        ImGui::SameLine();
-                        ImGui::TextColored(UI::Attention(), "(warnings)");
-                        if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("%s", error.c_str());
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted(path.c_str());
+                        if (!error.empty())
+                        {
+                            ImGui::PushTextWrapPos(460.0f * d);
+                            ImGui::TextColored(UI::Attention(), "%s", error.c_str());
+                            ImGui::PopTextWrapPos();
+                        }
+                        ImGui::EndTooltip();
                     }
+                    ImGui::PopID();
                 }
-                ImGui::TreePop();
             }
-        }
+            UI::FoldBodyEnd();
+            (void)tooltip;
+        };
+
+        renderGroup("##failed_shader_group", "Failed shaders", failed,
+                    "These shaders did not compile.", &failedOpen, UI::Error());
+        renderGroup("##depth_shader_group", "Depth shaders", depth,
+                    "These shaders require depth buffer access.", &depthOpen, UI::Secondary());
+        renderGroup("##safe_shader_group", "Safe shaders", safe,
+                    "Compiled cleanly and need no depth buffer.", &safeOpen, UI::Success());
     }
 
 } // namespace VKIntox

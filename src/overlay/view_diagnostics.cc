@@ -3,6 +3,8 @@
 #include "logger.hh"
 #include "overlay/ui_theme.hh"
 #include "overlay/ui_icons.hh"
+#include "input_blocker.hh"
+#include "wayland_display.hh"
 
 #include <fstream>
 #include <filesystem>
@@ -67,6 +69,20 @@ namespace VKIntox
                 for (size_t i = 0; i < count; i++)
                     sum += get(i);
                 return sum / static_cast<T>(count);
+            }
+
+            // value at proportion p of the sorted samples (p=0.99 -> 99th
+            // percentile). used for frametime lows.
+            T percentile(float p) const
+            {
+                if (count == 0) return T{};
+                T sorted[N];
+                for (size_t i = 0; i < count; i++)
+                    sorted[i] = get(i);
+                std::sort(sorted, sorted + count);
+                const int last = static_cast<int>(count) - 1;
+                const int idx = std::clamp(static_cast<int>(last * p + 0.5f), 0, last);
+                return sorted[idx];
             }
 
             // Get data as contiguous array for ImGui plotting
@@ -319,6 +335,7 @@ namespace VKIntox
         static int   g_fpsFrameCount = 0;
         static float g_dispFps = 0.0f;
         static float g_dispFps1Low = 0.0f;
+        static float g_dispFps01Low = 0.0f;
         static float g_dispGpuUsage = -1.0f;
         static float g_dispVramUsed = 0.0f, g_dispVramTotal = 0.0f;
         static float g_dispGttUsed = 0.0f, g_dispGttTotal = 0.0f;
@@ -436,8 +453,10 @@ namespace VKIntox
             // Stats below graph
             if (history.size() > 0)
             {
+                UI::PushSupport();
                 ImGui::TextDisabled("Min: %.1f  Avg: %.1f  Max: %.1f",
                     history.min(), history.avg(), history.max());
+                UI::PopSupport();
             }
         }
     }
@@ -476,7 +495,11 @@ namespace VKIntox
         if (windowSeconds >= 1.0)
         {
             g_dispFps = static_cast<float>(g_fpsFrameCount) / static_cast<float>(windowSeconds);
-            g_dispFps1Low = frameTimeHistory.max() > 0.0f ? 1000.0f / frameTimeHistory.max() : 0.0f;
+            // frametime percentiles: the worst 1% / 0.1% of frames expressed as FPS.
+            const float p99  = frameTimeHistory.percentile(0.99f);
+            const float p999 = frameTimeHistory.percentile(0.999f);
+            g_dispFps1Low  = p99  > 0.0f ? 1000.0f / p99  : 0.0f;
+            g_dispFps01Low = p999 > 0.0f ? 1000.0f / p999 : 0.0f;
             g_dispGpuUsage = gpuInfo.hasGpuUsage ? getGpuUsage() : -1.0f;
             g_dispHasVram = getVramUsage(g_dispVramUsed, g_dispVramTotal);
             g_dispHasGtt = getGttUsage(g_dispGttUsed, g_dispGttTotal);
@@ -508,24 +531,32 @@ namespace VKIntox
 
     void ImGuiOverlay::renderDiagnosticsView()
     {
+        // Pushed page: the crumb leads back to Settings, where it lives now.
+        if (UI::BreadcrumbBar("Go back", Icon::ChevronLeftUtf8))
+        {
+            openSubView = SubView_None;
+            return;
+        }
+        ImGui::Spacing();
+
         ImGui::BeginChild("DiagnosticsContent", ImVec2(0, 0), false);
 
         // FPS is sampled every frame in sampleDiagnostics(); this view only reads
         // the latest values, so opening the tab shows real history, not zeros.
         const float fps = g_dispFps;
         const float fps1Low = g_dispFps1Low;
+        const float fps01Low = g_dispFps01Low;
 
         // --- Performance ---
         ImGui::M3CardBegin("diag_perf", "Performance", Icon::SpeedUtf8);
         {
-            ImFont* heroFont = ImGuiM3FontBold();
-            if (!heroFont)
-                heroFont = ImGui::GetIO().Fonts->Fonts[0];
-            ImGui::PushFont(heroFont, ImGui::GetFontSize() * 2.4f);
+            ImGuiM3PushTextStyle(ImGuiM3Type_DisplaySmall);
             ImGui::TextColored(UI::Success(), "%.0f FPS", fps);
-            ImGui::PopFont();
+            ImGuiM3PopTextStyle();
             ImGui::SameLine();
-            ImGui::TextDisabled("(1%% low: %.0f)", fps1Low);
+            UI::PushSupport();
+            ImGui::TextDisabled("(1%% low: %.0f   ·   0.1%% low: %.0f)", fps1Low, fps01Low);
+            UI::PopSupport();
         }
         ImGui::Spacing();
         drawGraph("Frame Time", "##frametime", frameTimeHistory, 0.0f, 50.0f, "%.1f ms", UI::GraphColor(0));
@@ -539,12 +570,9 @@ namespace VKIntox
             // from DRM card order
             if (!deviceInfo.gpuName.empty())
             {
-                ImFont* bold = ImGuiM3FontBold();
-                if (bold)
-                    ImGui::PushFont(bold, ImGui::GetFontSize());
+                ImGuiM3PushTextStyle(ImGuiM3Type_TitleMedium);
                 ImGui::TextUnformatted(deviceInfo.gpuName.c_str());
-                if (bold)
-                    ImGui::PopFont();
+                ImGuiM3PopTextStyle();
 
                 std::string info;
                 if (deviceInfo.gpuApiVersion)
@@ -554,11 +582,15 @@ namespace VKIntox
                 if (!deviceInfo.gpuDriverInfo.empty())
                     info += info.empty() ? deviceInfo.gpuDriverInfo : "  ·  " + deviceInfo.gpuDriverInfo;
                 if (!info.empty())
+                {
+                    UI::PushSupport();
                     ImGui::TextDisabled("%s", info.c_str());
+                    UI::PopSupport();
+                }
             }
             else if (gpuInfo.vendor != GpuVendor::Unknown)
             {
-                ImGui::TextDisabled("%s", gpuInfo.vendorName.c_str());
+                UI::TextSupport(gpuInfo.vendorName.c_str());
             }
             ImGui::Spacing();
 
@@ -569,7 +601,11 @@ namespace VKIntox
                     const char* usageLabel = (gpuInfo.vendor == GpuVendor::Intel) ? "GPU Frequency" : "GPU Usage";
                     drawGraph(usageLabel, "##gpuusage", gpuUsageHistory, 0.0f, 100.0f, "%.0f%%", UI::GraphColor(1));
                     if (gpuInfo.vendor == GpuVendor::Intel)
+                    {
+                        UI::PushSupport();
                         ImGui::TextDisabled("(estimated from frequency ratio)");
+                        UI::PopSupport();
+                    }
                     ImGui::Spacing();
                 }
             }
@@ -595,25 +631,88 @@ namespace VKIntox
         }
         if (deviceInfo.gpuName.empty())
         {
+            UI::PushSupport();
             ImGui::TextDisabled("GPU stats not available.");
             ImGui::TextDisabled("No AMD/Intel/NVIDIA GPU detected via sysfs.");
+            UI::PopSupport();
         }
         ImGui::M3CardEnd();
 
         // --- Game ---
         ImGui::Spacing();
-        ImGui::M3CardBegin("diag_game", "Game", Icon::PlayArrowUtf8);
+        ImGui::M3CardBegin("diag_game", "Game", Icon::JoystickUtf8);
         if (!detectedGameName.empty())
         {
             ImGui::Text("Executable: %s", detectedGameName.c_str());
             if (!autoDetectedConfig.empty())
                 ImGui::TextColored(UI::Success(), "%s  Config: %s.conf (auto-detected)", Icon::CheckCircleUtf8, autoDetectedConfig.c_str());
             else
-                ImGui::TextDisabled("No per-game config found.");
+                UI::TextSupport("No per-game config found.");
         }
         else
         {
-            ImGui::TextDisabled("Could not detect the game executable.");
+            UI::TextSupport("Could not detect the game executable.");
+        }
+        ImGui::M3CardEnd();
+
+        // --- Input ---
+        ImGui::Spacing();
+        ImGui::M3CardBegin("diag_input", "Input", Icon::KeyboardUtf8);
+        {
+            const SurfaceKind kind = getSurfaceKind();
+            const bool wayland = kind == SurfaceKind::Wayland;
+            const bool x11 = kind == SurfaceKind::X11;
+
+            ImGui::Text("Backend:");
+            ImGui::SameLine();
+            if (wayland || x11)
+                ImGui::TextColored(UI::Success(), "%s", wayland ? "Wayland" : "X11");
+            else
+                ImGui::TextColored(UI::Warning(), "Unknown (unsupported surface)");
+
+            const bool enabled = inputBlockingEnabled();
+            ImGui::Text("Blocking:");
+            ImGui::SameLine();
+            if (enabled)
+                ImGui::TextColored(UI::Success(), "enabled");
+            else
+                ImGui::TextDisabled("disabled (see Settings)");
+
+            if (wayland)
+            {
+                ImGui::Text("Keys withheld from the game:");
+                ImGui::SameLine();
+                if (inputKeyboardWithheld())
+                    ImGui::TextColored(UI::Success(), "yes");
+                else
+                    ImGui::TextDisabled("no");
+            }
+            else if (x11)
+            {
+                ImGui::Text("Grab held:");
+                ImGui::SameLine();
+                if (inputGrabActive())
+                    ImGui::TextColored(UI::Success(), "yes");
+                else
+                    ImGui::TextDisabled("no");
+            }
+
+            ImGui::Text("Overlay on screen:");
+            ImGui::SameLine();
+            if (isInputBlocked())
+                ImGui::TextColored(UI::Success(), "yes");
+            else
+                ImGui::TextDisabled("no");
+
+            if (enabled)
+            {
+                ImGui::Text("Pointer over overlay:");
+                ImGui::SameLine();
+                if (inputPointerOverOverlay())
+                    ImGui::TextColored(UI::Success(), "yes");
+                else
+                    ImGui::TextDisabled("no");
+            }
         }
         ImGui::M3CardEnd();
 

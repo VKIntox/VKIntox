@@ -20,6 +20,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/imgui_internal.h"
@@ -94,37 +97,6 @@ namespace VKIntox
 
             ImGui::PopID();
             return changed;
-        }
-
-        // Section title for a card: leading icon plus an emphasized primary
-        // label, matching the parameters sheet header. Reserves the row.
-        inline float drawCardHeaderRow(const char* iconUtf8, const char* title)
-        {
-            const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-            const float h = ImGui::GetFrameHeight() + 4.0f * m.density;
-            const ImVec2 min = ImGui::GetCursorScreenPos();
-            const float w = ImGui::GetContentRegionAvail().x;
-            ImGui::Dummy(ImVec2(w, h));
-
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            const float iconPx = ImGui::GetFontSize() * 1.35f;
-            const float padX = 6.0f * m.density;
-            float x = min.x + padX;
-            if (ImGuiM3IconFont() && iconUtf8)
-            {
-                ImGuiM3DrawIcon(dl, iconUtf8,
-                                ImRect(ImVec2(x, min.y + (h - iconPx) * 0.5f),
-                                       ImVec2(x + iconPx, min.y + (h + iconPx) * 0.5f)),
-                                iconPx, ImGuiM3ColorU32(ImGuiM3Role_Primary));
-                x += iconPx + 8.0f * m.density;
-            }
-            ImFont* font = ImGuiM3FontBold();
-            if (!font)
-                font = ImGui::GetFont();
-            const float fs = ImGui::GetFontSize();
-            dl->AddText(font, fs, ImVec2(x, min.y + (h - fs) * 0.5f),
-                        ImGuiM3ColorU32(ImGuiM3Role_Primary), title);
-            return h;
         }
 
         // Fallback picker when the xdg portal is unavailable; mirrors the
@@ -243,7 +215,6 @@ namespace VKIntox
                     ImGui::TreePop();
                 }
                 ImGui::Spacing();
-                ImGui::Separator();
                 ImGui::Spacing();
             }
 
@@ -251,7 +222,7 @@ namespace VKIntox
             // edit needs no rebuild.
             auto effectParams = effectRegistry->getParametersForEffect(effectName);
             if (effectParams.empty() && defs.empty())
-                ImGui::TextDisabled("This effect has no adjustable parameters.");
+                UI::TextSupport("This effect has no adjustable parameters.");
             for (size_t paramIdx = 0; paramIdx < effectParams.size(); paramIdx++)
             {
                 ImGui::PushID(static_cast<int>(paramIdx));
@@ -264,17 +235,63 @@ namespace VKIntox
 
         // Normal mode - show profile and effect controls
 
-        // Profile section — auto-detected game with fixed config and shader INI selector
+        // Profile row: the active shader preset, with its actions flush right.
+        // The label is drawn rather than emitted so it can be centred against the
+        // field it names, at the document face's weight.
         if (!activeGameName.empty())
         {
-            ImGui::TextColored(UI::Success(), "%s  %s", Icon::JoystickUtf8, activeGameName.c_str());
+            const ImGuiM3Metrics& profileMetrics = ImGuiM3GetMetrics();
+            const float profileD = profileMetrics.density;
+            const bool hasShaderProfile = !activeShaderProfileName.empty();
 
-            ImGui::AlignTextToFramePadding();
-            ImGui::Text("%s  Shader INI:", Icon::BrushUtf8);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(150);
+            const float profileIconWidth = profileMetrics.icon_button_size * profileD;
+            const int profileActionCount = hasShaderProfile ? 4 : 2;
+            const float profileActionsWidth =
+                profileIconWidth * (float)profileActionCount +
+                ImGui::GetStyle().ItemSpacing.x * (float)(profileActionCount - 1);
+            const float actionsX = ImGui::GetWindowWidth() - profileActionsWidth -
+                                   ImGui::GetCurrentWindowRead()->WindowPadding.x;
+
+            const float rowH = ImGui::GetFrameHeight();
+            const ImVec2 rowPos = ImGui::GetCursorScreenPos();
+
+            const std::string profileLabelText = std::string(Icon::BrushUtf8) + "  Profile:";
+            ImFont* profileLabelFont = ImGuiM3FontBold();
+            const float profileLabelPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * profileD;
+            ImGui::PushFont(profileLabelFont, profileLabelPx);
+            const ImVec2 profileLabelSize = ImGui::CalcTextSize(profileLabelText.c_str());
+            ImGui::PopFont();
+            ImGui::GetWindowDrawList()->AddText(
+                profileLabelFont, profileLabelPx,
+                ImVec2(rowPos.x + 2.0f * profileD, rowPos.y + (rowH - profileLabelSize.y) * 0.5f),
+                ImGuiM3ColorU32(ImGuiM3Role_OnSurface), profileLabelText.c_str());
+
+            // the field starts after the label and stops before the actions
+            const float fieldX = rowPos.x + profileLabelSize.x + 20.0f * profileD;
+            // fixed at its widest unless the panel is too narrow: it used to grow
+            // with the window, so dragging the shell looked like resizing the field
+            const float fieldRoom = actionsX - fieldX - 16.0f * profileD;
+            const float fieldW = ImClamp(220.0f * profileD, 90.0f * profileD, ImMax(fieldRoom, 90.0f * profileD));
+            ImGui::SetCursorScreenPos(ImVec2(fieldX, rowPos.y));
+            // the pill the elevated buttons use: a small radius here put a tight
+            // ring at the field's corners and read as a cut-off shadow
+            const float fieldR = ImMin(rowH * 0.5f, ImGuiM3Radius(ImGuiM3Shape_Full));
+            ImGuiM3ShapeRounding fieldRound{ fieldR, fieldR, fieldR, fieldR };
+            ImGuiM3DrawElevation(ImGui::GetWindowDrawList(),
+                                 ImRect(ImVec2(fieldX, rowPos.y),
+                                        ImVec2(fieldX + fieldW, rowPos.y + rowH)),
+                                 fieldRound, 1);
+            ImGui::SetNextItemWidth(fieldW);
             const char* shaderLabel = activeShaderProfileName.empty() ? "None" : activeShaderProfileName.c_str();
-            const float previewBudget = ImMax(24.0f, ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - 8.0f);
+            const float previewBudget = ImMax(24.0f, fieldW - ImGui::GetFrameHeight() - 8.0f);
+            // The field and its menu carry an opaque container so a bright game frame
+            // behind the blurred backdrop can't wash them out.
+            const ImVec4 fieldBg = ImGuiM3Color(ImGuiM3Role_SurfaceContainerHighest);
+            const ImVec4 menuBg = ImGuiM3Color(ImGuiM3Role_SurfaceContainerHigh);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, fieldBg);
+            ImGui::PushStyleColor(ImGuiCol_PopupBg, menuBg);
+            // the frame carries the same radius as its shadow
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, fieldR);
             if (UI::BeginM3Combo("##shaderprofile", UI::TruncateLabel(shaderLabel, previewBudget)))
             {
                 for (const auto& profile : shaderProfiles)
@@ -288,38 +305,24 @@ namespace VKIntox
                 }
                 UI::EndM3Combo();
             }
-            // the profile actions sit flush right, like the effects row below
-            const ImGuiM3Metrics& profileMetrics = ImGuiM3GetMetrics();
-            const bool hasShaderProfile = !activeShaderProfileName.empty();
-            const float profileIconWidth = ImGui::CalcTextSize(Icon::AddUtf8).x +
-                                           profileMetrics.button_padding_x * 2.0f * profileMetrics.density;
-            const int profileActionCount = hasShaderProfile ? 4 : 2;
-            const float profileActionsWidth =
-                profileIconWidth * (float)profileActionCount +
-                ImGui::GetStyle().ItemSpacing.x * (float)(profileActionCount - 1);
-            ImGui::SameLine(ImGui::GetWindowWidth() - profileActionsWidth -
-                            ImGui::GetCurrentWindowRead()->WindowPadding.x);
-            const std::string newProfileLabel = std::string(Icon::AddUtf8) + "##newshaderprofile";
-            if (ImGui::Button(newProfileLabel.c_str()))
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(2);
+            ImGui::SameLine(actionsX);
+            if (ImGui::M3IconButton(Icon::AddUtf8, "Create shader INI profile", ImGuiM3Button_Tonal))
                 ImGui::OpenPopup("NewShaderProfilePopup");
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Create shader INI profile");
             static std::string deleteProfileTarget;
             static std::string renameProfileTarget;
             static char renameShaderProfileName[64] = "";
             if (!activeShaderProfileName.empty())
             {
                 ImGui::SameLine();
-                const std::string editProfileLabel = std::string(Icon::EditUtf8) + "##editshaderprofile";
-                if (ImGui::Button(editProfileLabel.c_str()))
+                if (ImGui::M3IconButton(Icon::EditUtf8, "Rename shader INI profile", ImGuiM3Button_Tonal))
                 {
                     renameProfileTarget = activeShaderProfileName;
                     std::snprintf(renameShaderProfileName, sizeof(renameShaderProfileName), "%s",
                                   activeShaderProfileName.c_str());
                     ImGui::OpenPopup("##rename_shader_profile");
                 }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Rename shader INI profile");
 
                 if (UI::BeginM3Dialog("##rename_shader_profile", "Rename shader preset"))
                 {
@@ -381,14 +384,11 @@ namespace VKIntox
                 }
 
                 ImGui::SameLine();
-                const std::string delProfileLabel = std::string(Icon::DeleteUtf8) + "##delshaderprofile";
-                if (ImGui::Button(delProfileLabel.c_str()))
+                if (ImGui::M3IconButton(Icon::DeleteUtf8, "Delete shader INI profile", ImGuiM3Button_Tonal))
                 {
                     deleteProfileTarget = activeShaderProfileName;
                     ImGui::OpenPopup("##delete_shader_profile");
                 }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Delete shader INI profile");
 
                 if (UI::BeginM3Dialog("##delete_shader_profile", "Delete this shader preset?"))
                 {
@@ -438,15 +438,12 @@ namespace VKIntox
             }
             ImGui::SameLine();
             ImGui::BeginDisabled(fileDialogPending() || presetBrowser.IsOpened());
-            const std::string importProfileLabel = std::string(Icon::UploadUtf8) + "##importshaderprofile";
-            if (ImGui::Button(importProfileLabel.c_str()))
+            if (ImGui::M3IconButton(Icon::UploadUtf8, "Import a ReShade .ini preset", ImGuiM3Button_Tonal))
             {
                 if (!startOpenFileDialog("Import ReShade preset", {"*.ini"}))
                     openPresetBrowser();
             }
             ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Import a ReShade .ini preset");
             if (UI::BeginM3Dialog("NewShaderProfilePopup", "New shader INI preset"))
             {
                 static char newShaderProfileName[64] = "";
@@ -499,38 +496,10 @@ namespace VKIntox
                 configListRefreshPending = true;
             }
         }
-        ImGui::Separator();
 
-        // toggle and actions share one row: switch on the left, actions
-        // right-aligned, with a single separator above and below the group.
-        bool effectsOn = state.effectsEnabled;
-        if (ImGui::Checkbox(effectsOn ? "Effects ON" : "Effects OFF", &effectsOn))
-            toggleEffectsRequested = true;
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("(Toggle keybind bound to %s)", settingsManager.getToggleKey().c_str());
-
-        const std::string clearAllLabel = std::string(Icon::DeleteUtf8) + "  Clear all";
-        const std::string addEffectsLabel = std::string(Icon::AddUtf8) + "  Add effects...";
-        const ImGuiM3Metrics& m3m = ImGuiM3GetMetrics();
-        const float clearW = ImGui::CalcTextSize(clearAllLabel.c_str()).x + m3m.button_padding_x * 2.0f * m3m.density;
-        const float addW = ImGui::CalcTextSize(addEffectsLabel.c_str()).x + m3m.button_padding_x * 2.0f * m3m.density;
-        ImGui::SameLine(ImGui::GetWindowWidth() - (clearW + addW + ImGui::GetStyle().ItemSpacing.x) -
-                        ImGui::GetCurrentWindowRead()->WindowPadding.x);
-        ImGui::BeginDisabled(selectedEffects.empty());
-        if (ImGui::M3Button(clearAllLabel.c_str(), ImGuiM3Button_DestructiveOutlined))
-            ImGui::OpenPopup("##clear_all_confirm");
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::M3Button(addEffectsLabel.c_str(), ImGuiM3Button_Filled))
-        {
-            inSelectionMode = true;
-            addEffectsFocusSearch = true;
-            insertPosition = -1;  // Append to end
-            pendingAddEffects.clear();
-            addEffectsDuplicateCount.clear();
-            addEffectsRemoved.clear();
-        }
+        // The master switch, the clear/add actions and the card's hero now share
+        // one row (in the card below), so all that is left up here is the hint.
+        UI::TextSupport(("Toggle keybind bound to " + settingsManager.getToggleKey()).c_str());
 
         // Destructive action, so confirm it through the shared dialog frame.
         const std::string clearPresetName = !activeShaderProfileName.empty() ? activeShaderProfileName : activeProfileName;
@@ -565,6 +534,13 @@ namespace VKIntox
         static bool  paramsFolded = true;
         static float paramsSheetHeight = -1.0f;   // px, remembered while unfolded
         static bool  paramsSheetUserSized = false;
+        // 0 collapsed, 1 expanded. Spring-driven so a fold/unfold/fold burst keeps
+        // its momentum instead of snapping to a stale sample.
+        static float  paramsFoldT = 0.0f;
+        // per-effect inline unfold state for the all-in-one card
+        static std::unordered_map<std::string, bool>  inlineParamsOpen;
+        static std::unordered_map<std::string, float> inlineParamsHeight;
+        static std::unordered_map<std::string, int>   inlineParamsWarmup;
         static std::string paramsActiveEffect;
         static std::string paramsSlideShown;      // last effect whose body was shown
         static std::string paramsSlideFrom;       // effect sliding out
@@ -582,34 +558,101 @@ namespace VKIntox
         const float availH = ImGui::GetContentRegionAvail().y;
         const float minListH = 110.0f * listMetrics.density;
         const float minSheetH = 210.0f * listMetrics.density;
-        const float sheetReserve = footerHeight + (paramsFolded ? 0.0f : resizeHandleH + cardSpacing * 2.0f);
+
+        // fold progress toward the target: the expressive spatial spring, fast and
+        // critically damped, so it settles quickly and never rewinds on a re-click.
+        const float foldTarget = paramsFolded ? 0.0f : 1.0f;
+        if (splitParams)
+            paramsFoldT = ImClamp(UI::FoldProgress(ImGui::GetID("##params_fold_spring"), !paramsFolded), 0.0f, 1.0f);
+        else
+            paramsFoldT = foldTarget;
+
+        const float sheetReserve = footerHeight + resizeHandleH + cardSpacing * 2.0f;
         const float maxSheetH = ImMax(minSheetH, availH - sheetReserve - minListH);
 
-        float sheetHeight = 0.0f;
+        // the sheet's resting height while open (also the height the body lays
+        // out at, so it is revealed rather than squashed)
+        float expandedSheetH = sheetHeaderH;
         if (splitParams)
         {
-            sheetHeight = sheetHeaderH;
-            if (!paramsFolded)
-            {
-                // lean tall, and taller the more effects there are to edit
-                const float effectBias = ImClamp(0.70f + 0.05f * (float)displayedEffects.size(), 0.70f, 0.94f);
-                if (!paramsSheetUserSized || paramsSheetHeight <= 0.0f)
-                    paramsSheetHeight = ImClamp(availH * effectBias, minSheetH, maxSheetH);
-                sheetHeight = ImClamp(paramsSheetHeight, minSheetH, maxSheetH);
-            }
+            // lean tall, and taller the more effects there are to edit
+            const float effectBias = ImClamp(0.70f + 0.05f * (float)displayedEffects.size(), 0.70f, 0.94f);
+            if (!paramsSheetUserSized || paramsSheetHeight <= 0.0f)
+                paramsSheetHeight = ImClamp(availH * effectBias, minSheetH, maxSheetH);
+            expandedSheetH = ImClamp(paramsSheetHeight, minSheetH, maxSheetH);
         }
+
+        const float foldOvershoot = splitParams ? ImClamp(paramsFoldT, 0.0f, 1.0f) : 0.0f;
+        float sheetHeight = 0.0f;
+        if (splitParams)
+            sheetHeight = ImMin(sheetHeaderH + (expandedSheetH - sheetHeaderH) * foldOvershoot, maxSheetH);
 
         const float handleReserve = (splitParams && !paramsFolded) ? resizeHandleH + cardSpacing * 2.0f : 0.0f;
         const float listReserve = footerHeight + sheetHeight + handleReserve;
 
         // The effect list is its own labelled card: toggling and reordering only.
+        // A level-1 shadow lifts it off the shell, like an expressive list card.
+        {
+            const ImVec2 cardPos = ImGui::GetCursorScreenPos();
+            // hug the card, not the space reserved under it, or it reads as a band
+            const float cardH = ImMax(ImGui::GetContentRegionAvail().y - listReserve, 1.0f);
+            const ImVec2 cardSize(ImGui::GetContentRegionAvail().x, cardH);
+            const float cr = ImGuiM3Radius(ImGuiM3Shape_LargeIncreased);
+            ImGuiM3DrawElevation(ImGui::GetWindowDrawList(),
+                                 ImRect(cardPos, ImVec2(cardPos.x + cardSize.x, cardPos.y + cardSize.y)),
+                                 ImGuiM3ShapeRounding{ cr, cr, cr, cr }, 1);
+        }
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * listMetrics.density, 10.0f * listMetrics.density));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_LargeIncreased));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f * listMetrics.density, 16.0f * listMetrics.density));
         ImGui::BeginChild("EffectListCard", ImVec2(0, -listReserve),
                           ImGuiChildFlags_AlwaysUseWindowPadding,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        drawCardHeaderRow(Icon::AutoAwesomeUtf8, "Effects");
+        {
+            // Hero row: accent disc + "Effects" on the left, then Clear all and
+            // Add effects, then the master switch, all on one line.
+            const std::string clearAllLabel = std::string(Icon::DeleteUtf8) + "  Clear all";
+            const std::string addEffectsLabel = std::string(Icon::AddUtf8) + "  Add effects...";
+            const float d = listMetrics.density;
+            const float actionH = 36.0f * d;
+
+            // the buttons' own measurement, so both pills get identical padding
+            const float clearW = ImGui::M3ButtonWidth(clearAllLabel.c_str());
+            const float addW = ImGui::M3ButtonWidth(addEffectsLabel.c_str());
+            const float switchScale = 1.15f;
+            const float switchW = listMetrics.switch_track_width * d * switchScale;
+            const float gap = 10.0f * d;
+
+            ImRect heroRow;
+            bool effectsOn = state.effectsEnabled;
+            // the switch owns the right edge; the actions are laid out to its left
+            if (ImGui::M3HeroSwitch(Icon::WandShineUtf8, "Effects", "##effects_master", &effectsOn,
+                                    "Master switch for every effect in this preset.", switchScale,
+                                    0.0f, &heroRow))
+                toggleEffectsRequested = true;
+
+            const float rowCy = heroRow.GetCenter().y;
+            float x = heroRow.Max.x - switchW - gap - clearW - gap - addW;
+            ImGui::SetCursorScreenPos(ImVec2(x, rowCy - actionH * 0.5f));
+            ImGui::BeginDisabled(selectedEffects.empty());
+            if (ImGui::M3Button(clearAllLabel.c_str(), ImGuiM3Button_DestructiveOutlined,
+                                ImVec2(clearW, actionH)))
+                ImGui::OpenPopup("##clear_all_confirm");
+            ImGui::EndDisabled();
+            x += clearW + gap;
+            ImGui::SetCursorScreenPos(ImVec2(x, rowCy - actionH * 0.5f));
+            if (ImGui::M3Button(addEffectsLabel.c_str(), ImGuiM3Button_Filled, ImVec2(addW, actionH)))
+            {
+                inSelectionMode = true;
+                addEffectsFocusSearch = true;
+                insertPosition = -1;  // Append to end
+                pendingAddEffects.clear();
+                addEffectsDuplicateCount.clear();
+                addEffectsRemoved.clear();
+            }
+            ImGui::SetCursorScreenPos(ImVec2(heroRow.Min.x, heroRow.Max.y));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        }
         ImGui::Spacing();
         // borderless child: no padding of its own, the card already insets it
         ImGui::BeginChild("EffectList", ImVec2(0, 0));
@@ -681,35 +724,85 @@ namespace VKIntox
 
             ImGui::SameLine();
 
-            // name row: in split mode it jumps to the effect's tab in the
-            // parameters card; otherwise it expands to edit params inline.
+            // name row: a rounded surface of its own, name on the document face,
+            // parameter count as trailing metadata. In split mode it jumps to the
+            // effect's tab in the parameters card; otherwise it unfolds that
+            // effect's parameters in place, spring-animated.
             bool treeOpen = false;
-            if (splitParams)
             {
-                if (effectFailed)
-                    ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
-                ImGui::Selectable(effectName.c_str(), false, ImGuiSelectableFlags_None,
-                                  ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
-                if (effectFailed)
-                    ImGui::PopStyleColor();
+                const ImVec2 namePos = ImGui::GetCursorScreenPos();
+                const float nameW = ImMax(ImGui::GetContentRegionAvail().x, 1.0f);
+                const float nameH = ImGui::GetFrameHeight();
+                ImGui::InvisibleButton("##name_row", ImVec2(nameW, nameH));
+                const bool nameHovered = ImGui::IsItemHovered();
+                const bool nameClicked = ImGui::IsItemClicked();
 
-                if (effectFailed && ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", effectError.c_str());
-                if (ImGui::IsItemClicked())
+                if (splitParams)
                 {
-                    paramsActiveEffect = effectName;
-                    paramsFolded = false;
+                    if (nameClicked)
+                    {
+                        paramsActiveEffect = effectName;
+                        paramsFolded = false;
+                    }
                 }
-            }
-            else
-            {
-                if (effectFailed)
-                    ImGui::PushStyleColor(ImGuiCol_Text, UI::Error());
-                treeOpen = ImGui::TreeNode("effect", "%s%s", effectName.c_str(),
-                                           effectFailed ? " (FAILED)" : "");
-                if (effectFailed)
-                    ImGui::PopStyleColor();
-                if (effectFailed && ImGui::IsItemHovered())
+                else
+                {
+                    if (nameClicked)
+                        inlineParamsOpen[effectName] = !inlineParamsOpen[effectName];
+                }
+                treeOpen = !splitParams && inlineParamsOpen[effectName];
+
+                ImDrawList* rowDl = ImGui::GetWindowDrawList();
+                const ImRect nameRect(namePos, ImVec2(namePos.x + nameW, namePos.y + nameH));
+                const float density = listMetrics.density;
+                const float padX = 10.0f * density;
+                const float nameRadius = ImGuiM3Radius(ImGuiM3Shape_Small);
+                if (nameHovered)
+                    ImGuiM3DrawStateLayer(rowDl, nameRect,
+                                          ImGuiM3ShapeRounding{ nameRadius, nameRadius, nameRadius, nameRadius },
+                                          ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
+
+                // trailing chevron, plus the parameter count as secondary metadata
+                const float chevronPx = ImGui::GetFontSize() * 1.05f;
+                const float chevronX = nameRect.Max.x - padX - chevronPx;
+                ImGuiM3TreeNodeArrow(rowDl, ImVec2(chevronX, nameRect.Min.y + (nameH - chevronPx) * 0.5f),
+                                     chevronPx, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant),
+                                     splitParams || treeOpen);
+
+                ImFont* metaFont = ImGuiM3FontBodyBold();
+                const float metaPx = 11.5f * density;
+                int paramCount = 0;
+                if (effectRegistry && !effectFailed)
+                    paramCount = static_cast<int>(effectRegistry->getParametersForEffect(effectName).size());
+                const std::string meta = effectFailed
+                    ? std::string("failed to compile")
+                    : std::to_string(paramCount) + (paramCount == 1 ? " parameter" : " parameters");
+                ImGui::PushFont(metaFont, metaPx);
+                const ImVec2 metaSize = ImGui::CalcTextSize(meta.c_str());
+                ImGui::PopFont();
+                rowDl->AddText(metaFont, metaPx,
+                               ImVec2(chevronX - 10.0f * density - metaSize.x,
+                                      nameRect.Min.y + (nameH - metaSize.y) * 0.5f),
+                               effectFailed ? ImGuiM3ColorU32(ImGuiM3Role_Error)
+                                            : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant),
+                               meta.c_str());
+
+                // the name itself, on the document face
+                ImFont* nameFont = ImGuiM3FontBold();
+                const float namePx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * density;
+                const float nameBudget = ImMax(24.0f, chevronX - 10.0f * density - metaSize.x -
+                                                      12.0f * density - (nameRect.Min.x + padX));
+                const char* shownName = UI::TruncateLabel(effectName.c_str(), nameBudget);
+                ImGui::PushFont(nameFont, namePx);
+                const ImVec2 nameSize = ImGui::CalcTextSize(shownName);
+                ImGui::PopFont();
+                rowDl->AddText(nameFont, namePx,
+                               ImVec2(nameRect.Min.x + padX, nameRect.Min.y + (nameH - nameSize.y) * 0.5f),
+                               effectFailed ? ImGuiM3ColorU32(ImGuiM3Role_Error)
+                                            : ImGuiM3ColorU32(ImGuiM3Role_OnSurface),
+                               shownName);
+
+                if (effectFailed && nameHovered)
                     ImGui::SetTooltip("%s", effectError.c_str());
             }
 
@@ -741,7 +834,6 @@ namespace VKIntox
                     lastChangeTime = std::chrono::steady_clock::now();
                 }
 
-                ImGui::Separator();
 
                 // Insert effects here
                 if (UI::M3MenuItem("Insert effects here..."))
@@ -764,7 +856,6 @@ namespace VKIntox
                     if (removeIt == selectedEffects.end())
                     {
                         UI::EndM3Menu();
-                        if (treeOpen) ImGui::TreePop();
                         ImGui::PopID();
                         break;
                     }
@@ -777,7 +868,6 @@ namespace VKIntox
                     applyRequested = true;
                     profileDirty = true;
                     UI::EndM3Menu();
-                    if (treeOpen) ImGui::TreePop();
                     ImGui::PopID();
                     break;  // Iterator invalidated — exit loop safely
                 }
@@ -843,16 +933,79 @@ namespace VKIntox
                 ImGui::EndDragDropTarget();
             }
 
-            // inline parameters for the all-in-one card
-            if (treeOpen)
+            // Inline parameters for the all-in-one card. The spring is stepped
+            // every frame, so opening *and* closing both animate from wherever the
+            // fold actually is; it only targets open once the body's height has
+            // been measured (see the warm-up pass below).
+            const ImGuiID inlineFoldId = ImGui::GetID("##inline_fold");
+            int& inlineWarmup = inlineParamsWarmup[effectName];
+            const bool inlineHasHeight = inlineParamsHeight[effectName] > 0.0f;
+            if (!treeOpen && !inlineHasHeight && inlineWarmup <= 0)
+                inlineWarmup = 2;
+            const float unfold = ImClamp(
+                UI::FoldProgress(inlineFoldId, treeOpen && inlineWarmup == 0, false, 1.6f), 0.0f, 1.0f);
+            if (treeOpen || unfold > 0.002f)
             {
-                if (renderEffectParams(effectName))
+                float& fullH = inlineParamsHeight[effectName];
+                const ImVec2 paramsPos = ImGui::GetCursorScreenPos();
+                const float paramsW = ImMax(ImGui::GetContentRegionAvail().x, 1.0f);
+                const ImGuiChildFlags paramsFlags = ImGuiChildFlags_AutoResizeY;
+                const ImGuiWindowFlags paramsWindowFlags = ImGuiWindowFlags_NoScrollbar |
+                                                           ImGuiWindowFlags_NoScrollWithMouse;
+
+                if (inlineWarmup > 0)
                 {
-                    paramsDirty = true;
-                    profileDirty = true;
-                    lastChangeTime = std::chrono::steady_clock::now();
+                    // Measure before revealing. AutoResizeY only settles on the real
+                    // content height on its second frame, and it cannot be measured
+                    // while clipped (clipped items contribute no extent) - which is
+                    // exactly why the old reveal came up short and then snapped open
+                    // when the animation ended.
+                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.0f);
+                    ImGui::BeginChild("##inline_params", ImVec2(0, 0), paramsFlags, paramsWindowFlags);
+                    renderEffectParams(effectName);
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                    const float measured = ImGui::GetItemRectSize().y;
+                    if (measured > 0.0f)
+                        fullH = measured;
+                    --inlineWarmup;
+                    ImGui::SetCursorScreenPos(paramsPos);
+                    ImGuiWindow* listWindow = ImGui::GetCurrentWindow();
+                    listWindow->DC.CursorMaxPos.y = ImMin(listWindow->DC.CursorMaxPos.y, paramsPos.y);
+                    ImGui::Dummy(ImVec2(0.0f, 0.0f));
                 }
-                ImGui::TreePop();
+                else
+                {
+                    const float targetH = ImMax(fullH, 1.0f);
+                    const bool settled = unfold >= 0.999f;
+                    const float revealH = settled ? targetH : targetH * unfold;
+                    if (!settled)
+                        ImGui::PushClipRect(paramsPos, ImVec2(paramsPos.x + paramsW, paramsPos.y + revealH), true);
+                    ImGui::BeginChild("##inline_params", ImVec2(0, 0), paramsFlags, paramsWindowFlags);
+                    if (renderEffectParams(effectName))
+                    {
+                        paramsDirty = true;
+                        profileDirty = true;
+                        lastChangeTime = std::chrono::steady_clock::now();
+                    }
+                    ImGui::EndChild();
+                    if (!settled)
+                    {
+                        ImGui::PopClipRect();
+                        // ride the reveal, so the rows below move with it
+                        ImGui::SetCursorScreenPos(ImVec2(paramsPos.x, paramsPos.y + revealH));
+                        ImGuiWindow* listWindow = ImGui::GetCurrentWindow();
+                        listWindow->DC.CursorMaxPos.y = ImMin(listWindow->DC.CursorMaxPos.y, paramsPos.y + revealH);
+                        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+                    }
+                    else
+                    {
+                        // fully open: re-learn the height from a clean layout
+                        const float measured = ImGui::GetItemRectSize().y;
+                        if (measured > 0.0f)
+                            fullH = measured;
+                    }
+                }
             }
 
             ImGui::PopID();
@@ -939,9 +1092,17 @@ namespace VKIntox
         // one tab per effect. Only shown when the all-in-one card is off.
         if (splitParams)
         {
+            {
+                const ImVec2 cardPos = ImGui::GetCursorScreenPos();
+                const ImVec2 cardSize(ImMax(ImGui::GetContentRegionAvail().x, 1.0f), sheetHeight);
+                const float cr = ImGuiM3Radius(ImGuiM3Shape_LargeIncreased);
+                ImGuiM3DrawElevation(ImGui::GetWindowDrawList(),
+                                     ImRect(cardPos, ImVec2(cardPos.x + cardSize.x, cardPos.y + cardSize.y)),
+                                     ImGuiM3ShapeRounding{ cr, cr, cr, cr }, 2);
+            }
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * listMetrics.density, 10.0f * listMetrics.density));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_LargeIncreased));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f * listMetrics.density, 16.0f * listMetrics.density));
             ImGui::BeginChild("EffectParamsCard", ImVec2(0, sheetHeight),
                               ImGuiChildFlags_AlwaysUseWindowPadding,
                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -954,7 +1115,9 @@ namespace VKIntox
                 ImGui::InvisibleButton("##params_fold", ImVec2(headW, headH));
                 const bool headHovered = ImGui::IsItemHovered();
                 if (ImGui::IsItemClicked())
+                {
                     paramsFolded = !paramsFolded;
+                }
 
                 ImDrawList* headDl = ImGui::GetWindowDrawList();
                 const ImRect headRect(headMin, ImVec2(headMin.x + headW, headMin.y + headH));
@@ -978,7 +1141,7 @@ namespace VKIntox
                 ImFont* titleFont = ImGuiM3FontBold();
                 if (!titleFont)
                     titleFont = ImGui::GetFont();
-                const float titleSize = ImGui::GetFontSize();
+                const float titleSize = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleMedium).size * listMetrics.density;
                 headDl->AddText(titleFont, titleSize,
                                 ImVec2(x, headMin.y + (headH - titleSize) * 0.5f),
                                 ImGuiM3ColorU32(ImGuiM3Role_Primary), "Effect Parameters");
@@ -988,12 +1151,17 @@ namespace VKIntox
                                      iconPx, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant), !paramsFolded);
             }
 
-            if (!paramsFolded)
+            if (paramsFoldT > 0.01f)
             {
+                // the body lays out at its full open height and the card clips it,
+                // so the fold reveals the sheet rather than squashing it
+                const float bodyH = ImMax(0.0f, expandedSheetH - sheetHeaderH);
+                ImGui::BeginChild("##params_body", ImVec2(0, bodyH), ImGuiChildFlags_None,
+                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
                 ImGui::Spacing();
                 if (displayedEffects.empty())
                 {
-                    ImGui::TextDisabled("No effects in this preset. Add effects to edit their parameters.");
+                    UI::TextSupport("No effects in this preset. Add effects to edit their parameters.");
                 }
                 else
                 {
@@ -1090,11 +1258,12 @@ namespace VKIntox
                     renderSlidingParams(paramsActiveEffect, offsetIn, alphaIn);
                     ImGui::SetCursorScreenPos(slidePos);
                 }
+                ImGui::EndChild();
             }
             else
             {
-                // no body while folded; keep the slide target in step so an unfold
-                // doesn't animate a stale change
+                // fully folded; keep the slide target in step so an unfold doesn't
+                // animate a stale change
                 paramsSlideShown = paramsActiveEffect;
                 paramsSlideActive = false;
             }
@@ -1104,21 +1273,20 @@ namespace VKIntox
             ImGui::PopStyleColor();
         }
 
-        // pin the apply row to the bottom of the view
-        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footerRowH);
-
-        bool autoApplyVal = settingsManager.getAutoApply();
-        if (ImGui::Checkbox("Apply automatically", &autoApplyVal))
-        {
-            settingsManager.setAutoApply(autoApplyVal);
-            settingsManager.save();
-        }
+        // Apply lives in the band reserved below the cards: flush right, above the
+        // dock. Positioned with SetCursorPos - SameLine() would snap it back onto
+        // whatever row happened to be submitted last.
         const std::string applyLabel = std::string(Icon::CheckUtf8) + "  Apply";
-        float applyWidth = ImGui::CalcTextSize(applyLabel.c_str()).x + ImGui::GetStyle().FramePadding.x * 2;
-        ImGui::SameLine(ImGui::GetWindowWidth() - applyWidth - ImGui::GetStyle().WindowPadding.x);
+        const float applyPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * listMetrics.density;
+        ImGui::PushFont(ImGuiM3FontBold(), applyPx);
+        const float applyTextW = ImGui::CalcTextSize(applyLabel.c_str()).x;
+        ImGui::PopFont();
+        const float applyWidth = ImMax(applyTextW + 44.0f * listMetrics.density,
+                                       132.0f * listMetrics.density);
+        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footerRowH);
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - applyWidth - ImGui::GetStyle().WindowPadding.x);
 
-        // Apply button is always clickable
-        if (ImGui::Button(applyLabel.c_str()))
+        if (ImGui::M3Button(applyLabel.c_str(), ImGuiM3Button_Filled, ImVec2(applyWidth, footerRowH)))
         {
             applyRequested = true;
             paramsDirty = false;

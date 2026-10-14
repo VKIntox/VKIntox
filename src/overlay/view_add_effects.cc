@@ -3,6 +3,8 @@
 #include "settings_manager.hh"
 #include "reshade_parser.hh"
 #include "config_serializer.hh"
+#include "overlay/ui_dialog.hh"
+#include "overlay/ui_menu.hh"
 
 #include <algorithm>
 #include <cstdio>
@@ -341,28 +343,8 @@ namespace VKIntox
                 highlight = std::max(highlight - 1, 0);
         }
 
-        // ---- Header ---------------------------------------------------------
-        ImGui::PushFont(ImGuiM3FontBold(), ImGui::GetFontSize());
-        ImGui::Text("%s  %s", Icon::AddUtf8, insertPosition >= 0 ? "Insert Effects" : "Add Effects");
-        ImGui::PopFont();
-        ImGui::SameLine();
-        ImGui::TextColored(atLimit ? UI::Warning() : UI::Muted(), "%zu / %zu queued", pendingCount, maxEffectsLimit);
-        ImGui::SameLine();
-        ImGui::TextDisabled("%zu %s", currentCount, currentCount == 1 ? "effect" : "effects");
-        if (!addEffectsRemoved.empty())
-        {
-            ImGui::SameLine();
-            ImGui::TextColored(UI::Warning(), "%zu to remove", addEffectsRemoved.size());
-        }
-        if (insertPosition >= 0)
-        {
-            ImGui::SameLine();
-            ImGui::TextDisabled("at position %d", insertPosition);
-        }
-
-        // ---- Breadcrumb -----------------------------------------------------
-        // circle back button, flush with the search bar it shortens
-        if (ImGui::M3IconButton(Icon::ChevronLeftUtf8, "Back to effects", ImGuiM3Button_Filled))
+        // ---- Crumb + hero ---------------------------------------------------
+        if (UI::BreadcrumbBar("Effects", Icon::ChevronLeftUtf8))
         {
             pendingAddEffects.clear();
             addEffectsDuplicateCount.clear();
@@ -371,7 +353,21 @@ namespace VKIntox
             inSelectionMode = false;
             addEffectsSearch[0] = '\0';
         }
-        ImGui::SameLine();
+        ImGui::Spacing();
+        {
+            std::string summary = std::to_string(pendingCount) + " / " + std::to_string(maxEffectsLimit) + " queued";
+            summary += "  \xC2\xB7  " + std::to_string(currentCount) +
+                       (currentCount == 1 ? " effect in preset" : " effects in preset");
+            if (!addEffectsRemoved.empty())
+                summary += "  \xC2\xB7  " + std::to_string(addEffectsRemoved.size()) + " to remove";
+            if (insertPosition >= 0)
+                summary += "  \xC2\xB7  inserting at position " + std::to_string(insertPosition);
+            ImGui::M3HeroHeader(Icon::AddUtf8, insertPosition >= 0 ? "Insert Effects" : "Add Effects",
+                                summary.c_str());
+            if (atLimit)
+                ImGui::TextColored(UI::Warning(), "%s  At the limit: remove an effect to queue another.",
+                                   Icon::WarningUtf8);
+        }
 
         // ---- Search ---------------------------------------------------------
         // Focus the search box once the slide has settled. Focusing during the
@@ -426,7 +422,9 @@ namespace VKIntox
 
             // outside the scrolling child: a second line inside it made the
             // horizontal scrollbar fight the (auto) vertical one for width.
+            UI::PushSupport();
             ImGui::TextDisabled("%d result%s", static_cast<int>(entries.size()), entries.size() == 1 ? "" : "s");
+            UI::PopSupport();
         }
 
         // Recents (only when browsing, not searching).
@@ -457,12 +455,45 @@ namespace VKIntox
         // GetFrameHeightWithSpacing() left the bottom of the pills clipped.
         const float footerHeight = m.button_height_default * d + ImGui::GetStyle().ItemSpacing.y * 2.0f;
         const float trayHeight = 62.0f * d;
-        const float rowH = 40.0f * d;
+        const float rowH = 46.0f * d;
         ImFont* iconFont = ImGuiM3IconFont();
         ImFont* medium = ImGuiM3FontMedium();
 
-        ImGui::BeginChild("##results", ImVec2(0, -footerHeight - trayHeight), true,
-                          ImGuiWindowFlags_AlwaysVerticalScrollbar);
+        // Switching package tabs shoves the list sideways and fades it in, so the
+        // change of contents is legible instead of instantaneous.
+        static std::string tabAnimShown = filterPackage;
+        static double tabAnimStart = -1.0;
+        float tabEase = 1.0f;
+        {
+            constexpr float kTabSeconds = 0.24f;
+            const double now = ImGui::GetTime();
+            if (tabAnimShown != filterPackage)
+            {
+                tabAnimShown = filterPackage;
+                tabAnimStart = now;
+            }
+            if (tabAnimStart >= 0.0)
+            {
+                const float clock = static_cast<float>((now - tabAnimStart) / kTabSeconds);
+                if (clock >= 1.0f)
+                {
+                    tabAnimStart = -1.0;
+                }
+                else
+                {
+                    tabEase = UI::CubicBezierEase(clock, 0.05f, 0.90f, 0.10f, 1.06f);
+                }
+            }
+        }
+
+        const ImVec2 resultsPos = ImGui::GetCursorScreenPos();
+        const float resultsW = ImMax(ImGui::GetContentRegionAvail().x, 1.0f);
+        const float resultsH = ImMax(ImGui::GetContentRegionAvail().y, 1.0f);
+        const float resultsSlide = (1.0f - tabEase) * 26.0f * d;
+        ImGui::SetCursorScreenPos(ImVec2(resultsPos.x + resultsSlide, resultsPos.y));
+        ImGui::PushClipRect(resultsPos, ImVec2(resultsPos.x + resultsW, resultsPos.y + resultsH), true);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, tabEase);
+        ImGui::BeginChild("##results", ImVec2(0, -footerHeight - trayHeight), true);
         if (rowCount == 0)
         {
             ImGui::Spacing();
@@ -507,10 +538,12 @@ namespace VKIntox
                     const bool added = groupActive(e.type);
 
                     ImDrawList* dl = ImGui::GetWindowDrawList();
-                    const float pill = ImGuiM3PillRadius(bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
-                    const ImGuiM3ShapeRounding r{pill, pill, pill, pill};
+                    // expressive row: a rounded surface, the accent container when
+                    // the effect is queued, a hover layer otherwise.
+                    const float rowRadius = ImGuiM3Radius(ImGuiM3Shape_Large);
+                    const ImGuiM3ShapeRounding r{ rowRadius, rowRadius, rowRadius, rowRadius };
                     ImGuiM3PathRoundedRect(dl, bb, r, added ? ImGuiM3ColorU32(ImGuiM3Role_SecondaryContainer)
-                                                            : ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
+                                                            : ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainer));
                     const ImGuiM3State st = (hovered && held) ? ImGuiM3State_Pressed : hovered ? ImGuiM3State_Hovered : ImGuiM3State_Enabled;
                     ImGuiM3DrawStateLayer(dl, bb, r, added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_OnSurface, st);
 
@@ -520,18 +553,36 @@ namespace VKIntox
                         const int iconLen = ImTextCharToUtf8(iconUtf8, (unsigned int)effectIconCodepointFor(e.type));
                         iconUtf8[iconLen] = '\0';
                         ImGuiM3DrawIcon(dl, iconUtf8, ImRect(ImVec2(bb.Min.x + 16.0f * d, bb.Min.y), ImVec2(bb.Min.x + 44.0f * d, bb.Max.y)),
-                                        20.0f * d, ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_Primary));
+                                        22.0f * d, ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_Primary));
                     }
 
+                    // two-line block: the effect name over its shader path
                     const float nameClip = 230.0f * d;
-                    if (medium)
-                        ImGui::PushFont(medium, ImGui::GetFontSize());
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_OnSurface));
-                    ImGui::RenderTextClipped(ImVec2(bb.Min.x + 50.0f * d, bb.Min.y), ImVec2(bb.Max.x - nameClip, bb.Max.y),
-                                             e.type.c_str(), NULL, NULL, ImVec2(0.0f, 0.5f), &bb);
-                    ImGui::PopStyleColor();
-                    if (medium)
-                        ImGui::PopFont();
+                    const float textX = bb.Min.x + 54.0f * d;
+                    ImFont* brandFont = ImGuiM3FontBold();
+                    ImFont* pathFont = ImGuiM3FontBodyBold();
+                    const float namePx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * d;
+                    const float pathPx = 11.0f * d;
+                    const char* pathText = e.path.c_str();
+                    ImGui::PushFont(brandFont, namePx);
+                    const ImVec2 nameSize = ImGui::CalcTextSize(e.type.c_str());
+                    ImGui::PopFont();
+                    ImGui::PushFont(pathFont, pathPx);
+                    const ImVec2 pathSize = ImGui::CalcTextSize(pathText);
+                    ImGui::PopFont();
+                    const bool hasPath = pathText[0] != '\0';
+                    const float blockH = nameSize.y + (hasPath ? pathSize.y + 1.0f * d : 0.0f);
+                    const float textW = ImMax(24.0f, bb.Max.x - nameClip - textX);
+                    const float nameY = bb.Min.y + (rowH - blockH) * 0.5f;
+                    const ImU32 nameCol = ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer
+                                                                : ImGuiM3Role_OnSurface);
+                    const ImU32 pathCol = ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer
+                                                                : ImGuiM3Role_OnSurfaceVariant);
+                    dl->AddText(brandFont, namePx, ImVec2(textX, nameY), nameCol,
+                                UI::TruncateLabel(e.type.c_str(), textW));
+                    if (hasPath)
+                        dl->AddText(pathFont, pathPx, ImVec2(textX, nameY + nameSize.y + 1.0f * d), pathCol,
+                                    UI::TruncateLabel(pathText, textW));
 
                     // right cluster: [-] count [+] over the group, then the switch;
                     // the stepper only shows while the group is in the preset
@@ -624,12 +675,17 @@ namespace VKIntox
             }
         }
         ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopClipRect();
+        // only the x the slide pushed the cursor to: EndChild already advanced past
+        // the results, and resetting both axes left the tray over the first rows
+        ImGui::SetCursorScreenPos(ImVec2(resultsPos.x, ImGui::GetCursorScreenPos().y));
 
         // ---- Queued tray ----------------------------------------------------
         ImGui::BeginChild("##queued", ImVec2(0, trayHeight), true);
         if (pendingAddEffects.empty())
         {
-            ImGui::TextDisabled("Queued effects appear here. Click a result to queue it.");
+            UI::TextSupport("Queued effects appear here.");
         }
         else
         {
@@ -644,7 +700,7 @@ namespace VKIntox
                     x = 0.0f;
                 else if (x > 0.0f)
                     ImGui::SameLine();
-                if (ImGui::Button(label.c_str()))
+                if (ImGui::M3Button(label.c_str(), ImGuiM3Button_Tonal, ImVec2(0.0f, 30.0f * d)))
                 {
                     pendingAddEffects.erase(pendingAddEffects.begin() + i);
                     ImGui::PopID();
@@ -667,6 +723,17 @@ namespace VKIntox
         else
             applyLabel += "Add";
 
+        // flush right, and clamped up so the pills clear the bottom of the content:
+        // the reserved height left them a spacing past it, cropping the fill
+        const float actionH = m.button_height_default * d;
+        const float actionGap = 10.0f * d;
+        const float cancelW = ImGui::M3ButtonWidth(cancelLabel.c_str());
+        const float applyW = ImGui::M3ButtonWidth(applyLabel.c_str());
+        const float rowRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPosX(ImMax(ImGui::GetCursorPosX(), rowRight - cancelW - actionGap - applyW));
+        const float rowBottom = ImGui::GetCursorPosY() + ImGui::GetContentRegionAvail().y;
+        ImGui::SetCursorPosY(ImMin(ImGui::GetCursorPosY(), rowBottom - actionH));
+
         if (ImGui::M3Button(cancelLabel.c_str(), ImGuiM3Button_Outlined))
         {
             pendingAddEffects.clear();
@@ -676,7 +743,7 @@ namespace VKIntox
             inSelectionMode = false;
             addEffectsSearch[0] = '\0';
         }
-        ImGui::SameLine();
+        ImGui::SameLine(0.0f, actionGap);
         ImGui::BeginDisabled(pendingAddEffects.empty() && addEffectsRemoved.empty());
         if (ImGui::M3Button(applyLabel.c_str(), ImGuiM3Button_Filled))
         {

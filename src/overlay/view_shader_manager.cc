@@ -2,6 +2,7 @@
 #include "config_serializer.hh"
 #include "logger.hh"
 #include "overlay/ui_icons.hh"
+#include "overlay/ui_theme.hh"
 #include "util.hh"
 
 #include <cstdlib>
@@ -10,7 +11,10 @@
 #include <set>
 #include <string>
 
+#include "overlay/ui_menu.hh"
+
 #include "vendor/imgui/imgui.h"
+#include "vendor/imgui/imgui_internal.h"
 #include "vendor/imgui/imfilebrowser.h"
 
 namespace VKIntox
@@ -95,7 +99,7 @@ namespace VKIntox
 
         ImGui::BeginChild("ShaderMgrContent", ImVec2(0, 0), false);
 
-        ImGui::TextDisabled("Add shader packs and scan them for ReShade effects.");
+        UI::TextSupport("Add shader packs and scan them for ReShade effects.");
         ImGui::Spacing();
 
         // Harvest any completed portal request (non-blocking), then offer Browse.
@@ -124,8 +128,8 @@ namespace VKIntox
         }
 
         // --- Directories ---
-        ImGui::M3CardBegin("shmgr_dirs", "Shader Directories", Icon::FolderOpenUtf8);
-        ImGui::TextDisabled("Directories containing shader packs. Each is scanned for Shaders/ and Textures/ subfolders.");
+        ImGui::M3CardBegin("shmgr_dirs", "Shader Directories", NULL,
+                           "Each folder is scanned for its Shaders/ and Textures/ subfolders.");
         ImGui::Spacing();
 
         const bool portalPending = fileDialogPending();
@@ -162,86 +166,158 @@ namespace VKIntox
         }
 
         ImGui::Spacing();
-        ImGui::BeginChild("ParentDirList", ImVec2(0, 0),
-                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
-        int removeIdx = -1;
-        for (size_t i = 0; i < shaderMgrParentDirs.size(); i++)
         {
-            ImGui::PushID(static_cast<int>(i));
-            const std::string removeLabel = std::string(Icon::CloseUtf8) + "##rm";
-            if (ImGui::Button(removeLabel.c_str()))
-                removeIdx = static_cast<int>(i);
-            ImGui::SameLine();
-            ImGui::TextUnformatted(shaderMgrParentDirs[i].c_str());
-            ImGui::PopID();
-        }
-        if (shaderMgrParentDirs.empty())
-            ImGui::TextDisabled("No directories added yet.");
-        ImGui::EndChild();
+            const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+            const float d = m.density;
+            const float rowH = 48.0f * d;
+            const float rowGap = 6.0f * d;
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImFont* brand = ImGuiM3FontBold();
+            const float namePx = 14.0f * d;
+            ImGui::PushFont(brand, namePx);
+            const float nameLine = ImGui::GetTextLineHeight();
+            ImGui::PopFont();
 
-        if (removeIdx >= 0)
-        {
-            shaderMgrParentDirs.erase(shaderMgrParentDirs.begin() + removeIdx);
-            saveConfig();
+            int removeIdx = -1;
+            for (size_t i = 0; i < shaderMgrParentDirs.size(); i++)
+            {
+                ImGui::PushID(static_cast<int>(i));
+                if (i > 0)
+                    ImGui::Dummy(ImVec2(0.0f, rowGap));
+                const ImVec2 rowMin = ImGui::GetCursorScreenPos();
+                const float rowW = ImMax(ImGui::GetContentRegionAvail().x, 1.0f);
+                const ImRect rowRect(rowMin, ImVec2(rowMin.x + rowW, rowMin.y + rowH));
+                ImGui::InvisibleButton("##dir_row", ImVec2(rowW, rowH));
+
+                const float radius = ImGuiM3Radius(ImGuiM3Shape_Large);
+                const ImGuiM3ShapeRounding round{ radius, radius, radius, radius };
+                ImGuiM3PathRoundedRect(dl, rowRect, round, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainer));
+                if (ImGui::IsItemHovered())
+                    ImGuiM3DrawStateLayer(dl, rowRect, round, ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
+
+                if (ImGuiM3IconFont())
+                    ImGuiM3DrawIcon(dl, Icon::FolderOpenUtf8,
+                                    ImRect(ImVec2(rowMin.x + 14.0f * d, rowMin.y),
+                                           ImVec2(rowMin.x + 42.0f * d, rowMin.y + rowH)),
+                                    20.0f * d, ImGuiM3ColorU32(ImGuiM3Role_Primary));
+
+                const float textX = rowMin.x + 54.0f * d;
+                const float textW = ImMax(24.0f, rowW - (54.0f + 52.0f) * d);
+                dl->AddText(brand, namePx, ImVec2(textX, rowMin.y + (rowH - nameLine) * 0.5f),
+                            ImGuiM3ColorU32(ImGuiM3Role_OnSurface),
+                            UI::TruncateLabel(shaderMgrParentDirs[i].c_str(), textW));
+
+                ImGui::SetCursorScreenPos(ImVec2(rowRect.Max.x - 48.0f * d, rowMin.y + (rowH - 40.0f * d) * 0.5f));
+                if (ImGui::M3IconButton(Icon::CloseUtf8, "Remove this directory", ImGuiM3Button_Text))
+                    removeIdx = static_cast<int>(i);
+                ImGui::SetCursorScreenPos(ImVec2(rowMin.x, rowRect.Max.y));
+                ImGui::Dummy(ImVec2(0.0f, 0.0f));
+                ImGui::PopID();
+            }
+            if (shaderMgrParentDirs.empty())
+                UI::TextSupport("No directories added yet.");
+
+            if (removeIdx >= 0)
+            {
+                shaderMgrParentDirs.erase(shaderMgrParentDirs.begin() + removeIdx);
+                saveConfig();
+            }
         }
         ImGui::M3CardEnd();
 
         // --- Discovered paths ---
         ImGui::Spacing();
         ImGui::M3CardBegin("shmgr_paths", "Discovered Paths", Icon::LayersUtf8);
-        ImGui::TextDisabled("%zu shader paths, %zu texture paths.", shaderMgrShaderPaths.size(), shaderMgrTexturePaths.size());
         ImGui::Spacing();
 
-        if (ImGui::TreeNode("Shader Paths"))
+        // Two folded groups, revealed with the M3 spring. Each body is a
+        // scrolling, virtualized list capped in height, so a pack with hundreds
+        // of paths costs the same as one with three - an unvirtualized list was
+        // what made unfolding hitch.
+        static bool shaderPathsOpen = false;
+        static bool texturePathsOpen = false;
         {
-            if (shaderMgrShaderPaths.empty())
-                ImGui::TextDisabled("None - click Rescan all");
-            else
-            {
-                int removeShaderIdx = -1;
-                for (size_t i = 0; i < shaderMgrShaderPaths.size(); i++)
-                {
-                    ImGui::PushID(static_cast<int>(i));
-                    const std::string rm = std::string(Icon::CloseUtf8) + "##rm";
-                    if (ImGui::SmallButton(rm.c_str()))
-                        removeShaderIdx = static_cast<int>(i);
-                    ImGui::SameLine();
-                    ImGui::TextUnformatted(shaderMgrShaderPaths[i].c_str());
-                    ImGui::PopID();
-                }
-                if (removeShaderIdx >= 0)
-                {
-                    shaderMgrShaderPaths.erase(shaderMgrShaderPaths.begin() + removeShaderIdx);
-                    saveConfig();
-                }
-            }
-            ImGui::TreePop();
-        }
+            const float d = ImGuiM3GetMetrics().density;
+            const float pathRowH = 38.0f * d;
+            const float pathGap = 4.0f * d;
+            const float pathStride = pathRowH + pathGap;
+            const float maxBodyH = 240.0f * d;
 
-        if (ImGui::TreeNode("Texture Paths"))
-        {
-            if (shaderMgrTexturePaths.empty())
-                ImGui::TextDisabled("None - click Rescan all");
-            else
+            struct PathGroup
             {
-                int removeTextureIdx = -1;
-                for (size_t i = 0; i < shaderMgrTexturePaths.size(); i++)
+                const char* id;
+                const char* label;
+                std::vector<std::string>* paths;
+                bool* open;
+            };
+            PathGroup groups[] = {
+                { "##shader_path_group", "Shader paths", &shaderMgrShaderPaths, &shaderPathsOpen },
+                { "##texture_path_group", "Texture paths", &shaderMgrTexturePaths, &texturePathsOpen },
+            };
+
+            for (PathGroup& group : groups)
+            {
+                const std::string badge = std::to_string(group.paths->size());
+                const float reveal = UI::FoldHeader(group.id, group.label, badge.c_str(), group.open);
+
+                const size_t count = group.paths->size();
+                if (count == 0)
                 {
-                    ImGui::PushID(static_cast<int>(i) + 1000);
-                    const std::string rm = std::string(Icon::CloseUtf8) + "##rm";
-                    if (ImGui::SmallButton(rm.c_str()))
-                        removeTextureIdx = static_cast<int>(i);
-                    ImGui::SameLine();
-                    ImGui::TextUnformatted(shaderMgrTexturePaths[i].c_str());
-                    ImGui::PopID();
+                    UI::TextSupport("None yet - press Rescan all.");
+                    continue;
                 }
-                if (removeTextureIdx >= 0)
+
+                const std::string bodyId = std::string(group.id) + "_body";
+                if (!UI::FoldBodyBegin(bodyId.c_str(), reveal, count * pathStride, maxBodyH))
+                    continue;
+
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImFont* bodyBold = ImGuiM3FontBodyBold();
+                const float pathPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodySmall).size * d;
+                int removeIdx = -1;
+
+                ImGuiListClipper clipper;
+                clipper.Begin(static_cast<int>(count), pathStride);
+                while (clipper.Step())
                 {
-                    shaderMgrTexturePaths.erase(shaderMgrTexturePaths.begin() + removeTextureIdx);
+                    for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+                    {
+                        ImGui::PushID(i);
+                        const ImVec2 itemMin = ImGui::GetCursorScreenPos();
+                        const float itemW = ImMax(ImGui::GetContentRegionAvail().x, 1.0f);
+                        ImGui::InvisibleButton("##path", ImVec2(itemW, pathStride));
+                        const bool itemHovered = ImGui::IsItemHovered();
+                        const ImRect itemRect(ImVec2(itemMin.x, itemMin.y + pathGap * 0.5f),
+                                              ImVec2(itemMin.x + itemW, itemMin.y + pathStride - pathGap * 0.5f));
+                        const float ir = ImGuiM3Radius(ImGuiM3Shape_Small);
+                        if (itemHovered)
+                            ImGuiM3DrawStateLayer(dl, itemRect, ImGuiM3ShapeRounding{ ir, ir, ir, ir },
+                                                  ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
+
+                        const float textX = itemMin.x + 14.0f * d;
+                        const float textW = ImMax(24.0f, itemW - 14.0f * d - 52.0f * d);
+                        dl->AddText(bodyBold, pathPx,
+                                    ImVec2(textX, itemRect.GetCenter().y - pathPx * 0.7f),
+                                    ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant),
+                                    UI::TruncateLabel((*group.paths)[i].c_str(), textW));
+
+                        ImGui::SetCursorScreenPos(ImVec2(itemRect.Max.x - 44.0f * d,
+                                                         itemRect.GetCenter().y - 20.0f * d));
+                        if (ImGui::M3IconButton(Icon::CloseUtf8, "Remove this path", ImGuiM3Button_Text))
+                            removeIdx = i;
+                        ImGui::SetCursorScreenPos(ImVec2(itemMin.x, itemMin.y + pathStride));
+                        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+                        ImGui::PopID();
+                    }
+                }
+
+                if (removeIdx >= 0)
+                {
+                    group.paths->erase(group.paths->begin() + removeIdx);
                     saveConfig();
                 }
+                UI::FoldBodyEnd();
             }
-            ImGui::TreePop();
         }
         ImGui::M3CardEnd();
 
