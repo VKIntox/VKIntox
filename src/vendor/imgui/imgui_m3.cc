@@ -2237,16 +2237,25 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     // spatial spring (same motion path as the switch).
     const float rest_radius = ImGuiM3Radius(ImGuiM3Shape_Full);
     const float press_radius = ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
-    const float morph = ImGuiM3SpringStepSpatialSlow(id ^ 0x42544F, held ? 1.0f : 0.0f);
-    const float radius = ImMin(rest_radius + (press_radius - rest_radius) * morph, ImMin(size.x, size.y) * 0.5f);
-    ImGuiM3ShapeRounding rounding{ radius, radius, radius, radius };
-    if (edge != ImGuiM3Button_Alone)
+    // effects-default rather than the spatial-slow spring: a click that is over in
+    // a tenth of a second has to show the morph, or half the buttons look static.
+    const float morph = ImGuiM3SpringStepEffectsDefault(id ^ 0x42544F, held ? 1.0f : 0.0f);
+    ImGuiM3ShapeRounding rounding;
+    if (edge == ImGuiM3Button_Alone)
     {
-        // shared shape: only the outer edge rounds, and the press morphs what is left
-        const float outer = ImMin(radius, size.y * 0.5f);
-        rounding = (edge == ImGuiM3Button_Leading)
-                       ? ImGuiM3ShapeRounding{ outer, 0.0f, 0.0f, outer }
-                       : ImGuiM3ShapeRounding{ 0.0f, outer, outer, 0.0f };
+        const float radius = ImMin(rest_radius + (press_radius - rest_radius) * morph, ImMin(size.x, size.y) * 0.5f);
+        rounding = ImGuiM3ShapeRounding{ radius, radius, radius, radius };
+    }
+    else
+    {
+        // the connected group's shape: pill on the outer edge, a modest radius on
+        // the shared one, and the press rounds the pill corners down.
+        rounding = ImGuiM3ConnectedSegmentRounding(size, edge == ImGuiM3Button_Leading ? 0 : 1, 2);
+        auto morph_corner = [&](float c) { return c + (ImMin(c, press_radius) - c) * morph; };
+        rounding.tl = morph_corner(rounding.tl);
+        rounding.tr = morph_corner(rounding.tr);
+        rounding.br = morph_corner(rounding.br);
+        rounding.bl = morph_corner(rounding.bl);
     }
 
     // grouped buttons share a surface, so a shadow would draw into the seam
@@ -3092,7 +3101,7 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
 
             // the same press morph a standalone button gets, so every pill-shaped
             // control in the overlay rounds down while held
-            const float seg_morph = ImGuiM3SpringStepSpatialSlow(seg_id ^ 0x434F4E47, held ? 1.0f : 0.0f);
+            const float seg_morph = ImGuiM3SpringStepEffectsDefault(seg_id ^ 0x434F4E47, held ? 1.0f : 0.0f);
             const float seg_press = ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
             auto morph_corner = [&](float c) { return c + (ImMin(c, seg_press) - c) * seg_morph; };
             rounding.tl = morph_corner(rounding.tl);

@@ -217,7 +217,15 @@ namespace VKIntox::UI
                 pressed = i;
 
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            const ImGuiM3ShapeRounding rounding = ImGuiM3ConnectedSegmentRounding(bb.GetSize(), i, count);
+            ImGuiM3ShapeRounding rounding = ImGuiM3ConnectedSegmentRounding(bb.GetSize(), i, count);
+            // every pill in the overlay rounds down while held, this row included
+            const float morph = ImGuiM3SpringStepEffectsDefault(ImGui::GetItemID() ^ 0x50414745, held ? 1.0f : 0.0f);
+            const float press_r = ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
+            auto morph_corner = [&](float c) { return c + (ImMin(c, press_r) - c) * morph; };
+            rounding.tl = morph_corner(rounding.tl);
+            rounding.tr = morph_corner(rounding.tr);
+            rounding.br = morph_corner(rounding.br);
+            rounding.bl = morph_corner(rounding.bl);
             ImGuiM3PathRoundedRect(dl, bb, rounding, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh));
             if (hovered || held)
                 ImGuiM3DrawStateLayer(dl, bb, rounding, ImGuiM3Role_OnSurface,
