@@ -335,6 +335,34 @@ while IFS=$'\t' read -r build_version build_date build_url; do
 done <"$TMP_DIR/versions.tsv"
 ((${#BUILD_URLS[@]})) || die "the flatpak-build release has no dated library asset"
 
+# Published names have carried the date both ways: DDMMYYYY up to October 2026,
+# YYYYMMDD from then on. Normalise to YYYYMMDD, the form that compares and sorts,
+# and pass anything unrecognised straight through so it shows up in the menu
+# instead of being silently wrong.
+normalise_build_date() {
+    local d="$1"
+    if [[ ! "$d" =~ ^[0-9]{8}$ ]]; then
+        printf '%s' "$d"
+        return
+    fi
+    # Year-first puts a month in chars 5-6; day-first puts the year's century
+    # there, which is "20xx" and so never a month. Testing the month is exact for
+    # these two forms, where a year range is not: a 20th of the month reads as a
+    # perfectly plausible year.
+    local month=$((10#${d:4:2}))
+    if ((month >= 1 && month <= 12)); then
+        printf '%s' "$d"
+        return
+    fi
+    local day=$((10#${d:0:2}))
+    month=$((10#${d:2:2}))
+    if ((day >= 1 && day <= 31)) && ((month >= 1 && month <= 12)); then
+        printf '%s%s%s' "${d:4:4}" "${d:2:2}" "${d:0:2}"
+        return
+    fi
+    printf '%s' "$d"
+}
+
 # month names for the build picker, so a date reads as a date
 MONTH_NAMES=(January February March April May June July August September October November December)
 ordinal() {
@@ -403,7 +431,7 @@ if (( SELECTED == 0 )); then
         | .browser_download_url // empty
     ' "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
     SELECTED_VERSION_NAME="$(basename "$ASSET_URL" | sed -E 's/^libvkintox_flatpak_//; s/_[0-9]{8}\.so$//')"
-    SELECTED_BUILD_DATE="$(basename "$ASSET_URL" | sed -nE 's/^.*_([0-9]{8})\.so$/\1/p')"
+    SELECTED_BUILD_DATE="$(normalise_build_date "$(basename "$ASSET_URL" | sed -nE 's/^.*_([0-9]{8})\.so$/\1/p')")"
 else
     select_menu "multiple versions found:" "${VERSION_LABELS[@]}"
     version_choice=$SELECTED
@@ -412,7 +440,7 @@ else
     declare -a BUILD_LABELS=() BUILD_CHOICE_URLS=()
     for build_index in "${!BUILD_VERSIONS[@]}"; do
         [[ "${BUILD_VERSIONS[$build_index]}" == "$chosen_version" ]] || continue
-        BUILD_LABELS+=("$(format_build_date "${BUILD_DATES[$build_index]}")")
+        BUILD_LABELS+=("$(format_build_date "$(normalise_build_date "${BUILD_DATES[$build_index]}")")")
         BUILD_CHOICE_URLS+=("${BUILD_URLS[$build_index]}")
     done
     if ((${#BUILD_CHOICE_URLS[@]} > 1)); then
@@ -422,7 +450,7 @@ else
         ASSET_URL="${BUILD_CHOICE_URLS[0]}"
     fi
     SELECTED_VERSION_NAME="$(basename "$ASSET_URL" | sed -E 's/^libvkintox_flatpak_//; s/_[0-9]{8}\.so$//')"
-    SELECTED_BUILD_DATE="$(basename "$ASSET_URL" | sed -nE 's/^.*_([0-9]{8})\.so$/\1/p')"
+    SELECTED_BUILD_DATE="$(normalise_build_date "$(basename "$ASSET_URL" | sed -nE 's/^.*_([0-9]{8})\.so$/\1/p')")"
 fi
 say "downloading $(basename "$ASSET_URL")"
 curl -fsSL "$ASSET_URL" -o "$LIBRARY" || die "couldn't download the Flatpak library for $ASSET_URL"
