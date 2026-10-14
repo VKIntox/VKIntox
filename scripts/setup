@@ -511,10 +511,9 @@ TEXTURES_DIR="$RESHADE_DIR/Textures"
 mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$APP_CONFIG/font"
 
 curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version"
-# fonts aren't on raw.githubusercontent until pushed to the font ref, so a local
-# flatpak build would silently seed nothing. prefer the checkout, else download.
 # BASH_SOURCE is unset when the script is piped to bash (curl | bash) or run via
-# bash -c, which is how fish users invoke it; guard so set -u doesn't trip.
+# bash -c, which is how fish users invoke it; guard so set -u doesn't trip. the
+# licence texts are the only thing still read from beside the script.
 SCRIPT_DIR=""
 if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
