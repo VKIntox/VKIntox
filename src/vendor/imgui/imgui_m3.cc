@@ -2198,7 +2198,7 @@ namespace
     int CardDepth = 0;
 }
 
-bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg, bool strong_label)
+bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg, bool strong_label, ImGuiM3ButtonEdge edge)
 {
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = GetCurrentWindow();
@@ -2239,9 +2239,18 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     const float press_radius = ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
     const float morph = ImGuiM3SpringStepSpatialSlow(id ^ 0x42544F, held ? 1.0f : 0.0f);
     const float radius = ImMin(rest_radius + (press_radius - rest_radius) * morph, ImMin(size.x, size.y) * 0.5f);
-    const ImGuiM3ShapeRounding rounding{ radius, radius, radius, radius };
+    ImGuiM3ShapeRounding rounding{ radius, radius, radius, radius };
+    if (edge != ImGuiM3Button_Alone)
+    {
+        // shared shape: only the outer edge rounds, and the press morphs what is left
+        const float outer = ImMin(radius, size.y * 0.5f);
+        rounding = (edge == ImGuiM3Button_Leading)
+                       ? ImGuiM3ShapeRounding{ outer, 0.0f, 0.0f, outer }
+                       : ImGuiM3ShapeRounding{ 0.0f, outer, outer, 0.0f };
+    }
 
-    if (paint.elevation > 0)
+    // grouped buttons share a surface, so a shadow would draw into the seam
+    if (paint.elevation > 0 && edge == ImGuiM3Button_Alone)
         ImGuiM3DrawElevation(window->DrawList, bb, rounding, paint.elevation);
 
     const ImU32 fill = paint.has_outline ? 0u : ImGuiM3ColorU32(paint.container_role);
@@ -2974,7 +2983,7 @@ void ImGui::M3StatusChip(const char* label, ImGuiM3Role role)
 
 // Connected button group.
 
-bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons, bool allow_overflow, int* out_hovered, bool group_surface)
+bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons, bool allow_overflow, int* out_hovered, bool filled_segments)
 {
     if (out_hovered)
         *out_hovered = -1;
@@ -3057,17 +3066,7 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     bool changed = false;
     int new_selection = *selected;
 
-    if (group_surface)
-    {
-        float group_w = gap * (count - 1);
-        for (int i = 0; i < count; i++)
-            group_w += widths[i];
-        const ImRect group_bb(window->DC.CursorPos, window->DC.CursorPos + ImVec2(group_w, h));
-        const float group_pill = ImGuiM3PillRadius(group_bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
-        const ImGuiM3ShapeRounding group_rounding{ group_pill, group_pill, group_pill, group_pill };
-        ImGuiM3PathRoundedRect(window->DrawList, group_bb, group_rounding,
-                               ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh));
-    }
+
 
     // No group surface: the row sits directly on the shell, so only the active
     // segment carries a background (its accent container) and a lift. A group
@@ -3101,7 +3100,11 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
             rounding.br = morph_corner(rounding.br);
             rounding.bl = morph_corner(rounding.bl);
 
-            // selected segments use secondary-container; the rest rely on the 1dp outline.
+            // unselected segments are bare on the shell unless the caller wants
+            // every one of them filled; selected is always secondary-container.
+            if (!is_selected && filled_segments)
+                ImGuiM3PathRoundedRect(window->DrawList, bb, rounding,
+                                       ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh));
             if (is_selected)
             {
                 // the active segment lifts a touch more than the old flat look so
@@ -3184,7 +3187,7 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     return changed;
 }
 
-bool ImGui::M3NavigationDock(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons)
+bool ImGui::M3NavigationDock(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons, bool label_above)
 {
     ImGuiWindow* window = GetCurrentWindow();
     if (window->SkipItems || count <= 0 || !labels || !selected || *selected < 0 || *selected >= count)
@@ -3211,9 +3214,13 @@ bool ImGui::M3NavigationDock(const char* id, const char* const* labels, int coun
     ImFont* labelFont = ImGuiM3FontBold();
     const float labelSize = ImGuiM3GetTypeStyle(ImGuiM3Type_LabelLarge).size * d;
     // the icon rides above an always-visible label; the accent pill wraps the
-    // icon only and never the label.
-    const float iconCy = dockMin.y + dockH * 0.5f - 10.0f * d;
-    const float labelCy = iconCy + iconPx * 0.5f + 5.0f * d + labelSize * 0.5f;
+    // icon only and never the label. a top bar mirrors the pair about the
+    // dock's midline so the label reads first.
+    const float dockMid = dockMin.y + dockH * 0.5f;
+    const float iconAbove = dockMid - 10.0f * d;
+    const float labelBelow = iconAbove + iconPx * 0.5f + 5.0f * d + labelSize * 0.5f;
+    const float iconCy = label_above ? (2.0f * dockMid - labelBelow) : iconAbove;
+    const float labelCy = label_above ? (2.0f * dockMid - iconAbove) : labelBelow;
     const float indW = ImMin(m.nav_indicator_width * d, base - 10.0f * d);
     const float indH = m.nav_indicator_height * d;
     const float indR = indH * 0.5f;

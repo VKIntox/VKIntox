@@ -575,7 +575,17 @@ IMGUI_API ImGuiM3Role ImGuiM3SurfaceContainerForElevation(ImGuiM3Role role, int 
 // M3 widgets layered on top of core ImGui.
 namespace ImGui
 {
-    IMGUI_API bool M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg = ImVec2(0, 0), bool strong_label = false);
+    // Where a button sits when several share one shape: the outer corners keep
+    // the pill, the inner ones square off, and the elevation is dropped so the
+    // shared shape reads as one surface.
+    enum ImGuiM3ButtonEdge_
+    {
+        ImGuiM3Button_Alone = 0,
+        ImGuiM3Button_Leading,
+        ImGuiM3Button_Trailing,
+    };
+    typedef ImGuiM3ButtonEdge_ ImGuiM3ButtonEdge;
+    IMGUI_API bool M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg = ImVec2(0, 0), bool strong_label = false, ImGuiM3ButtonEdge edge = ImGuiM3Button_Alone);
     // the width M3Button would size itself to, for laying a row out before it submits
     IMGUI_API float M3ButtonWidth(const char* label, bool strong_label = false);
     IMGUI_API bool M3IconButton(const char* glyph, const char* tooltip, ImGuiM3ButtonVariant variant = ImGuiM3Button_Text);
@@ -612,15 +622,18 @@ namespace ImGui
     // segments sharing one shape with 2dp padding; `icons` is one codepoint per
     // `hovered` gets the segment under the pointer, or -1. the row submits one
     // item per segment, so IsItemHovered() after it only answers for the last one.
-    // `group_surface` draws the capsule the segments sit in, which is how the
-    // navigation bar looked before the dock.
-    IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL, bool allow_overflow = false, int* hovered = NULL, bool group_surface = false);
+    // `filled_segments` gives every segment its own container fill instead of a
+    // bare outline, which is how the navigation bar read before the dock. the
+    // selected one still lifts.
+    IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL, bool allow_overflow = false, int* hovered = NULL, bool filled_segments = false);
 
     // Bottom navigation dock: a pill-shaped bar, one destination per entry. The
     // active destination shows its icon and label in an accent pill; the others
     // show only their icon. Switching animates the label into/out of the icon,
     // the pill's scale and opacity, and the icon's weight.
-    IMGUI_API bool M3NavigationDock(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons);
+    // `label_above` mirrors the destination: label on top, icon and its accent
+    // pill under it, for a bar that sits above the content.
+    IMGUI_API bool M3NavigationDock(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons, bool label_above = false);
     // full theme editor: generation knobs, every token, and the file path with
     // reload status.
     IMGUI_API void M3ThemeEditor();

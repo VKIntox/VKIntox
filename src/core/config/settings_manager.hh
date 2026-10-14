@@ -66,6 +66,7 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.usePortalIntegration;
         }
+        // 0 = top, 1 = bottom, matching the order the settings page shows them in
         int getNavPosition() const
         {
             std::lock_guard<std::mutex> lock(mutex);

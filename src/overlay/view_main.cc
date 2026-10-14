@@ -502,33 +502,6 @@ namespace VKIntox
         // one row (in the card below), so all that is left up here is the hint.
         UI::TextSupport(("Toggle keybind bound to " + settingsManager.getToggleKey()).c_str());
 
-        // Destructive action, so confirm it through the shared dialog frame.
-        const std::string clearPresetName = !activeShaderProfileName.empty() ? activeShaderProfileName : activeProfileName;
-        if (UI::BeginM3Dialog("##clear_all_confirm", "Are you sure you want to clear all effects from this preset?"))
-        {
-            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 380.0f * ImGuiM3GetMetrics().density);
-            ImGui::TextUnformatted(("This preset, \"" + clearPresetName + "\", will have its effects cleared. This can't be undone.").c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::Spacing();
-            ImGui::Spacing();
-            const UI::M3DialogAction actions[] = {
-                {"No, keep", ImGuiM3Button_Outlined},
-                {"Yes, I'm sure", ImGuiM3Button_Destructive},
-            };
-            const int action = UI::M3DialogActions(actions, 2);
-            if (action == 1)
-            {
-                selectedEffects.clear();
-                effectRegistry->clearSelectedEffects();
-                paramsDirty = true;
-                lastChangeTime = std::chrono::steady_clock::now();
-                applyRequested = true;
-                profileDirty = true;
-            }
-            if (action >= 0)
-                ImGui::CloseCurrentPopup();
-            UI::EndM3Dialog();
-        }
         // Effect parameters live in their own foldable, resizable sheet at the
         // bottom, folded by default, one tab per effect. The handle between the
         // sheet and the list trades height between them.
@@ -623,6 +596,7 @@ namespace VKIntox
             const float switchScale = 1.15f;
             const float switchW = listMetrics.switch_track_width * d * switchScale;
             const float gap = 10.0f * d;
+            const float seam = 2.0f * d;   // the connected group's seam
 
             ImRect heroRow;
             bool effectsOn = state.effectsEnabled;
@@ -633,16 +607,17 @@ namespace VKIntox
                 toggleEffectsRequested = true;
 
             const float rowCy = heroRow.GetCenter().y;
-            float x = heroRow.Max.x - switchW - gap - clearW - gap - addW;
+            float x = heroRow.Max.x - switchW - gap - clearW - seam - addW;
             ImGui::SetCursorScreenPos(ImVec2(x, rowCy - actionH * 0.5f));
             ImGui::BeginDisabled(selectedEffects.empty());
             if (ImGui::M3Button(clearAllLabel.c_str(), ImGuiM3Button_DestructiveOutlined,
-                                ImVec2(clearW, actionH)))
+                                ImVec2(clearW, actionH), false, ImGui::ImGuiM3Button_Leading))
                 ImGui::OpenPopup("##clear_all_confirm");
             ImGui::EndDisabled();
-            x += clearW + gap;
+            x += clearW + seam;
             ImGui::SetCursorScreenPos(ImVec2(x, rowCy - actionH * 0.5f));
-            if (ImGui::M3Button(addEffectsLabel.c_str(), ImGuiM3Button_Filled, ImVec2(addW, actionH)))
+            if (ImGui::M3Button(addEffectsLabel.c_str(), ImGuiM3Button_Filled, ImVec2(addW, actionH), false,
+                                ImGui::ImGuiM3Button_Trailing))
             {
                 inSelectionMode = true;
                 addEffectsFocusSearch = true;
@@ -650,6 +625,36 @@ namespace VKIntox
                 pendingAddEffects.clear();
                 addEffectsDuplicateCount.clear();
                 addEffectsRemoved.clear();
+            }
+            // Destructive action, so confirm it through the shared dialog frame.
+            // The dialog lives in this card's window too: popup ids are window
+            // scoped, and a confirm begun in another window never answers the
+            // OpenPopup from this one.
+            const std::string clearPresetName = !activeShaderProfileName.empty() ? activeShaderProfileName : activeProfileName;
+            if (UI::BeginM3Dialog("##clear_all_confirm", "Are you sure you want to clear all effects from this preset?"))
+            {
+                ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 380.0f * ImGuiM3GetMetrics().density);
+                ImGui::TextUnformatted(("This preset, \"" + clearPresetName + "\", will have its effects cleared. This can't be undone.").c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::Spacing();
+                ImGui::Spacing();
+                const UI::M3DialogAction actions[] = {
+                    {"No, keep", ImGuiM3Button_Outlined},
+                    {"Yes, I'm sure", ImGuiM3Button_Destructive},
+                };
+                const int action = UI::M3DialogActions(actions, 2);
+                if (action == 1)
+                {
+                    selectedEffects.clear();
+                    effectRegistry->clearSelectedEffects();
+                    paramsDirty = true;
+                    lastChangeTime = std::chrono::steady_clock::now();
+                    applyRequested = true;
+                    profileDirty = true;
+                }
+                if (action >= 0)
+                    ImGui::CloseCurrentPopup();
+                UI::EndM3Dialog();
             }
             ImGui::SetCursorScreenPos(ImVec2(heroRow.Min.x, heroRow.Max.y));
             ImGui::Dummy(ImVec2(0.0f, 0.0f));

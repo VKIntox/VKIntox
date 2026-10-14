@@ -516,7 +516,7 @@ namespace VKIntox
         // distinct behaviour.
         {
             static const int kChannels[] = { 0, 4 };   // depth source channel indices
-            const char* labels[] = { "Red", "View-space Z" };
+            const char* labels[] = { "Luminance/Red", "View-space Z" };
             const char* hints[] = {
                 "Read depth from the red / luminance channel. The standard Vulkan depth layout.",
                 "Convert raw view-space Z into [0,1]. Use when the red channel reads flat or inverted."

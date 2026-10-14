@@ -2433,24 +2433,25 @@ namespace VKIntox
         // defer the add-effects search focus until the slide is done
         viewTransitionActive = viewTransitioning;
 
-        const bool navOnTop = settingsManager.getNavPosition() == 1;
+        const bool navOnTop = settingsManager.getNavPosition() == 0;
         const bool navPills = settingsManager.getNavStyle() == 1;
-        // The top bar is a fixed strip above the content; the dock slides away
-        // under a pushed page, so only the bottom placement reserves on a fade.
-        const float navTopInset = navOnTop ? dockHeight + ImGui::GetStyle().ItemSpacing.y : 0.0f;
-        const ImVec2 viewPos  = ImVec2(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y + navTopInset);
-        ImVec2 viewSize = ImVec2(ImGui::GetContentRegionAvail().x,
-                                 ImMax(1.0f, ImGui::GetContentRegionAvail().y - navTopInset));
-        // Leave room for the dock pinned under the content. A pushed page takes
-        // that room for itself and the dock eases out of the way, so the page
-        // reads as arriving over it rather than beside it.
+        // One reveal for the nav, whichever edge holds it. A pushed page takes
+        // the strip back for itself, so the page reads as arriving over it
+        // rather than beside it - and the top bar cannot hang over the
+        // breadcrumb of a page that is standing on it.
         const float dockGap = ImGui::GetStyle().ItemSpacing.y;
         const bool overDock = (viewIndex == 1 || viewIndex == 2 || viewIndex == 6 ||
                                viewIndex == 8 || viewIndex == 9 || viewIndex == 10 || viewIndex == 11 ||
                                viewIndex == 12);
-        const float dockFade = (overDock || navOnTop) ? 0.0f
-                                        : ImClamp(UI::FoldProgress(ImGui::GetID("##dock_reveal"), true, true), 0.0f, 1.0f);
-        viewSize.y = ImMax(1.0f, viewSize.y - (dockHeight + dockGap) * (navOnTop ? 0.0f : dockFade));
+        const float dockFade = overDock
+                                   ? 0.0f
+                                   : ImClamp(UI::FoldProgress(ImGui::GetID("##dock_reveal"), true, true), 0.0f, 1.0f);
+        const float navStrip = (dockHeight + dockGap) * dockFade;
+        const float navTopInset = navOnTop ? navStrip : 0.0f;
+        const ImVec2 viewPos  = ImVec2(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y + navTopInset);
+        ImVec2 viewSize = ImVec2(ImGui::GetContentRegionAvail().x,
+                                 ImMax(1.0f, ImGui::GetContentRegionAvail().y - navTopInset -
+                                             (navOnTop ? 0.0f : navStrip)));
         const bool showingFrom = viewTransitioning && viewFromIndex != viewTargetIndex;
 
         // Slidefade: a spatial travel of a fifth of the width, with the incoming
@@ -2524,7 +2525,9 @@ namespace VKIntox
         // navigation bar: the dock, or the pill row the overlay used before it.
         // Pinned under the content, or above it when the setting asks for top.
         {
-            const float navFade = navOnTop ? 1.0f : dockFade;
+            // the same reveal for both edges and both styles: a pushed page takes
+            // the strip back rather than having the bar hang over its breadcrumb
+            const float navFade = dockFade;
             const float navY = navOnTop ? viewPos.y - navTopInset
                                         : viewPos.y + viewSize.y + dockGap;
             if (navFade > 0.02f)
@@ -2548,7 +2551,8 @@ namespace VKIntox
                 }
                 else
                 {
-                    ImGui::M3NavigationDock("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons);
+                    ImGui::M3NavigationDock("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons,
+                                            navOnTop);
                 }
                 ImGui::PopStyleVar();
                 // a nav tap always lands on a top-level destination

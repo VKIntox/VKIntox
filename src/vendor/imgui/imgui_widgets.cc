@@ -3594,14 +3594,14 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
 
     const ImU32 inactive_col = ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHighest);
     const ImU32 active_col = ImGuiM3ColorU32(ImGuiM3Role_Primary);
+    // active stops `gap` short of the resting pill, inactive starts `gap` after
+    // it. both edges clamp to the track, so a value at either extreme shrinks its
+    // segment to nothing instead of overshooting. the readout needs the same
+    // edges, so they live out here.
+    const float active_end = ImClamp(handle_center.x - rest_half - gap, track_rect.Min.x, track_rect.Max.x);
+    const float inactive_start = ImClamp(handle_center.x + rest_half + gap, track_rect.Min.x, track_rect.Max.x);
     if (track_rect.GetWidth() > 0.0f && row_h > 0.0f)
     {
-        // active stops `gap` short of the resting pill, inactive starts `gap`
-        // after it. both edges clamp to the track, so a value at either extreme
-        // shrinks its segment to nothing instead of overshooting.
-        const float active_end = ImClamp(handle_center.x - rest_half - gap, track_rect.Min.x, track_rect.Max.x);
-        const float inactive_start = ImClamp(handle_center.x + rest_half + gap, track_rect.Min.x, track_rect.Max.x);
-
         if (active_end > track_rect.Min.x)
         {
             const ImRect active(track_rect.Min.x, track_rect.Min.y, active_end, track_rect.Max.y);
@@ -3638,15 +3638,13 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     const char* value_buf_end = value_buf + DataTypeFormatString(value_buf, IM_COUNTOF(value_buf), data_type, p_data, format);
     if (g.LogEnabled)
         LogSetNextTextDecoration("{", "}");
-    // ink is chosen so the number stays readable: split at the handle gap (never
-    // mid-glyph), and halo the glyphs with `shadow` in case one still lands on
-    // a boundary.
+    // The readout sits on up to five different tones: the filled track, the two
+    // seams either side of the thumb, the thumb itself, and the dim track. Each
+    // stretch is drawn in the ink that contrasts with the fill behind it, so the
+    // digits read across the whole widget without sampling the frame. Neighbours
+    // landing on the same ink collapse into one pass, which keeps this at three
+    // adds in the common case.
     {
-        const bool has_handle = grab_bb.Max.x > grab_bb.Min.x;
-        // split at the gap's left edge, same boundary the segments use.
-        const float active_edge = has_handle ? (handle_center.x - half_handle - gap) : frame_bb.Min.x;
-
-        // readout is bold.
         ImFont* value_font = ImGuiM3FontBold();
         if (!value_font)
             value_font = GetFont();
@@ -3659,35 +3657,55 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
         ImDrawList* value_dl = window->DrawList;
 
         const ImVec4& c_primary = ImGuiM3Color(ImGuiM3Role_Primary);
-        const ImVec4& c_inactive = ImGuiM3Color(ImGuiM3Role_SurfaceContainerHighest);
+        const ImVec4& c_dim = ImGuiM3Color(ImGuiM3Role_SurfaceContainerHighest);
+        const ImVec4& c_surface = ImGuiM3Color(ImGuiM3Role_SurfaceContainer);
         const ImVec4& c_on_primary = ImGuiM3Color(ImGuiM3Role_OnPrimary);
         const ImVec4& c_on_surface = ImGuiM3Color(ImGuiM3Role_OnSurface);
         auto luma = [](const ImVec4& c) { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; };
-        const float lum_primary = luma(c_primary);
-        const float lum_inactive = luma(c_inactive);
-        // score both inks by how much of the number sits over each track.
-        const float over_active = ImClamp((active_edge - text_left) / ImMax(text_size.x, 1.0f), 0.0f, 1.0f);
-        const float score_primary = over_active * ImAbs(luma(c_on_primary) - lum_primary)
-                                  + (1.0f - over_active) * ImAbs(luma(c_on_primary) - lum_inactive);
-        const float score_surface = over_active * ImAbs(luma(c_on_surface) - lum_primary)
-                                  + (1.0f - over_active) * ImAbs(luma(c_on_surface) - lum_inactive);
-        const ImVec4& ink = score_primary >= score_surface ? c_on_primary : c_on_surface;
-        const ImU32 text_col = ImGui::GetColorU32(ink);
-        const ImU32 halo_col = ImGui::GetColorU32(ImGui::ColorConvertFloat4ToU32(ImGuiM3Color(ImGuiM3Role_Shadow)), 0.55f);
+        auto ink_for = [&](const ImVec4& bg) {
+            return ImAbs(luma(c_on_primary) - luma(bg)) >= ImAbs(luma(c_on_surface) - luma(bg))
+                       ? c_on_primary : c_on_surface;
+        };
 
-        // both halves draw in the same ink, so no glyph gets cut in two colours.
-        const bool split = has_handle && text_left < active_edge && text_right > active_edge;
+        // the thumb is filled with the active colour, the seams show the surface
+        const bool has_handle = grab_bb.Max.x > grab_bb.Min.x;
+        const float thumb_lo = has_handle ? handle_center.x - half_handle : frame_bb.Min.x;
+        const float thumb_hi = has_handle ? handle_center.x + half_handle : frame_bb.Min.x;
+        const float seam_lo = has_handle ? active_end : frame_bb.Min.x;
+        const float seam_hi = has_handle ? inactive_start : frame_bb.Min.x;
+        const float dim_start = has_handle ? inactive_start : frame_bb.Min.x;
+
+        struct Stretch { float x0, x1; ImU32 ink; };
+        Stretch stretches[5];
+        int stretch_count = 0;
+        auto add_stretch = [&](float x0, float x1, const ImVec4& fill) {
+            x0 = ImMax(x0, frame_bb.Min.x);
+            x1 = ImMin(x1, frame_bb.Max.x);
+            if (x1 - x0 <= 0.0f)
+                return;
+            const ImU32 ink = GetColorU32(ink_for(fill));
+            if (stretch_count > 0 && stretches[stretch_count - 1].ink == ink &&
+                ImAbs(stretches[stretch_count - 1].x1 - x0) < 0.01f)
+            {
+                stretches[stretch_count - 1].x1 = x1;
+                return;
+            }
+            stretches[stretch_count++] = Stretch{ x0, x1, ink };
+        };
+        add_stretch(frame_bb.Min.x, seam_lo, c_primary);
+        add_stretch(seam_lo, thumb_lo, c_surface);
+        add_stretch(thumb_lo, thumb_hi, c_primary);
+        add_stretch(thumb_hi, seam_hi, c_surface);
+        add_stretch(dim_start, frame_bb.Max.x, c_dim);
+
         PushFont(value_font, GetFontSize());
-        if (split)
-            value_dl->PushClipRect(ImVec2(frame_bb.Min.x, frame_bb.Min.y), ImVec2(active_edge, frame_bb.Max.y), true);
-        value_dl->AddText(value_font, GetFontSize(), ImVec2(text_pos.x + 0.75f, text_pos.y), halo_col, value_buf, value_buf_end);
-        value_dl->AddText(value_font, GetFontSize(), text_pos, text_col, value_buf, value_buf_end);
-        if (split)
+        for (int i = 0; i < stretch_count; ++i)
         {
-            value_dl->PopClipRect();
-            value_dl->PushClipRect(ImVec2(active_edge, frame_bb.Min.y), ImVec2(frame_bb.Max.x, frame_bb.Max.y), true);
-            value_dl->AddText(value_font, GetFontSize(), ImVec2(text_pos.x + 0.75f, text_pos.y), halo_col, value_buf, value_buf_end);
-            value_dl->AddText(value_font, GetFontSize(), text_pos, text_col, value_buf, value_buf_end);
+            if (stretches[i].x1 <= text_left || stretches[i].x0 >= text_right)
+                continue;   // the number never reaches this stretch
+            value_dl->PushClipRect(ImVec2(stretches[i].x0, frame_bb.Min.y),
+                                   ImVec2(stretches[i].x1, frame_bb.Max.y), true);
+            value_dl->AddText(value_font, GetFontSize(), text_pos, stretches[i].ink, value_buf, value_buf_end);
             value_dl->PopClipRect();
         }
         PopFont();
