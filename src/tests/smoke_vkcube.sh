@@ -158,6 +158,12 @@ TechniqueSorting=DisplayDepth@DisplayDepth.fx
 INI
 
     printf 'smoke\n' >"$base/configs/shaders/vkcube.last-profile"
+
+    # Optional extra keys, so a run can cover a non-default shape of the overlay
+    # without a second config file: VKINTOX_SMOKE_NAV=$'navPosition = top\nnavStyle = pills'.
+    if [[ -n "${VKINTOX_SMOKE_NAV:-}" ]]; then
+        printf '%s\n' "$VKINTOX_SMOKE_NAV" >>"$base/VKIntox.conf"
+    fi
 }
 
 seed_config

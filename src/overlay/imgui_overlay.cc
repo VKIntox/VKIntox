@@ -2344,6 +2344,7 @@ namespace VKIntox
             if (openSubView == SubView_ThemeColors)  return 9;
             if (openSubView == SubView_ThemeBlur)    return 10;
             if (openSubView == SubView_ThemeShape)   return 11;
+            if (openSubView == SubView_Navbar)       return 12;
             if (activeView == 0)
             {
                 if (inSelectionMode)    return 1;
@@ -2368,6 +2369,7 @@ namespace VKIntox
             case 9: renderThemeColorsView(); break;
             case 10: renderThemeBlurView(); break;
             case 11: renderThemeShapeView(); break;
+            case 12: renderNavbarView(); break;
             default: break;
             }
         };
@@ -2431,17 +2433,24 @@ namespace VKIntox
         // defer the add-effects search focus until the slide is done
         viewTransitionActive = viewTransitioning;
 
-        const ImVec2 viewPos  = ImGui::GetCursorScreenPos();
-        ImVec2 viewSize = ImGui::GetContentRegionAvail();
+        const bool navOnTop = settingsManager.getNavPosition() == 1;
+        const bool navPills = settingsManager.getNavStyle() == 1;
+        // The top bar is a fixed strip above the content; the dock slides away
+        // under a pushed page, so only the bottom placement reserves on a fade.
+        const float navTopInset = navOnTop ? dockHeight + ImGui::GetStyle().ItemSpacing.y : 0.0f;
+        const ImVec2 viewPos  = ImVec2(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y + navTopInset);
+        ImVec2 viewSize = ImVec2(ImGui::GetContentRegionAvail().x,
+                                 ImMax(1.0f, ImGui::GetContentRegionAvail().y - navTopInset));
         // Leave room for the dock pinned under the content. A pushed page takes
         // that room for itself and the dock eases out of the way, so the page
         // reads as arriving over it rather than beside it.
         const float dockGap = ImGui::GetStyle().ItemSpacing.y;
         const bool overDock = (viewIndex == 1 || viewIndex == 2 || viewIndex == 6 ||
-                               viewIndex == 8 || viewIndex == 9 || viewIndex == 10 || viewIndex == 11);
-        const float dockFade = overDock ? 0.0f
+                               viewIndex == 8 || viewIndex == 9 || viewIndex == 10 || viewIndex == 11 ||
+                               viewIndex == 12);
+        const float dockFade = (overDock || navOnTop) ? 0.0f
                                         : ImClamp(UI::FoldProgress(ImGui::GetID("##dock_reveal"), true, true), 0.0f, 1.0f);
-        viewSize.y = ImMax(1.0f, viewSize.y - (dockHeight + dockGap) * dockFade);
+        viewSize.y = ImMax(1.0f, viewSize.y - (dockHeight + dockGap) * (navOnTop ? 0.0f : dockFade));
         const bool showingFrom = viewTransitioning && viewFromIndex != viewTargetIndex;
 
         // Slidefade: a spatial travel of a fifth of the width, with the incoming
@@ -2512,21 +2521,43 @@ namespace VKIntox
         ImGui::PopClipRect();
         ImGui::SetCursorScreenPos(viewPos);
 
-        // bottom navigation dock, pinned under the content (eased out when a
-        // pushed page has taken its place)
-        if (dockFade > 0.02f)
+        // navigation bar: the dock, or the pill row the overlay used before it.
+        // Pinned under the content, or above it when the setting asks for top.
         {
-            const int viewBeforeDock = activeView;
-            ImGui::SetCursorScreenPos(ImVec2(viewPos.x, viewPos.y + viewSize.y + dockGap));
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, dockFade);
-            ImGui::M3NavigationDock("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons);
-            ImGui::PopStyleVar();
-            // a dock tap always lands on a top-level destination
-            if (activeView != viewBeforeDock)
+            const float navFade = navOnTop ? 1.0f : dockFade;
+            const float navY = navOnTop ? viewPos.y - navTopInset
+                                        : viewPos.y + viewSize.y + dockGap;
+            if (navFade > 0.02f)
             {
-                openSubView = SubView_None;
-                inSelectionMode = false;
-                inConfigManageMode = false;
+                const int viewBeforeNav = activeView;
+                ImGui::SetCursorScreenPos(ImVec2(viewPos.x, navY));
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, navFade);
+                if (navPills)
+                {
+                    // the pills are a button row, not a bar: centre it in the
+                    // strip and leave room for the scrollbar when they overflow
+                    const float pillH = ImGuiM3GetMetrics().button_height_default * ImGuiM3GetMetrics().density;
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+                    ImGui::BeginChild("##overlay_nav_pills_scroll", ImVec2(0.0f, dockHeight),
+                                      ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+                    ImGui::SetCursorPosY(ImMax(0.0f, (dockHeight - pillH) * 0.5f - 4.0f));
+                    ImGui::M3ConnectedButtonGroup("##overlay_nav_pills", kViewLabels, kViewCount, &activeView,
+                                                  kViewIcons, true, NULL, true);
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                }
+                else
+                {
+                    ImGui::M3NavigationDock("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons);
+                }
+                ImGui::PopStyleVar();
+                // a nav tap always lands on a top-level destination
+                if (activeView != viewBeforeNav)
+                {
+                    openSubView = SubView_None;
+                    inSelectionMode = false;
+                    inConfigManageMode = false;
+                }
             }
         }
 

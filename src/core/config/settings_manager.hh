@@ -66,6 +66,16 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.usePortalIntegration;
         }
+        int getNavPosition() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return std::clamp(settings.navPosition, 0, 1);
+        }
+        int getNavStyle() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return std::clamp(settings.navStyle, 0, 1);
+        }
         bool getEnableOnLaunch() const
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -167,6 +177,16 @@ namespace VKIntox
         {
             std::lock_guard<std::mutex> lock(mutex);
             settings.usePortalIntegration = value;
+        }
+        void setNavPosition(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.navPosition = std::clamp(value, 0, 1);
+        }
+        void setNavStyle(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.navStyle = std::clamp(value, 0, 1);
         }
         void setEnableOnLaunch(bool value)
         {

@@ -612,7 +612,9 @@ namespace ImGui
     // segments sharing one shape with 2dp padding; `icons` is one codepoint per
     // `hovered` gets the segment under the pointer, or -1. the row submits one
     // item per segment, so IsItemHovered() after it only answers for the last one.
-    IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL, bool allow_overflow = false, int* hovered = NULL);
+    // `group_surface` draws the capsule the segments sit in, which is how the
+    // navigation bar looked before the dock.
+    IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL, bool allow_overflow = false, int* hovered = NULL, bool group_surface = false);
 
     // Bottom navigation dock: a pill-shaped bar, one destination per entry. The
     // active destination shows its icon and label in an accent pill; the others

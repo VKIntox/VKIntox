@@ -173,15 +173,17 @@ namespace VKIntox
         const float d = ImGuiM3GetMetrics().density;
         // the three theme pages, as one connected pill row
         {
-            static const char* const themePills[] = { "Colors", "Blur", "Shape and metrics" };
-            static const char* const themeGlyphs[] = { Icon::ColorizeUtf8, Icon::BlurOnUtf8, Icon::StraightenUtf8 };
-            const int pill = UI::PillPageRow(themePills, themeGlyphs, 3);
+            static const char* const themePills[] = { "Colors", "Blur", "Shape and metrics", "Navigation bar" };
+            static const char* const themeGlyphs[] = { Icon::ColorizeUtf8, Icon::BlurOnUtf8, Icon::StraightenUtf8, Icon::GridViewUtf8 };
+            const int pill = UI::PillPageRow(themePills, themeGlyphs, 4);
             if (pill == 0)
                 openSubView = SubView_ThemeColors;
             else if (pill == 1)
                 openSubView = SubView_ThemeBlur;
             else if (pill == 2)
                 openSubView = SubView_ThemeShape;
+            else if (pill == 3)
+                openSubView = SubView_Navbar;
         }
 
         // its own inset surface, so the option reads as a setting rather than a
@@ -263,6 +265,42 @@ namespace VKIntox
         ImGui::M3HeroHeader(Icon::BlurOnUtf8, "Blur");
         ImGui::Spacing();
         ImGui::M3ThemeEditorBlur();
+    }
+
+    void ImGuiOverlay::renderNavbarView()
+    {
+        if (UI::BreadcrumbBar("Go back", Icon::ChevronLeftUtf8))
+        {
+            openSubView = SubView_None;
+            return;
+        }
+        ImGui::Spacing();
+        ImGui::M3HeroHeader(Icon::GridViewUtf8, "Navigation bar");
+        ImGui::Spacing();
+
+        ImGui::M3CardBegin("nav_shape", "Layout", Icon::GridViewUtf8);
+        ImGui::TextDisabled("Position");
+        {
+            const char* positions[] = {"Top", "Bottom"};
+            int position = settingsManager.getNavPosition();
+            if (ImGui::M3ConnectedButtonGroup("##nav_position", positions, 2, &position, NULL))
+            {
+                settingsManager.setNavPosition(position);
+                settingsManager.save();
+            }
+        }
+        ImGui::Spacing();
+        ImGui::TextDisabled("Style");
+        {
+            const char* styles[] = {"Dock", "Pill-shaped group of buttons"};
+            int style = settingsManager.getNavStyle();
+            if (ImGui::M3ConnectedButtonGroup("##nav_style", styles, 2, &style, NULL))
+            {
+                settingsManager.setNavStyle(style);
+                settingsManager.save();
+            }
+        }
+        ImGui::M3CardEnd();
     }
 
     void ImGuiOverlay::renderThemeShapeView()

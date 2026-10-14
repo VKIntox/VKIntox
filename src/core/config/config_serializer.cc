@@ -261,6 +261,10 @@ namespace VKIntox
                 settings.overlayBlockInput = (value == "true" || value == "1");
             else if (key == "usePortalIntegration")
                 settings.usePortalIntegration = (value == "true" || value == "1");
+            else if (key == "navPosition")
+                settings.navPosition = (value == "top") ? 1 : 0;
+            else if (key == "navStyle")
+                settings.navStyle = (value == "pills") ? 1 : 0;
             else if (key == "toggleKey")
                 settings.toggleKey = value;
             else if (key == "reloadKey")
@@ -360,6 +364,9 @@ namespace VKIntox
 
         file << "overlayBlockInput = " << (settings.overlayBlockInput ? "true" : "false") << "\n";
         file << "usePortalIntegration = " << (settings.usePortalIntegration ? "true" : "false") << "\n";
+        file << "# navPosition: bottom (default) or top; navStyle: dock (default) or pills\n";
+        file << "navPosition = " << (settings.navPosition == 1 ? "top" : "bottom") << "\n";
+        file << "navStyle = " << (settings.navStyle == 1 ? "pills" : "dock") << "\n";
         file << "maxEffects = " << clampedMaxEffects << "\n";
         file << "autoApply = " << (settings.autoApply ? "true" : "false") << "\n";
         file << "autoApplyDelay = " << settings.autoApplyDelay << "\n";

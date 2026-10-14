@@ -215,6 +215,7 @@ namespace VKIntox
         void renderThemeColorsView();    // Theme editor: colors (from Appearance)
         void renderThemeBlurView();      // Theme editor: blur
         void renderThemeShapeView();     // Theme editor: shape and metrics
+        void renderNavbarView();         // Appearance: navigation bar shape
         enum SubView
         {
             SubView_None = 0,
@@ -223,6 +224,7 @@ namespace VKIntox
             SubView_ThemeColors,
             SubView_ThemeBlur,
             SubView_ThemeShape,
+            SubView_Navbar,
         };
         int openSubView = SubView_None;
         void gatherDepthInfo();     // Snapshot LogicalDevice depth state under globalLock

@@ -2974,7 +2974,7 @@ void ImGui::M3StatusChip(const char* label, ImGuiM3Role role)
 
 // Connected button group.
 
-bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons, bool allow_overflow, int* out_hovered)
+bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons, bool allow_overflow, int* out_hovered, bool group_surface)
 {
     if (out_hovered)
         *out_hovered = -1;
@@ -3056,6 +3056,18 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     PushID(id);
     bool changed = false;
     int new_selection = *selected;
+
+    if (group_surface)
+    {
+        float group_w = gap * (count - 1);
+        for (int i = 0; i < count; i++)
+            group_w += widths[i];
+        const ImRect group_bb(window->DC.CursorPos, window->DC.CursorPos + ImVec2(group_w, h));
+        const float group_pill = ImGuiM3PillRadius(group_bb.GetSize(), ImGuiM3Radius(ImGuiM3Shape_Full));
+        const ImGuiM3ShapeRounding group_rounding{ group_pill, group_pill, group_pill, group_pill };
+        ImGuiM3PathRoundedRect(window->DrawList, group_bb, group_rounding,
+                               ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh));
+    }
 
     // No group surface: the row sits directly on the shell, so only the active
     // segment carries a background (its accent container) and a lift. A group
