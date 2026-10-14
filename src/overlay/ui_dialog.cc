@@ -157,7 +157,7 @@ namespace VKIntox
 
             ImFont* bold = ImGuiM3FontBold();
             if (bold)
-                ImGui::PushFont(bold, ImGui::GetFontSize() * 1.12f);
+                ImGui::PushFont(bold, ImGuiM3GetTypeStyle(ImGuiM3Type_HeadlineSmall).size * m.density);
             ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 380.0f * m.density);
             ImGui::TextUnformatted(title);
             ImGui::PopTextWrapPos();

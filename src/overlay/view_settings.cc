@@ -5,6 +5,7 @@
 #include "overlay/ui_icons.hh"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 
@@ -21,9 +22,6 @@ namespace VKIntox
         };
 
         ImGui::BeginChild("SettingsContent", ImVec2(0, 0), false);
-
-        ImGui::TextDisabled("Controls, behaviour, debugging and theming.");
-        ImGui::Spacing();
 
         // Helper lambda to render a keybind button.
         auto renderKeyBind = [&](const char* label, const char* tooltip,
@@ -61,7 +59,6 @@ namespace VKIntox
 
         // --- Controls ---
         ImGui::M3CardBegin("set_controls", "Controls", Icon::TuneUtf8);
-        ImGui::TextDisabled("Click a binding, then press a key.");
         ImGui::Spacing();
         renderKeyBind("Toggle Effects", "Key to enable/disable all effects",
                       settingsManager.getToggleKey(),
@@ -100,15 +97,6 @@ namespace VKIntox
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("If enabled, effects are active when the game starts.");
-
-        bool depthCapture = settingsManager.getDepthCapture();
-        if (ImGui::Checkbox("Depth capture (requires restart)", &depthCapture))
-        {
-            settingsManager.setDepthCapture(depthCapture);
-            saveSettings();
-        }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Enable depth buffer capture for effects that use depth.\nMay impact performance.");
 
         bool autoApply = settingsManager.getAutoApply();
         if (ImGui::Checkbox("Auto-apply changes", &autoApply))
@@ -158,64 +146,126 @@ namespace VKIntox
         float bytesPerSlot = 2.0f * currentWidth * currentHeight * 4.0f;
         int estimatedVramMB = static_cast<int>((maxEffectsVal * bytesPerSlot) / (1024.0f * 1024.0f));
         ImGui::SameLine();
+        UI::PushSupport();
         if (maxEffectsVal > 20)
             ImGui::TextColored(UI::Attention(), "~%d MB @ %ux%u", estimatedVramMB, currentWidth, currentHeight);
         else
             ImGui::TextDisabled("~%d MB @ %ux%u", estimatedVramMB, currentWidth, currentHeight);
         ImGui::TextDisabled("Requires restart");
+        UI::PopSupport();
         ImGui::M3CardEnd();
 
-        // --- Developer ---
-        ImGui::Spacing();
-        ImGui::M3CardBegin("set_dev", "Developer", Icon::BugReportUtf8);
-        bool showDebugWindow = settingsManager.getShowDebugWindow();
-        if (ImGui::Checkbox("Show debug window", &showDebugWindow))
-        {
-            settingsManager.setShowDebugWindow(showDebugWindow);
-            saveSettings();
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Effect registry data and log output.");
-
-        const std::string resetLayoutLabel = std::string(Icon::StraightenUtf8) + "  Reset window position";
-        if (ImGui::Button(resetLayoutLabel.c_str()))
-        {
-            resetLayoutRequested = true;
-            Logger::info("Window layout reset to default");
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Reset the overlay window position and size to defaults.");
-        ImGui::M3CardEnd();
-
-        // --- Appearance ---
+        // --- Appearance: theme entry points first, then the layout option and
+        // the theme file, each on its own surface ---
         ImGui::Spacing();
         ImGui::M3CardBegin("set_appearance", "Appearance", Icon::PaletteUtf8);
-        const std::string themeEditorLabel = std::string(themeEditorOpen ? Icon::ExpandMoreUtf8 : Icon::ChevronRightUtf8) + "  Theme editor";
-        if (ImGui::Button(themeEditorLabel.c_str()))
-            themeEditorOpen = !themeEditorOpen;
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Source colour, variant, contrast, and every colour token.");
 
+        const float d = ImGuiM3GetMetrics().density;
+        // the three theme pages, as one connected pill row
+        {
+            static const char* const themePills[] = { "Colors", "Blur", "Shape and metrics" };
+            static const char* const themeGlyphs[] = { Icon::ColorizeUtf8, Icon::BlurOnUtf8, Icon::StraightenUtf8 };
+            const int pill = UI::PillPageRow(themePills, themeGlyphs, 3);
+            if (pill == 0)
+                openSubView = SubView_ThemeColors;
+            else if (pill == 1)
+                openSubView = SubView_ThemeBlur;
+            else if (pill == 2)
+                openSubView = SubView_ThemeShape;
+        }
+
+        // its own inset surface, so the option reads as a setting rather than a
+        // stray checkbox under the pages
         ImGui::Spacing();
-        bool separateParams = settingsManager.getSeparateEffectParams();
-        if (ImGui::Checkbox("Separate effect parameters into a separate card", &separateParams))
         {
-            settingsManager.setSeparateEffectParams(separateParams);
-            settingsManager.save();
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Each effect edits in its own tabbed card at the bottom.\nTurn off for the all-in-one effect list.");
-
-        if (themeEditorOpen)
-        {
-            ImGui::Spacing();
-            ImGui::BeginChild("ThemeEditor", ImVec2(0, 440), ImGuiChildFlags_None, ImGuiWindowFlags_None);
-            ImGui::M3ThemeEditor();
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainer));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * d, 12.0f * d));
+            ImGui::BeginChild("##separate_params_card", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY |
+                              ImGuiChildFlags_AlwaysUseWindowPadding);
+            bool separateParams = settingsManager.getSeparateEffectParams();
+            const float labelPxSub = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * ImGuiM3GetMetrics().density;
+            ImFont* brandSub = ImGuiM3FontBold();
+            ImGui::PushFont(brandSub, labelPxSub);
+            ImGui::TextUnformatted("Separate effect parameters");
+            ImGui::PopFont();
+            const float switchH = ImGuiM3GetMetrics().list_item_height_1 * ImGuiM3GetMetrics().density;
+            ImGui::SameLine(ImGui::GetWindowWidth() - ImGuiM3GetMetrics().switch_track_width *
+                            ImGuiM3GetMetrics().density - ImGui::GetStyle().WindowPadding.x);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - (switchH - ImGui::GetTextLineHeight()) * 0.5f + 2.0f);
+            if (ImGui::M3SwitchWithID("", "##separate_params", &separateParams))
+            {
+                settingsManager.setSeparateEffectParams(separateParams);
+                settingsManager.save();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Each effect edits in its own tabbed card at the bottom.\nTurn off for the all-in-one effect list.");
+            UI::TextSupport("Off: every effect unfolds inline in the list card.");
             ImGui::EndChild();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
         }
+
+        // Theme file: always revealed, so a reload is one tap from here
+        ImGui::Spacing();
+        ImGui::M3SectionHeader("Theme file", Icon::SaveUtf8);
+        ImGui::M3ThemeEditorFile();
+        ImGui::M3CardEnd();
+
+        // --- Depth buffer: capture, decoding and selection all live here ---
+        ImGui::Spacing();
+        ImGui::M3CardBegin("set_depth");
+        renderAdvancedView();
+        ImGui::M3CardEnd();
+
+        // --- Developer: pages that live a level deeper, plus layout recovery ---
+        ImGui::Spacing();
+        ImGui::M3CardBegin("set_dev", "Developer", Icon::CodeUtf8);
+        if (UI::SubViewRow("Open diagnostics", NULL, Icon::MonitorHeartUtf8))
+            openSubView = SubView_Diagnostics;
         ImGui::M3CardEnd();
 
         ImGui::EndChild();
+    }
+
+    // --- Pushed theme-editor pages -------------------------------------------
+    void ImGuiOverlay::renderThemeColorsView()
+    {
+        if (UI::BreadcrumbBar("Go back", Icon::ChevronLeftUtf8))
+        {
+            openSubView = SubView_None;
+            return;
+        }
+        ImGui::Spacing();
+        ImGui::M3HeroHeader(Icon::ColorizeUtf8, "Colors");
+        ImGui::Spacing();
+        ImGui::M3ThemeEditorColors();
+    }
+
+    void ImGuiOverlay::renderThemeBlurView()
+    {
+        if (UI::BreadcrumbBar("Go back", Icon::ChevronLeftUtf8))
+        {
+            openSubView = SubView_None;
+            return;
+        }
+        ImGui::Spacing();
+        ImGui::M3HeroHeader(Icon::BlurOnUtf8, "Blur");
+        ImGui::Spacing();
+        ImGui::M3ThemeEditorBlur();
+    }
+
+    void ImGuiOverlay::renderThemeShapeView()
+    {
+        if (UI::BreadcrumbBar("Go back", Icon::ChevronLeftUtf8))
+        {
+            openSubView = SubView_None;
+            return;
+        }
+        ImGui::Spacing();
+        ImGui::M3HeroHeader(Icon::StraightenUtf8, "Shape and metrics");
+        ImGui::Spacing();
+        ImGui::M3ThemeEditorShape();
     }
 
 } // namespace VKIntox
