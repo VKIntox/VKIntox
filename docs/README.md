@@ -18,6 +18,12 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 > [!WARNING]
 > this is the `v0.2.0-experimental` line: expect breakage and active development. the `main` branch is the stable one, and this readme describes the experimental branch.
 
+## building from source
+
+the ImGui fork and the reshade compiler are git submodules, so clone with
+`git clone --recurse-submodules`, or run `git submodule update --init --recursive`
+in an existing checkout before configuring.
+
 ## showcase
 
 <div align="center">
