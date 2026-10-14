@@ -399,6 +399,22 @@ namespace VKIntox
         const auto merged = mergeParams(params);
         const auto mergedDisabledParams = mergeParams(disabledEffectParams);
         std::set<std::string> disabled(disabledEffects.begin(), disabledEffects.end());
+
+        // Two instances of the same shader file collapse into one filename-keyed
+        // section. Mirror their values into the sidecar under the instance name
+        // so they reload per-instance (the sidecar is replayed after the .ini).
+        std::map<std::string, int> sectionCount;
+        for (const auto& effect : effects)
+            sectionCount[sectionFor(effect)]++;
+        std::map<std::string, std::map<std::string, std::string>> duplicateInstanceParams;
+        auto collectDuplicateParams = [&](const std::vector<ConfigParam>& source) {
+            for (const auto& [effectName, paramName, value] : source)
+                if (sectionCount[sectionFor(effectName)] > 1)
+                    duplicateInstanceParams[effectName][paramName] = value;
+        };
+        collectDuplicateParams(params);
+        collectDuplicateParams(disabledEffectParams);
+
         std::vector<std::string> techniques = enabledTechniques;
         std::vector<std::string> sortedTechniques = techniqueSorting;
         if (techniques.empty())
@@ -555,6 +571,64 @@ namespace VKIntox
             }
             else
                 sidecar << '[' << key.first << "]\n" << key.second << '=' << value << "\n\n";
+        }
+        auto writeSidecarMacros = [&sidecar](const std::map<std::string, std::string>& macros) {
+            sidecar << "PreprocessorDefinitions=";
+            bool first = true;
+            for (const auto& [name, value] : macros)
+            {
+                if (!first) sidecar << ", ";
+                sidecar << name << '=';
+                for (const char c : value)
+                {
+                    sidecar << c;
+                    if (c == ',')
+                        sidecar << ',';
+                }
+                first = false;
+            }
+            sidecar << '\n';
+        };
+        for (const auto& [instance, paramMap] : duplicateInstanceParams)
+        {
+            std::map<std::string, std::string> scalars;
+            std::map<std::string, std::map<size_t, std::string>> vectors;
+            std::map<std::string, std::string> macros;
+            for (const auto& [key, value] : paramMap)
+            {
+                if (!key.empty() && key.front() == '@')
+                {
+                    macros[key.substr(1)] = value;
+                    continue;
+                }
+                const auto open = key.rfind('[');
+                if (open != std::string::npos && key.back() == ']')
+                {
+                    try
+                    {
+                        vectors[key.substr(0, open)][std::stoul(key.substr(open + 1, key.size() - open - 2))] = value;
+                        continue;
+                    }
+                    catch (...) {}
+                }
+                scalars[key] = value;
+            }
+            sidecar << '[' << instance << "]\n";
+            if (!macros.empty())
+                writeSidecarMacros(macros);
+            for (const auto& [key, value] : scalars)
+                sidecar << key << '=' << value << '\n';
+            for (const auto& [key, components] : vectors)
+            {
+                std::string joined;
+                for (const auto& [index, component] : components)
+                {
+                    if (!joined.empty()) joined += ", ";
+                    joined += component;
+                }
+                sidecar << key << '=' << joined << '\n';
+            }
+            sidecar << '\n';
         }
         return sidecar.good() && writeAtomically(sidecarPath, sidecar.str());
     }

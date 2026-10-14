@@ -203,6 +203,38 @@ int main()
     expect(foundMacro, "shader profile preserves comma-containing preprocessor values");
     expect(foundStrength && foundVector0 && foundVector1, "shader profile preserves scalar and vector values");
 
+    // Two instances of one shader file collapse into a single filename section,
+    // so their values are mirrored into the sidecar by instance name.
+    const std::string dupPath = VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "dups");
+    const std::map<std::string, std::string> dupPaths = {
+        {"Bloom", "/shaders/bloom.fx"},
+        {"Bloom.2", "/shaders/bloom.fx"},
+    };
+    const std::vector<VKIntox::ConfigParam> dupParams = {
+        {"Bloom", "Strength", "0.5"},
+        {"Bloom", "@QUALITY", "high"},
+        {"Bloom.2", "Strength", "0.9"},
+        {"Bloom.2", "@QUALITY", "low"},
+    };
+    expect(VKIntox::ConfigSerializer::saveShaderProfile(dupPath, dupParams, {"Bloom", "Bloom.2"}, {},
+                                                        dupPaths, {}, {}, {}),
+           "save duplicate-instance shader profile");
+    const auto dupSidecar = VKIntox::ConfigSerializer::loadShaderProfileData(
+        VKIntox::ConfigSerializer::getShaderProfileSidecarPath(dupPath));
+    const auto hasParam = [](const std::vector<VKIntox::ConfigParam>& params, const std::string& instance,
+                             const std::string& name, const std::string& value) {
+        return std::find_if(params.begin(), params.end(), [&](const auto& p) {
+                   return p.effectName == instance && p.paramName == name && p.value == value;
+               }) != params.end();
+    };
+    expect(hasParam(dupSidecar.params, "Bloom", "Strength", "0.5") &&
+               hasParam(dupSidecar.params, "Bloom.2", "Strength", "0.9"),
+           "duplicate instances keep per-instance values in the sidecar");
+    expect(hasParam(dupSidecar.params, "Bloom", "@QUALITY", "high") &&
+               hasParam(dupSidecar.params, "Bloom.2", "@QUALITY", "low"),
+           "duplicate instances keep per-instance preprocessor definitions");
+    expect(dupSidecar.instances.size() == 2, "duplicate instance list round-trips");
+
     // The sidecar carries VKIntox's authoritative instance list: order,
     // kinds, and per-instance enable state, including built-ins.
     const std::string ownedPath = VKIntox::ConfigSerializer::getShaderProfilePath("roundtrip-game", "owned");
