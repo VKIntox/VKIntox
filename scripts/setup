@@ -326,6 +326,15 @@ jq -r '
     | "\(.v)\t\(.d)\t\(.url)"
 ' "$TMP_DIR/release.json" >"$TMP_DIR/versions.tsv"
 
+declare -a BUILD_VERSIONS=() BUILD_DATES=() BUILD_URLS=()
+while IFS=$'\t' read -r build_version build_date build_url; do
+    [[ -n "$build_version" && -n "$build_url" ]] || continue
+    BUILD_VERSIONS+=("$build_version")
+    BUILD_DATES+=("$build_date")
+    BUILD_URLS+=("$build_url")
+done <"$TMP_DIR/versions.tsv"
+((${#BUILD_URLS[@]})) || die "the flatpak-build release has no dated library asset"
+
 # month names for the build picker, so a date reads as a date
 # Published names have carried the date both ways: DDMMYYYY up to October 2026,
 # YYYYMMDD from then on. Normalise to YYYYMMDD, the form that compares and sorts,
