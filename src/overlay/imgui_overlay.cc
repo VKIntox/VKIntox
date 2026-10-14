@@ -2090,13 +2090,14 @@ namespace VKIntox
         const ImVec2 defaultPos(screenMax.x - panel_w - margin_x, screenMin.y + margin_y);
         const ImVec2 defaultSize(panel_w, panel_h);
 
-        // A floor the layout can always lay out against: below this the cards,
-        // nav and preview rows start cutting each other off. Still clamped by the
-        // window, so a game smaller than the floor can keep its own size.
-        constexpr float kMinOverlayW = 640.0f;
-        constexpr float kMinOverlayH = 830.0f;
-        const ImVec2 minSize(ImMin(ImMax(legible_w, kMinOverlayW), avail.x),
-                             ImMin(ImMax(legible_h, kMinOverlayH), avail.y));
+        // A floor the layout can always lay out against, in dp so it tracks the
+        // theme's density: below this the cards, nav and preview rows start
+        // cutting each other off. Still clamped by the window, so a game smaller
+        // than the floor can keep its own size.
+        const float min_overlay_w = 640.0f * shell_metrics.density;
+        const float min_overlay_h = 830.0f * shell_metrics.density;
+        const ImVec2 minSize(ImMin(ImMax(legible_w, min_overlay_w), avail.x),
+                             ImMin(ImMax(legible_h, min_overlay_h), avail.y));
         const ImVec2 maxSize = avail;
 
         // One source of truth for the shell's resting position. While the slide
