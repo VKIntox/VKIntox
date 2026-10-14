@@ -452,6 +452,7 @@ else
     SELECTED_VERSION_NAME="$(basename "$ASSET_URL" | sed -E 's/^libvkintox_flatpak_//; s/_[0-9]{8}\.so$//')"
     SELECTED_BUILD_DATE="$(normalise_build_date "$(basename "$ASSET_URL" | sed -nE 's/^.*_([0-9]{8})\.so$/\1/p')")"
 fi
+LIBRARY="$TMP_DIR/$(basename "$ASSET_URL")"
 say "downloading $(basename "$ASSET_URL")"
 curl -fsSL "$ASSET_URL" -o "$LIBRARY" || die "couldn't download the Flatpak library for $ASSET_URL"
 [[ -s "$LIBRARY" ]] || die "downloaded Flatpak library is empty"
@@ -638,7 +639,9 @@ else
     seed_google_font GoogleSans-Medium.ttf "$(google_font_url "Google+Sans" "wght@500")" || true
     seed_google_font GoogleSans-Regular.ttf "$(google_font_url "Google+Sans" "wght@400")" || true
     seed_google_font GoogleSans-Bold.ttf "$(google_font_url "Google+Sans" "wght@700")" || true
-    seed_google_font GoogleSans-ExtraBold.ttf "$(google_font_url "Google+Sans" "wght@800")" || true
+    # Google Sans ships four steps and no 800, so the extra-bold face is the bold
+    # file under the name a pre-Flex build looks for.
+    cp "$APP_CONFIG/font/GoogleSans-Bold.ttf" "$APP_CONFIG/font/GoogleSans-ExtraBold.ttf" 2>/dev/null || true
     for replacement in GoogleSans-Regular.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf; do
         [[ -s "$APP_CONFIG/font/$replacement" ]] ||
             cp "$APP_CONFIG/font/GoogleSans-Medium.ttf" "$APP_CONFIG/font/$replacement" 2>/dev/null || true
