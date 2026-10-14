@@ -182,36 +182,12 @@ namespace VKIntox
                 openSubView = SubView_Navbar;
         }
 
-        // its own inset surface, so the option reads as a setting rather than a
-        // stray checkbox under the pages
         ImGui::Spacing();
+        bool separateParams = settingsManager.getSeparateEffectParams();
+        if (ImGui::Checkbox("Separate effect parameters into its own card", &separateParams))
         {
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainer));
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * d, 12.0f * d));
-            ImGui::BeginChild("##separate_params_card", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY |
-                              ImGuiChildFlags_AlwaysUseWindowPadding);
-            bool separateParams = settingsManager.getSeparateEffectParams();
-            const float labelPxSub = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * ImGuiM3GetMetrics().density;
-            ImFont* brandSub = ImGuiM3FontBold();
-            ImGui::PushFont(brandSub, labelPxSub);
-            ImGui::TextUnformatted("Separate effect parameters");
-            ImGui::PopFont();
-            const float switchH = ImGuiM3GetMetrics().list_item_height_1 * ImGuiM3GetMetrics().density;
-            ImGui::SameLine(ImGui::GetWindowWidth() - ImGuiM3GetMetrics().switch_track_width *
-                            ImGuiM3GetMetrics().density - ImGui::GetStyle().WindowPadding.x);
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - (switchH - ImGui::GetTextLineHeight()) * 0.5f + 2.0f);
-            if (ImGui::M3SwitchWithID("", "##separate_params", &separateParams))
-            {
-                settingsManager.setSeparateEffectParams(separateParams);
-                settingsManager.save();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Each effect edits in its own tabbed card at the bottom.\nTurn off for the all-in-one effect list.");
-            UI::TextSupport("Off: every effect unfolds inline in the list card.");
-            ImGui::EndChild();
-            ImGui::PopStyleVar(2);
-            ImGui::PopStyleColor();
+            settingsManager.setSeparateEffectParams(separateParams);
+            saveSettings();
         }
 
         // Theme file: always revealed, so a reload is one tap from here
