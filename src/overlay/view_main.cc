@@ -440,7 +440,8 @@ namespace VKIntox
             ImGui::BeginDisabled(fileDialogPending() || presetBrowser.IsOpened());
             if (ImGui::M3IconButton(Icon::UploadUtf8, "Import a ReShade .ini preset", ImGuiM3Button_Tonal))
             {
-                if (!startOpenFileDialog("Import ReShade preset", {"*.ini"}))
+                if (!settingsManager.getUsePortalIntegration()
+                    || !startOpenFileDialog("Import ReShade preset", {"*.ini"}))
                     openPresetBrowser();
             }
             ImGui::EndDisabled();

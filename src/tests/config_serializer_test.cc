@@ -66,6 +66,7 @@ int main()
     VKIntox::VkBasaltSettings settings = VKIntox::DefaultConfig::appSettings();
     settings.maxEffects = 23;
     settings.overlayBlockInput = false;
+    settings.usePortalIntegration = false;
     settings.toggleKey = "F8";
     settings.reloadKey = "F9";
     settings.overlayKey = "F11";
@@ -88,6 +89,7 @@ int main()
     const auto loaded = VKIntox::ConfigSerializer::loadSettings();
     expect(loaded.maxEffects == settings.maxEffects, "settings preserve maxEffects");
     expect(loaded.overlayBlockInput == settings.overlayBlockInput, "settings preserve overlayBlockInput");
+    expect(loaded.usePortalIntegration == settings.usePortalIntegration, "settings preserve usePortalIntegration");
     expect(loaded.toggleKey == settings.toggleKey && loaded.reloadKey == settings.reloadKey &&
                loaded.overlayKey == settings.overlayKey,
            "settings preserve key bindings");

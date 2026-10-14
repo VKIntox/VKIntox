@@ -259,6 +259,8 @@ namespace VKIntox
             }
             else if (key == "overlayBlockInput")
                 settings.overlayBlockInput = (value == "true" || value == "1");
+            else if (key == "usePortalIntegration")
+                settings.usePortalIntegration = (value == "true" || value == "1");
             else if (key == "toggleKey")
                 settings.toggleKey = value;
             else if (key == "reloadKey")
@@ -357,6 +359,7 @@ namespace VKIntox
         const int clampedMaxEffects = std::clamp(settings.maxEffects, MIN_MAX_EFFECTS, MAX_MAX_EFFECTS);
 
         file << "overlayBlockInput = " << (settings.overlayBlockInput ? "true" : "false") << "\n";
+        file << "usePortalIntegration = " << (settings.usePortalIntegration ? "true" : "false") << "\n";
         file << "maxEffects = " << clampedMaxEffects << "\n";
         file << "autoApply = " << (settings.autoApply ? "true" : "false") << "\n";
         file << "autoApplyDelay = " << settings.autoApplyDelay << "\n";

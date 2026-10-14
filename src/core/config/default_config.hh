@@ -41,6 +41,7 @@ namespace VKIntox::DefaultConfig
         VkBasaltSettings settings;
         settings.maxEffects = 10;
         settings.overlayBlockInput = true;
+        settings.usePortalIntegration = true;
         settings.toggleKey = "End";
         settings.reloadKey = "F10";
         settings.overlayKey = "Home";

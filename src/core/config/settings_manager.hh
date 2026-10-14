@@ -61,6 +61,11 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.overlayKey;
         }
+        bool getUsePortalIntegration() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.usePortalIntegration;
+        }
         bool getEnableOnLaunch() const
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -157,6 +162,11 @@ namespace VKIntox
         {
             std::lock_guard<std::mutex> lock(mutex);
             settings.overlayKey = value;
+        }
+        void setUsePortalIntegration(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.usePortalIntegration = value;
         }
         void setEnableOnLaunch(bool value)
         {

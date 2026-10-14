@@ -45,6 +45,10 @@ namespace VKIntox
     {
         int maxEffects;
         bool overlayBlockInput;
+        // Route file pickers and other integrations through the XDG desktop
+        // portals when the session provides them, instead of the in-overlay
+        // fallbacks. Off is for sessions with no portal service.
+        bool usePortalIntegration;
         std::string toggleKey;
         std::string reloadKey;
         std::string overlayKey;

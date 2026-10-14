@@ -122,6 +122,16 @@ namespace VKIntox
             ImGui::Unindent();
         }
 
+        bool usePortal = settingsManager.getUsePortalIntegration();
+        if (ImGui::Checkbox("Use XDG Desktop Portal integrations when available", &usePortal))
+        {
+            settingsManager.setUsePortalIntegration(usePortal);
+            saveSettings();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Route file pickers through the desktop's own portal (needed inside Flatpak).\n"
+                              "Off falls back to the overlay's built-in browser when no portal answers.");
+
         ImGui::Spacing();
         ImGui::AlignTextToFramePadding();
         ImGui::Text("%s  Max effects", Icon::MemoryUtf8);

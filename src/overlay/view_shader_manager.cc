@@ -139,7 +139,8 @@ namespace VKIntox
         {
             // If the portal cannot even be started (no GIO, no session bus),
             // open the in-overlay browser right away.
-            if (!startOpenDirectoryDialog("Select Parent Directory"))
+            if (!settingsManager.getUsePortalIntegration()
+                || !startOpenDirectoryDialog("Select Parent Directory"))
             {
                 dirBrowser.SetTitle("Select Parent Directory");
                 const char* home = std::getenv("HOME");
