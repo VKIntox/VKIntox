@@ -3509,11 +3509,46 @@ void ImGui::M3ThemeEditorComponents()
 
 void ImGui::M3ThemeEditorFile()
 {
-    ImGui::TextDisabled("%s", ImGuiM3GetThemeFile() ? ImGuiM3GetThemeFile() : "(no file - in-memory only)");
-    // Reload first, outlined; writing the preset out is the primary action.
-    if (ImGui::M3Button("Reload now", ImGuiM3Button_Outlined))
+    const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+    const float d = m.density;
+    ImDrawList* dl = GetWindowDrawList();
+    const char* path = ImGuiM3GetThemeFile();
+
+    // The pair is flush right and centred on the block: the caller's section
+    // header is its first line, the path line its last. Reading the header's rect
+    // keeps that bias without the caller having to hand over a height.
+    const ImVec2 block_top = GetItemRectMin();
+    const float header_h = GetItemRectSize().y;
+    const bool have_header = header_h > 0.0f && block_top.y <= GetCursorScreenPos().y;
+    const float row_top = GetCursorScreenPos().y;
+
+    const float button_h = m.button_height_default * d;
+    const float seam = 2.0f * d;
+    const float w_reload = M3ButtonWidth("Reload now");
+    const float w_write = M3ButtonWidth("Write preset to file");
+    const float buttons_w = w_reload + seam + w_write;
+    const float content_right = GetWindowPos().x + GetWindowWidth() - GetCurrentWindowRead()->WindowPadding.x;
+    const float buttons_x = content_right - buttons_w;
+
+    // path line, clipped short of the buttons rather than running under them
     {
-        const char* path = ImGuiM3GetThemeFile();
+        const ImVec2 text_pos = GetCursorScreenPos();
+        const float limit = buttons_x - 12.0f * d;
+        const float avail = ImMax(limit - text_pos.x, 1.0f);
+        const ImVec2 text_max(text_pos.x + avail, text_pos.y + GetTextLineHeight());
+        PushStyleColor(ImGuiCol_Text, GetStyleColorVec4(ImGuiCol_TextDisabled));
+        RenderTextEllipsis(dl, text_pos, text_max, text_max.x,
+                           path ? path : "(no file - in-memory only)", NULL, NULL);
+        PopStyleColor();
+        Dummy(ImVec2(0.0f, GetTextLineHeight()));
+    }
+    const float row_bottom = GetCursorScreenPos().y;
+
+    const float block_top_y = have_header ? ImMin(block_top.y, row_top) : row_top;
+    SetCursorScreenPos(ImVec2(buttons_x, block_top_y + (row_bottom - block_top_y - button_h) * 0.5f));
+    // the same shared shape the other action pairs use: pill outside, one seam
+    if (M3Button("Reload now", ImGuiM3Button_Outlined, ImVec2(w_reload, button_h), false, ImGuiM3Button_Leading))
+    {
         if (path)
         {
             LoadThemeFile(path);
@@ -3521,10 +3556,13 @@ void ImGui::M3ThemeEditorFile()
             g_theme.reloaded = true;
         }
     }
-    ImGui::SameLine();
-    if (ImGui::M3Button("Write preset to file", ImGuiM3Button_Filled))
-        ImGuiM3WriteThemeFile(ImGuiM3GetThemeFile());
-    // Status lines read as supporting text: smaller, dimmed, bold.
+    SameLine(0.0f, seam);
+    if (M3Button("Write preset to file", ImGuiM3Button_Filled, ImVec2(w_write, button_h), false, ImGuiM3Button_Trailing))
+        ImGuiM3WriteThemeFile(path);
+
+    // status stays where it was, one row under the path: the buttons no longer
+    // take a row of their own, so it comes up with them
+    SetCursorScreenPos(ImVec2(GetWindowPos().x + GetCurrentWindowRead()->WindowPadding.x, row_bottom));
     ImGuiM3PushTextStyle(ImGuiM3Type_BodySmall);
     if (const char* msg = ImGuiM3ConsumeReloadMessage())
         ImGui::TextColored(ImGuiM3Color(ImGuiM3Role_Tertiary), "%s", msg);
