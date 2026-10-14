@@ -146,7 +146,6 @@ namespace VKIntox
         // atomic so the debounced auto-save can't hit the new path first.
         bool switchShaderProfile(const std::string& profileName);
         std::string getActiveShaderProfilePath() const { return activeShaderProfilePath; }
-        void renderCenteredBrandIcon(float size);
 
         // Trigger debounced reload (for config switch)
         void markDirty() { paramsDirty = true; lastChangeTime = std::chrono::steady_clock::now(); }
@@ -209,8 +208,23 @@ namespace VKIntox
         // just while the Diagnostics tab is open, so the tab has real history.
         void sampleDiagnostics();
         void renderAboutView();
-        void renderDebugWindow();  // Debug window with effect registry and log data
         void renderAdvancedView();  // Depth buffer switching (Advanced tab)
+        // Sub-views: pages pushed inside a tab. They slide in over the dock (which
+        // fades out to make room) and carry a breadcrumb back to their parent.
+        void renderDepthBuffersView();   // Reported depth buffers (from Settings)
+        void renderThemeColorsView();    // Theme editor: colors (from Appearance)
+        void renderThemeBlurView();      // Theme editor: blur
+        void renderThemeShapeView();     // Theme editor: shape and metrics
+        enum SubView
+        {
+            SubView_None = 0,
+            SubView_DepthBuffers,
+            SubView_Diagnostics,
+            SubView_ThemeColors,
+            SubView_ThemeBlur,
+            SubView_ThemeShape,
+        };
+        int openSubView = SubView_None;
         void gatherDepthInfo();     // Snapshot LogicalDevice depth state under globalLock
         void applyDepthPinRequests();  // Flush UI depth-pin/clear requests to LogicalDevice
         void renderToasts();       // Persistent top-right notifications
@@ -218,6 +232,8 @@ namespace VKIntox
         // Overlay hitboxes for this frame, in surface pixels. published to the
         // input blocker so only pointer events over the overlay are withheld.
         std::vector<InputRect> frameInputRects;
+        // toast cards this frame, in surface pixels; the backdrop blur skips them
+        std::vector<InputRect> toastCardRects;
 
         LogicalDevice* logicalDevice;
         OverlayPersistentState* pPersistentState;
@@ -243,6 +259,9 @@ namespace VKIntox
             VkDescriptorSet sourceSet[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};   // samples image[i]
             VkDescriptorSet imguiTexture = VK_NULL_HANDLE;                     // samples image[0]
         };
+        // Backdrop blur. One set of resources per swapchain image so a half-res
+        // capture written for image N can never race a blur still reading image
+        // N-1.
         std::vector<BlurResources> blurResources;
         VkSampler             blurSampler = VK_NULL_HANDLE;
         VkDescriptorSetLayout blurSetLayout = VK_NULL_HANDLE;
@@ -341,13 +360,6 @@ namespace VKIntox
         bool depthPinChanged = false;         // Set when pin/clear was applied (triggers cmd buf reallocation)
         bool depthTransformPending = false;   // Set when a depth transform toggle changed (rebuild resolve path)
 
-        // UI state for debug window
-        int debugWindowTab = 0;  // 0=Registry, 1=Log
-        bool debugLogFilters[5] = {false, false, true, true, true};  // Trace, Debug, Info, Warn, Error
-        char debugLogSearch[128] = "";  // Search filter for log tab
-        std::vector<LogEntry> debugLogSnapshot;  // cached history for the log tab
-        std::vector<std::string> debugLogLower;  // lowercased snapshot messages for search
-        uint64_t debugLogVersion = 0;            // Logger::historyVersion of the snapshot
         bool applyRequested = false;
         // a pending edit that genuinely needs the effect chain rebuilt; a plain
         // ReShade uniform edit is applied live by updateEffect()

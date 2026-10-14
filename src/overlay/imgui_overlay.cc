@@ -242,68 +242,68 @@ namespace VKIntox
             return "";
         };
 
-        std::vector<std::pair<std::string, std::string>> fontSearchPaths = {
-            {findFont("GoogleSans-Regular.ttf"), "Google Sans Regular"},
-            {findFont("font.ttf"), "legacy regular fallback"}
-        };
-
-        // AddFontFromFileTTF copies the file in, so a borrowed pointer is fine.
-        const char* regularPath = nullptr;
-        for (const auto& [path, desc] : fontSearchPaths)
-        {
-            if (std::ifstream(path).good()) { regularPath = path.c_str(); break; }
-        }
+        const std::string gsPath = findFont("GoogleSansFlex.ttf");
+        const std::string rfPath = findFont("RobotoFlex.ttf");
+        const std::string legacyPath = findFont("font.ttf");
+        const std::string bodyPath = !rfPath.empty() ? rfPath : (!gsPath.empty() ? gsPath : legacyPath);
+        const std::string docPath  = !gsPath.empty() ? gsPath : bodyPath;
 
         // M3 body-medium: 14sp, regular weight. everything else steps from here.
         constexpr float kBodyMediumSize = 14.0f;
-
-        ImFontConfig fontCfg;
-        fontCfg.SizePixels = kBodyMediumSize;
-        fontCfg.OversampleH = 2;
-        fontCfg.OversampleV = 1;
-        fontCfg.PixelSnapH = true;
 
         // Material Symbols: merged into every text face for inline codepoints,
         // plus a standalone 24px face for M3Icon and the nav.
         const std::string iconFontPath = findFont("MaterialSymbolsRounded.ttf");
         const bool haveIconFont = !iconFontPath.empty();
 
-        if (regularPath)
+        // OpenType 4-char axis tags.
+        constexpr ImU32 kTagWght = 0x77676874u; // 'wght'
+        constexpr ImU32 kTagROND = 0x524F4E44u; // 'ROND'
+        constexpr ImU32 kTagOpsz = 0x6F70737Au; // 'opsz'
+
+        // One variable file per role: pin the axes we need instead of shipping a
+        // static file per weight. ROND=100 gives the rounded document cut.
+        auto addFace = [&](const std::string& path, float wght, bool rounded, float opsz) -> ImFont*
+        {
+            if (path.empty())
+                return nullptr;
+            ImFontConfig cfg;
+            cfg.SizePixels = kBodyMediumSize;
+            cfg.OversampleH = 2;
+            cfg.OversampleV = 1;
+            cfg.PixelSnapH = true;
+            int n = 0;
+            cfg.VariationAxisTags[n] = kTagWght; cfg.VariationAxisValues[n++] = wght;
+            cfg.VariationAxisTags[n] = kTagOpsz; cfg.VariationAxisValues[n++] = opsz;
+            if (rounded) { cfg.VariationAxisTags[n] = kTagROND; cfg.VariationAxisValues[n++] = 100.0f; }
+            cfg.VariationAxisCount = n;
+            ImFont* face = io.Fonts->AddFontFromFileTTF(path.c_str(), kBodyMediumSize, &cfg);
+            if (face && haveIconFont)
+                ImGuiM3MergeIconFont(iconFontPath.c_str(), kBodyMediumSize, Icon::GlyphRanges());
+            return face;
+        };
+
+        if (!bodyPath.empty())
         {
             io.Fonts->Clear();
 
-            // merge icons in before the next face so it starts fresh.
-            auto addFace = [&](const char* path) -> ImFont*
-            {
-                ImFont* face = io.Fonts->AddFontFromFileTTF(path, kBodyMediumSize, &fontCfg);
-                if (face && haveIconFont)
-                    ImGuiM3MergeIconFont(iconFontPath.c_str(), kBodyMediumSize, Icon::GlyphRanges());
-                return face;
-            };
-
-            ImFont* regular = addFace(regularPath);
-            ImFont* medium = nullptr;
-            ImFont* bold = nullptr;
-            ImFont* extraBold = nullptr;
-            // medium for display/headline emphasis, bold for titles and labels.
-            const std::pair<const char*, ImFont**> weights[] = {
-                {"GoogleSans-Medium.ttf", &medium},
-                {"GoogleSans-Bold.ttf", &bold},
-                {"GoogleSans-ExtraBold.ttf", &extraBold},
-            };
-            for (const auto& [filename, slot] : weights)
-            {
-                const std::string path = findFont(filename);
-                if (!path.empty())
-                    *slot = addFace(path.c_str());
-            }
-            // merging appends atlas entries, so pass the faces by identity.
+            // body text: Roboto Flex; titles/display: Google Sans Flex (rounded).
+            ImFont* regular   = addFace(bodyPath, 400.0f, false, 14.0f);
+            ImFont* medium    = addFace(bodyPath, 500.0f, false, 14.0f);
+            ImFont* bodyBold  = addFace(bodyPath, 700.0f, false, 14.0f);
+            ImFont* bold      = addFace(docPath,  650.0f, true,  18.0f);
+            ImFont* extraBold = addFace(docPath,  700.0f, true,  32.0f);
             ImGuiM3SetTextFonts(regular, medium, bold, extraBold);
-            Logger::info("ImGui: loaded Google Sans Flex regular/medium/bold weights from " + std::string(regularPath));
+            ImGuiM3SetBodyBoldFont(bodyBold);
+            Logger::info("ImGui: body=Roboto Flex, document=Google Sans Flex (variable) from " + bodyPath);
         }
         else
         {
-            Logger::warn("ImGui: Google Sans Flex not found - using default font");
+            // No theme families: keep the padding-based layout valid by installing
+            // the built-in face rather than leaving the atlas empty.
+            io.Fonts->Clear();
+            io.Fonts->AddFontDefault();
+            Logger::warn("ImGui: variable fonts not found - using the default font");
         }
 
         if (haveIconFont)
@@ -312,6 +312,11 @@ namespace VKIntox
                 Logger::info("ImGui: loaded Material Symbols icon font");
             else
                 Logger::warn("ImGui: Material Symbols font could not be parsed");
+
+            // heavier face for the dock's weight morph; optional.
+            const std::string iconBoldPath = findFont("MaterialSymbolsRoundedBold.ttf");
+            if (!iconBoldPath.empty())
+                ImGuiM3LoadIconFontBold(iconBoldPath.c_str(), 24.0f, Icon::GlyphRanges());
         }
         else
         {
@@ -487,32 +492,6 @@ namespace VKIntox
         return true;
     }
 
-    void ImGuiOverlay::renderCenteredBrandIcon(float size)
-    {
-        if (titleIconDescriptor == VK_NULL_HANDLE || size <= 0.0f)
-            return;
-        size = std::min(size, 512.0f);
-        const float contentWidth = ImGui::GetContentRegionAvail().x;
-        const float x = ImGui::GetCursorPosX() + std::max(0.0f, (contentWidth - size) * 0.5f);
-        ImGui::SetCursorPosX(x);
-        ImGui::GetWindowDrawList()->AddImage(
-            ImTextureRef(reinterpret_cast<ImTextureID>(titleIconDescriptor)),
-            ImGui::GetCursorScreenPos(),
-            ImVec2(ImGui::GetCursorScreenPos().x + size, ImGui::GetCursorScreenPos().y + size));
-        ImGui::Dummy(ImVec2(size, size));
-        ImGui::Dummy(ImVec2(0.0f, std::max(6.0f, size * 0.035f)));
-        const char* brandText = "VKIntox";
-        // wordmark is the only display-scale run, so it takes bold.
-        ImFont* font = ImGuiM3FontBold();
-        if (!font)
-            font = ImGui::GetIO().Fonts->Fonts[0];
-        ImGui::PushFont(font, std::max(font->LegacySize, size * 0.14f));
-        const float textWidth = ImGui::CalcTextSize(brandText).x;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (contentWidth - textWidth) * 0.5f));
-        ImGui::TextUnformatted(brandText);
-        ImGui::PopFont();
-    }
-
     void ImGuiOverlay::pushToast(LogLevel level, const std::string& message)
     {
         std::lock_guard<std::mutex> lock(toastsMutex);
@@ -546,7 +525,13 @@ namespace VKIntox
             snapshot = toasts;
         }
         if (snapshot.empty())
+        {
+            toastCardRects.clear();
             return;
+        }
+
+        // toast card footprints, screen space; the backdrop blur subtracts them
+        toastCardRects.clear();
 
         constexpr float kLifetimeSeconds = 5.0f;
         constexpr float kFadeSeconds = 0.6f;
@@ -557,8 +542,15 @@ namespace VKIntox
         const float gap = 10.0f;
         const float padX = 22.0f;
         const float padY = 16.0f;
-        const float shadowPad = 14.0f;
         const float rounding = 16.0f;
+        // the host window has to be big enough for the shadow: a fixed 14px pad was
+        // under a level-2 reach, so the falloff was sliced square at the window edge
+        const ImGuiM3Metrics& tm = ImGuiM3GetMetrics();
+        const int toastElevation = 2;
+        const float shadowReach = ImMax(tm.ambient_shadow_blur[toastElevation] * 2.0f + tm.ambient_shadow_spread[toastElevation],
+                                        ImMax(tm.key_shadow_blur[toastElevation] * 2.0f, 4.0f));
+        const float shadowDrop = ImMax(tm.ambient_shadow_y[toastElevation], tm.key_shadow_y[toastElevation]);
+        const float shadowPad = ImCeil((shadowReach + shadowDrop) * tm.density) + 1.0f;
         // never let a collapsed game window produce a negative card width
         const float maxCardWidth = ImMax(160.0f, ImMin(560.0f, viewport->WorkSize.x - margin * 2.0f));
 
@@ -616,20 +608,19 @@ namespace VKIntox
 
             if (open)
             {
+                // pin the toast to the display front: ImGui reorders windows on
+                // focus, so clicking the shell drew it over the toasts next frame
+                ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
                 ImDrawList* drawList = ImGui::GetWindowDrawList();
                 const ImVec2 cardMin(windowPos.x + shadowPad, windowPos.y + shadowPad);
                 const ImVec2 cardMax(cardMin.x + cardWidth, cardMin.y + cardHeight);
+                toastCardRects.push_back(InputRect{cardMin.x, cardMin.y, cardWidth, cardHeight});
 
-                // fake a soft drop shadow: stacked translucent rounded rects,
-                // largest first so density builds toward the card edge
-                const int shadowAlpha = static_cast<int>(5.0f * fade);
+                // the elevation the filled buttons use
+                ImGuiM3DrawElevation(drawList, ImRect(cardMin, cardMax),
+                                     ImGuiM3ShapeRounding{ rounding, rounding, rounding, rounding },
+                                     toastElevation, fade);
                 const int cardAlpha = static_cast<int>(255.0f * fade);
-                for (int step = static_cast<int>(shadowPad); step >= 1; --step)
-                {
-                    drawList->AddRectFilled(ImVec2(cardMin.x - step, cardMin.y - step),
-                                            ImVec2(cardMax.x + step, cardMax.y + step),
-                                            IM_COL32(0, 0, 0, shadowAlpha), rounding + step);
-                }
                 drawList->AddRectFilled(cardMin, cardMax, IM_COL32(255, 255, 255, cardAlpha), rounding);
 
                 ImGui::SetCursorScreenPos(ImVec2(cardMin.x + padX, cardMin.y + padY));
@@ -654,6 +645,68 @@ namespace VKIntox
                     toasts.erase(toasts.begin() + *it);
             }
         }
+    }
+
+    // one rounded backdrop image over the shell, minus the toasts' union box: the
+    // blur must not run under a toast, or a fading card reveals it. up to four
+    // bands, each keeping its share of the UVs and whichever corners it contains.
+    static void drawBackdropAvoiding(ImDrawList* dl, ImTextureRef tex, const ImVec2& pMin, const ImVec2& pMax,
+                                     const ImVec2& uvMin, const ImVec2& uvMax, ImU32 col, float rounding,
+                                     const std::vector<InputRect>& skip)
+    {
+        ImRect box;
+        bool haveBox = false;
+        for (const InputRect& r : skip)
+        {
+            const ImRect toast(ImVec2(r.x, r.y), ImVec2(r.x + r.width, r.y + r.height));
+            if (toast.Max.x <= pMin.x || toast.Min.x >= pMax.x || toast.Max.y <= pMin.y || toast.Min.y >= pMax.y)
+                continue;
+            if (!haveBox)
+                box = toast;
+            else
+            {
+                box.Min.x = ImMin(box.Min.x, toast.Min.x);
+                box.Min.y = ImMin(box.Min.y, toast.Min.y);
+                box.Max.x = ImMax(box.Max.x, toast.Max.x);
+                box.Max.y = ImMax(box.Max.y, toast.Max.y);
+            }
+            haveBox = true;
+        }
+
+        if (!haveBox)
+        {
+            dl->AddImageRounded(tex, pMin, pMax, uvMin, uvMax, col, rounding);
+            return;
+        }
+
+        box.Min.x = ImClamp(box.Min.x, pMin.x, pMax.x);
+        box.Min.y = ImClamp(box.Min.y, pMin.y, pMax.y);
+        box.Max.x = ImClamp(box.Max.x, pMin.x, pMax.x);
+        box.Max.y = ImClamp(box.Max.y, pMin.y, pMax.y);
+
+        const float width  = ImMax(pMax.x - pMin.x, 1.0f);
+        const float height = ImMax(pMax.y - pMin.y, 1.0f);
+        auto band = [&](const ImRect& r) {
+            if (r.Max.x - r.Min.x <= 0.5f || r.Max.y - r.Min.y <= 0.5f)
+                return;
+            const ImVec2 uv0(ImLerp(uvMin.x, uvMax.x, (r.Min.x - pMin.x) / width),
+                             ImLerp(uvMin.y, uvMax.y, (r.Min.y - pMin.y) / height));
+            const ImVec2 uv1(ImLerp(uvMin.x, uvMax.x, (r.Max.x - pMin.x) / width),
+                             ImLerp(uvMin.y, uvMax.y, (r.Max.y - pMin.y) / height));
+            const float eps = 1.0f;
+            ImDrawFlags flags = 0;
+            if (r.Min.x <= pMin.x + eps && r.Min.y <= pMin.y + eps) flags |= ImDrawFlags_RoundCornersTopLeft;
+            if (r.Max.x >= pMax.x - eps && r.Min.y <= pMin.y + eps) flags |= ImDrawFlags_RoundCornersTopRight;
+            if (r.Min.x <= pMin.x + eps && r.Max.y >= pMax.y - eps) flags |= ImDrawFlags_RoundCornersBottomLeft;
+            if (r.Max.x >= pMax.x - eps && r.Max.y >= pMax.y - eps) flags |= ImDrawFlags_RoundCornersBottomRight;
+            dl->AddImageRounded(tex, r.Min, r.Max, uv0, uv1, col, rounding,
+                                flags ? flags : (ImDrawFlags)ImDrawFlags_RoundCornersNone);
+        };
+
+        band(ImRect(pMin, ImVec2(pMax.x, box.Min.y)));                          // above the toasts
+        band(ImRect(ImVec2(pMin.x, box.Max.y), pMax));                          // below them
+        band(ImRect(ImVec2(pMin.x, box.Min.y), ImVec2(box.Min.x, box.Max.y)));  // left of them
+        band(ImRect(ImVec2(box.Max.x, box.Min.y), ImVec2(pMax.x, box.Max.y)));  // right of them
     }
 
     void ImGuiOverlay::saveToPersistentState()
@@ -1044,16 +1097,22 @@ namespace VKIntox
 
         ImGui_ImplVulkan_Init(&initInfo);
 
+        // 512 square, but never drawn above ~48px, so it is area-averaged down to
+        // its display footprint and carries a mip chain from there: bilinear on a
+        // single level samples four of every sixty-five texels and the edge crawls.
+        constexpr uint32_t kTitleIconPx = 128;
+        constexpr uint32_t kTitleIconMips = 8;   // 128, 64, 32, 16, 8, 4, 2, 1
+
         VkImageCreateInfo iconInfo{};
         iconInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         iconInfo.imageType = VK_IMAGE_TYPE_2D;
         iconInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-        iconInfo.extent = {512, 512, 1};
-        iconInfo.mipLevels = 1;
+        iconInfo.extent = {kTitleIconPx, kTitleIconPx, 1};
+        iconInfo.mipLevels = kTitleIconMips;
         iconInfo.arrayLayers = 1;
         iconInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         iconInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        iconInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        iconInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         iconInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         iconInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VkResult iconResult = logicalDevice->vkd.CreateImage(logicalDevice->device, &iconInfo, nullptr, &titleIconImage);
@@ -1084,9 +1143,80 @@ namespace VKIntox
             }
             else
             {
+                // Post-multiplied area average: averaging straight RGBA darkens
+                // the soft edges of the rounded mark.
+                std::vector<uint8_t> resampled(kTitleIconPx * kTitleIconPx * 4);
+                const int factor = iconWidth / static_cast<int>(kTitleIconPx);
+                const uint32_t taps = static_cast<uint32_t>(factor * factor);
+                for (uint32_t y = 0; y < kTitleIconPx; ++y)
+                {
+                    for (uint32_t x = 0; x < kTitleIconPx; ++x)
+                    {
+                        uint32_t acc[4] = {0, 0, 0, 0};
+                        for (int sy = 0; sy < factor; ++sy)
+                        {
+                            const stbi_uc* row = iconPixels +
+                                ((static_cast<size_t>(y) * factor + sy) * static_cast<size_t>(iconWidth) +
+                                 static_cast<size_t>(x) * factor) * 4;
+                            for (int sx = 0; sx < factor; ++sx, row += 4)
+                            {
+                                const uint32_t a = row[3];
+                                acc[0] += row[0] * a;
+                                acc[1] += row[1] * a;
+                                acc[2] += row[2] * a;
+                                acc[3] += a;
+                            }
+                        }
+                        uint8_t* out = resampled.data() + (static_cast<size_t>(y) * kTitleIconPx + x) * 4;
+                        const uint32_t a = acc[3];
+                        out[3] = static_cast<uint8_t>((a + taps / 2) / taps);
+                        for (int ch = 0; ch < 3; ++ch)
+                            out[ch] = a == 0 ? 0 : static_cast<uint8_t>((acc[ch] + a / 2) / a);
+                    }
+                }
+                // straight-alpha texels outside the mark have no colour, and the
+                // mips average whatever RGB they find there, which is a dark fringe
+                // once minified. bleed the mark's colour outward; alpha stays zero,
+                // so only the averaging changes.
+                std::vector<uint8_t> bled(kTitleIconPx * kTitleIconPx, 0);
+                for (uint32_t i = 0; i < kTitleIconPx * kTitleIconPx; ++i)
+                    bled[i] = resampled[i * 4 + 3] > 0 ? 1 : 0;
+                static constexpr int kNeighbours[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+                std::vector<uint8_t> spread = resampled;
+                for (int pass = 0; pass < 8; ++pass)
+                {
+                    bool grew = false;
+                    for (uint32_t y = 0; y < kTitleIconPx; ++y)
+                    {
+                        for (uint32_t x = 0; x < kTitleIconPx; ++x)
+                        {
+                            const uint32_t i = y * kTitleIconPx + x;
+                            if (bled[i])
+                                continue;
+                            for (const auto& n : kNeighbours)
+                            {
+                                const int nx = static_cast<int>(x) + n[0];
+                                const int ny = static_cast<int>(y) + n[1];
+                                if (nx < 0 || ny < 0 || nx >= static_cast<int>(kTitleIconPx) || ny >= static_cast<int>(kTitleIconPx))
+                                    continue;
+                                const uint32_t j = static_cast<uint32_t>(ny) * kTitleIconPx + static_cast<uint32_t>(nx);
+                                if (!bled[j])
+                                    continue;
+                                spread[i * 4 + 0] = spread[j * 4 + 0];
+                                spread[i * 4 + 1] = spread[j * 4 + 1];
+                                spread[i * 4 + 2] = spread[j * 4 + 2];
+                                bled[i] = 1;
+                                grew = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!grew)
+                        break;
+                }
                 uploadToImage(logicalDevice, titleIconImage,
-                              {static_cast<uint32_t>(iconWidth), static_cast<uint32_t>(iconHeight), 1},
-                              static_cast<uint32_t>(iconWidth * iconHeight * 4), iconPixels);
+                              {kTitleIconPx, kTitleIconPx, 1},
+                              kTitleIconPx * kTitleIconPx * 4, spread.data(), kTitleIconMips);
                 stbi_image_free(iconPixels);
             }
         }
@@ -1097,7 +1227,7 @@ namespace VKIntox
             viewInfo.image = titleIconImage;
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
             viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, kTitleIconMips, 0, 1};
             iconResult = logicalDevice->vkd.CreateImageView(logicalDevice->device, &viewInfo, nullptr, &titleIconView);
         }
         if (iconResult == VK_SUCCESS)
@@ -1106,11 +1236,13 @@ namespace VKIntox
             samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
             samplerInfo.magFilter = VK_FILTER_LINEAR;
             samplerInfo.minFilter = VK_FILTER_LINEAR;
-            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            // trilinear: the mark is always minified, and nearest-mip steps between
+            // levels as the panel animates
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
             samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
             samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
             samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            samplerInfo.maxLod = 0.0f;
+            samplerInfo.maxLod = static_cast<float>(kTitleIconMips - 1);
             iconResult = logicalDevice->vkd.CreateSampler(logicalDevice->device, &samplerInfo, nullptr, &titleIconSampler);
         }
         if (iconResult == VK_SUCCESS)
@@ -1874,7 +2006,11 @@ namespace VKIntox
         io.MouseDown[1] = mouse.rightButton;
         io.MouseDown[2] = mouse.middleButton;
         io.MouseWheel = mouse.scrollDelta;
-        io.MouseDrawCursor = true;
+        // Wayland surfaces are their own layer and never get a compositor-drawn
+        // pointer, so the overlay renders one. Under X11/Xwayland the real system
+        // cursor already sits above the overlay window, and drawing a second one
+        // only reads as a doubled, trailing pointer.
+        io.MouseDrawCursor = (getSurfaceKind() == SurfaceKind::Wayland);
 
         auto publishOverlayInput = [&]() {
             if (settingsManager.getOverlayBlockInput())
@@ -2048,10 +2184,12 @@ namespace VKIntox
             // out with the surface instead of popping in fully formed.
             const int backdropAlpha = static_cast<int>(255.0f * std::clamp(shellAlpha, 0.0f, 1.0f));
             ImDrawList* backgroundDrawList = ImGui::GetBackgroundDrawList();
-            backgroundDrawList->AddImageRounded(
-                ImTextureRef(reinterpret_cast<ImTextureID>(blurResources[imageIndex].imguiTexture)),
-                windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y),
-                uv0, uv1, IM_COL32(255, 255, 255, backdropAlpha), ImGui::GetStyle().WindowRounding);
+            // the toasts are separate windows and can sit anywhere over the shell
+            drawBackdropAvoiding(backgroundDrawList,
+                                 ImTextureRef(reinterpret_cast<ImTextureID>(blurResources[imageIndex].imguiTexture)),
+                                 windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y),
+                                 uv0, uv1, IM_COL32(255, 255, 255, backdropAlpha),
+                                 ImGui::GetStyle().WindowRounding, toastCardRects);
         }
         const float titleBarHeight = ImGui::GetCurrentWindowRead()->TitleBarHeight;
         const ImGuiM3Metrics& m3metrics = ImGuiM3GetMetrics();
@@ -2113,7 +2251,7 @@ namespace VKIntox
                                    ImVec2(0, 0), ImVec2(1, 1), fadeU32(IM_COL32_WHITE));
             }
             ImFont* bold = ImGuiM3FontBold();
-            const float titleSize = ImGui::GetFontSize() * 1.2f;
+            const float titleSize = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge).size * ImGuiM3GetMetrics().density;
             if (bold)
                 ImGui::PushFont(bold, titleSize);
             const char* brand = "VKIntox";
@@ -2188,24 +2326,32 @@ namespace VKIntox
         // first time the Diagnostics tab happens to be opened.
         sampleDiagnostics();
 
-        // top nav is a connected button group: pill ends, modest shared edges,
-        // 2dp inner padding. one control, not five floating tabs. the selected
-        // segment swaps to secondary-container and gains weight.
+        // Bottom navigation dock: a pill bar under the content. The active
+        // destination shows its label; the rest show only their icon. Its height
+        // comes off the content region below.
         static int activeView = 0;
-        static const char* const kViewLabels[] = {"Effects", "Shaders", "Settings", "Advanced", "Diagnostics", "About"};
-        static const ImWchar kViewIcons[] = {Icon::AutoAwesome, Icon::Palette, Icon::Settings, Icon::Tune, Icon::MonitorHeart, Icon::Info};
+        static const char* const kViewLabels[] = {"Effects", "Shaders", "Settings", "About"};
+        static const ImWchar kViewIcons[] = {Icon::WandShine, Icon::Function, Icon::Settings, Icon::Info};
         constexpr int kViewCount = (int)(sizeof(kViewLabels) / sizeof(kViewLabels[0]));
-        ImGui::M3ConnectedButtonGroup("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons);
+        const float dockHeight = ImGuiM3GetMetrics().nav_bar_height * ImGuiM3GetMetrics().density;
 
-        // View key: top-level tabs are 3..7, and the Effects tab expands into 0
-        // (main), 1 (add effects) and 2 (config manage) so entering and leaving
-        // those sub-views slides too.
+        // View key: the Effects tab expands into 0 (main), 1 (add effects) and 2
+        // (config manage). The other top-level tabs map to fixed keys.
         auto contentIndex = [&]() -> int {
-            if (activeView != 0)
-                return activeView + 2;
-            if (inSelectionMode)    return 1;
-            if (inConfigManageMode) return 2;
-            return 0;
+            // pushed pages come first: they belong to whichever tab opened them
+            if (openSubView == SubView_DepthBuffers) return 8;
+            if (openSubView == SubView_Diagnostics)  return 6;
+            if (openSubView == SubView_ThemeColors)  return 9;
+            if (openSubView == SubView_ThemeBlur)    return 10;
+            if (openSubView == SubView_ThemeShape)   return 11;
+            if (activeView == 0)
+            {
+                if (inSelectionMode)    return 1;
+                if (inConfigManageMode) return 2;
+                return 0;
+            }
+            static const int kNamed[] = {0, 3, 4, 7};  // nav index -> content key
+            return kNamed[activeView];
         };
         auto renderView = [&](int key) {
             switch (key)
@@ -2218,6 +2364,10 @@ namespace VKIntox
             case 5: renderAdvancedView(); break;
             case 6: renderDiagnosticsView(); break;
             case 7: renderAboutView(); break;
+            case 8: renderDepthBuffersView(); break;
+            case 9: renderThemeColorsView(); break;
+            case 10: renderThemeBlurView(); break;
+            case 11: renderThemeShapeView(); break;
             default: break;
             }
         };
@@ -2282,7 +2432,16 @@ namespace VKIntox
         viewTransitionActive = viewTransitioning;
 
         const ImVec2 viewPos  = ImGui::GetCursorScreenPos();
-        const ImVec2 viewSize = ImGui::GetContentRegionAvail();
+        ImVec2 viewSize = ImGui::GetContentRegionAvail();
+        // Leave room for the dock pinned under the content. A pushed page takes
+        // that room for itself and the dock eases out of the way, so the page
+        // reads as arriving over it rather than beside it.
+        const float dockGap = ImGui::GetStyle().ItemSpacing.y;
+        const bool overDock = (viewIndex == 1 || viewIndex == 2 || viewIndex == 6 ||
+                               viewIndex == 8 || viewIndex == 9 || viewIndex == 10 || viewIndex == 11);
+        const float dockFade = overDock ? 0.0f
+                                        : ImClamp(UI::FoldProgress(ImGui::GetID("##dock_reveal"), true, true), 0.0f, 1.0f);
+        viewSize.y = ImMax(1.0f, viewSize.y - (dockHeight + dockGap) * dockFade);
         const bool showingFrom = viewTransitioning && viewFromIndex != viewTargetIndex;
 
         // Slidefade: a spatial travel of a fifth of the width, with the incoming
@@ -2295,6 +2454,22 @@ namespace VKIntox
         // submitted each frame), so it fades out over the first ~40% and is then
         // dropped entirely; the incoming still uses the full curve.
         const float alphaOut  = showingFrom ? ImClamp(1.0f - viewEase * 2.5f, 0.0f, 1.0f) : 1.0f;
+
+        // the strip clip stops a sliding view painting over the title bar or the
+        // dock, but it is also exactly the content rect, which slices the shadow off
+        // anything that lifts on a view's first row. open it by the shell's own
+        // padding margin: enough room for an elevation, still short of both.
+        float padLeft = 0.0f, padRight = 0.0f;
+        if (showingFrom)
+        {
+            const float pad = (travel < 0.0f ? -travel : travel) * 0.15f;
+            if (viewSlideDir > 0) padLeft = pad;
+            else                  padRight = pad;
+        }
+        const ImVec2 shellPad = ImGui::GetStyle().WindowPadding;
+        const float shadowMargin = ImMax(0.0f, ImMin(shellPad.x, shellPad.y) - 4.0f);
+        const ImVec2 stripMin(viewPos.x - padLeft - shadowMargin, viewPos.y - shadowMargin);
+        const ImVec2 stripMax(viewPos.x + viewSize.x + padRight + shadowMargin, viewPos.y + viewSize.y + shadowMargin);
 
         // A zero-padding child guarantees the offset applies even for views that
         // position their own content. WindowPadding is popped right after
@@ -2311,28 +2486,24 @@ namespace VKIntox
             // through the content region too instead of being covered twice.
             viewBg.w = 0.0f;
             ImGui::PushStyleColor(ImGuiCol_ChildBg, viewBg);
-            ImGui::BeginChild(childId, viewSize, false,
-                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::BeginChild(childId, viewSize, false);
             ImGui::PopStyleColor();
             ImGui::PopStyleVar();
+            // the child clips to its own rect too; bounded by the strip, so a sliding
+            // view's margin cannot follow it over the dock
+            const ImVec2 childPos = ImGui::GetWindowPos();
+            const ImVec2 childSize = ImGui::GetWindowSize();
+            ImGui::PushClipRect(ImVec2(ImMax(stripMin.x, childPos.x - shadowMargin), ImMax(stripMin.y, childPos.y - shadowMargin)),
+                                ImVec2(ImMin(stripMax.x, childPos.x + childSize.x + shadowMargin), ImMin(stripMax.y, childPos.y + childSize.y + shadowMargin)),
+                                false);
             renderView(key);
+            ImGui::PopClipRect();
             ImGui::EndChild();
             ImGui::PopStyleVar();
         };
 
-        // Clip the strip to the content region so an animating view can never
-        // draw over the nav or the title bar. The position bezier overshoots
-        // slightly, so pad the side the incoming view crosses; otherwise the
-        // overshoot slices the content's edge against the clip.
-        float padLeft = 0.0f, padRight = 0.0f;
-        if (showingFrom)
-        {
-            const float pad = (travel < 0.0f ? -travel : travel) * 0.15f;
-            if (viewSlideDir > 0) padLeft = pad;
-            else                  padRight = pad;
-        }
-        ImGui::PushClipRect(ImVec2(viewPos.x - padLeft, viewPos.y),
-                            ImVec2(viewPos.x + viewSize.x + padRight, viewPos.y + viewSize.y), true);
+        // the position bezier overshoots, so the strip above pads the crossed side
+        ImGui::PushClipRect(stripMin, stripMax, true);
 
         if (showingFrom && alphaOut > 0.01f)
             renderSlidingView(viewFromIndex, "##view_slide_out", offsetOut, alphaOut);
@@ -2341,16 +2512,31 @@ namespace VKIntox
         ImGui::PopClipRect();
         ImGui::SetCursorScreenPos(viewPos);
 
+        // bottom navigation dock, pinned under the content (eased out when a
+        // pushed page has taken its place)
+        if (dockFade > 0.02f)
+        {
+            const int viewBeforeDock = activeView;
+            ImGui::SetCursorScreenPos(ImVec2(viewPos.x, viewPos.y + viewSize.y + dockGap));
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, dockFade);
+            ImGui::M3NavigationDock("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons);
+            ImGui::PopStyleVar();
+            // a dock tap always lands on a top-level destination
+            if (activeView != viewBeforeDock)
+            {
+                openSubView = SubView_None;
+                inSelectionMode = false;
+                inConfigManageMode = false;
+            }
+        }
+
         ImGui::PopStyleVar();  // shell alpha
         ImGui::End();  // VKIntox Overlay
 
         if (closeRequested)
             toggle();
 
-        // Debug window (separate, controlled by setting)
-        renderDebugWindow();
-
-        // toasts last, so they draw above the overlay and debug windows
+        // toasts last, so they draw above the overlay
         renderToasts();
 
         // Global auto-apply check (runs regardless of which tab is active)
