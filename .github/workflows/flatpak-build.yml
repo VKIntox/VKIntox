@@ -38,7 +38,7 @@ jobs:
           lib="$RUNNER_TEMP/vkintox-flatpak-build/files/lib/libvkintox.so"
           test -s "$lib"
           version=$(tr -d '\n' < VERSION)
-          cp "$lib" "libvkintox_flatpak_${version}_$(date -u +'%d%m%Y').so"
+          cp "$lib" "libvkintox_flatpak_${version}_$(date -u +'%Y%m%d').so"
 
       - name: Upload library
         uses: actions/upload-artifact@v4
