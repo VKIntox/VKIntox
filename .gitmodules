@@ -1,3 +1,6 @@
 [submodule "src/vendor/imgui"]
 	path = src/vendor/imgui
 	url = https://github.com/buwryme/imgui-material-3.git
+[submodule "src/vendor/reshade"]
+	path = src/vendor/reshade
+	url = https://github.com/buwryme/reshade-vkintox.git
