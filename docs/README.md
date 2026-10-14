@@ -20,9 +20,10 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 
 ## building from source
 
-the ImGui fork and the reshade compiler are git submodules, so clone with
-`git clone --recurse-submodules`, or run `git submodule update --init --recursive`
-in an existing checkout before configuring.
+the ImGui fork and the reshade compiler are git submodules, and every build path
+fetches them for you: `just configure`, `just build` and `just flatpak-build` all
+run `git submodule update --init --recursive` first, and the installers build
+through those recipes. a plain `git clone --recurse-submodules` works too.
 
 ## showcase
 
