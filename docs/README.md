@@ -179,6 +179,6 @@ thanks to **slobodaapl** (vkshade), **dadschoorse** (vkbasalt), **daaboulex** (w
 
 <div align="center">
 
-maintained with ♡ by [buwryme](https://github.com/buwryme)
+made with ♡ by [buwryme](https://github.com/buwryme)
 
 </div>

@@ -277,13 +277,13 @@ mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$FONT_DIR"
 cp "$SCRIPT_DIR/VERSION" "$APP_CONFIG/version"
 ok "created config dirs"
 
-# the overlay loads the whole M3 set: regular plus the three emphasized weights,
-# the Material Symbols font for icons, and font.ttf as the legacy regular
-# fallback. scripts/setup mirrors this list.
-for font in GoogleSans-Regular.ttf GoogleSans-Medium.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf MaterialSymbolsRounded.ttf LICENSE LICENSE-SIL-OFL-1.1.txt LICENSE-Apache-2.0.txt; do
+# the overlay loads two variable fonts: Roboto Flex for body text and Google
+# Sans Flex for document/title text, plus the Material Symbols icon font.
+# scripts/setup mirrors this list.
+for font in GoogleSansFlex.ttf RobotoFlex.ttf MaterialSymbolsRounded.ttf MaterialSymbolsRoundedBold.ttf LICENSE LICENSE-SIL-OFL-1.1.txt LICENSE-Apache-2.0.txt LICENSE-GoogleSansFlex-OFL.txt; do
     cp "$SCRIPT_DIR/assets/font/$font" "$FONT_DIR/" || die "missing assets/font/$font"
 done
-cp "$FONT_DIR/GoogleSans-Regular.ttf" "$FONT_DIR/font.ttf"
+cp "$FONT_DIR/RobotoFlex.ttf" "$FONT_DIR/font.ttf"
 ok "installed fonts"
 
 section "reshade shaders"
