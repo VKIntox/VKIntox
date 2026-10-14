@@ -1569,19 +1569,46 @@ void ImGui::ProgressBar(float fraction, const ImVec2& size_arg, const char* over
     }
 
     // Render
-    // VKIntox M3: linear progress is a 4dp square-cornered track in
-    // `surface-container-highest` with a `primary` indicator on top of it. The
-    // track and the indicator are separate rects rather than one rounded frame,
-    // which is why the fill is clipped here instead of via RenderFrame.
+    // VKIntox M3: a 4dp round-capped stroke, not a trough. determinate splits
+    // into indicator, seam and track, with the stop dot at the far end.
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-    const float track_h = m.progress_track_height * m.density;
-    const ImRect track(bb.Min.x, bb.GetCenter().y - track_h * 0.5f, bb.Max.x, bb.GetCenter().y + track_h * 0.5f);
-    ImGuiM3PathRoundedRect(window->DrawList, track, ImGuiM3ShapeRounding{ 0, 0, 0, 0 }, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHighest));
-    float fill_x0 = ImLerp(track.Min.x, track.Max.x, fill_n0);
-    float fill_x1 = ImLerp(track.Min.x, track.Max.x, fill_n1);
-    if (fill_x0 < fill_x1)
-        ImGuiM3PathRoundedRect(window->DrawList, ImRect(fill_x0, track.Min.y, fill_x1, track.Max.y), ImGuiM3ShapeRounding{ 0, 0, 0, 0 },
-                               ImGuiM3ColorU32(ImGuiM3Role_Primary));
+    ImDrawList* dl = window->DrawList;
+    const float width = bb.GetWidth();
+    const float mid = bb.GetCenter().y;
+    const float stroke = m.progress_stroke_thickness * m.density;
+    const float radius = ImMin(stroke * 0.5f, bb.GetHeight() * 0.5f);
+    const ImGuiM3ShapeRounding pill{ radius, radius, radius, radius };
+    const ImU32 active_col = ImGuiM3ColorU32(ImGuiM3Role_Primary);
+    const ImU32 track_col = ImGuiM3ColorU32(ImGuiM3Role_SecondaryContainer);
+    const float lo = radius;
+    const float hi = ImMax(width - radius, radius);
+
+    const float head_raw = fill_n1 * width;
+    const float head = ImClamp(head_raw, lo, hi);
+    const float seam = (head_raw < lo) ? 0.0f : ImMin(head_raw - lo, m.progress_gap * m.density);
+    const float spacing = (head_raw >= lo) ? seam + radius * 2.0f : seam;
+    if (width - radius > head + spacing)
+        ImGuiM3PathRoundedRect(dl, ImRect(bb.Min.x + ImMax(lo, head + spacing) - radius, mid - radius, bb.Max.x, mid + radius),
+                               pill, track_col);
+
+    if (!is_indeterminate)
+    {
+        float stop = ImMin(stroke, m.progress_stop_size * m.density);
+        float stop_x = width - stop;
+        const float stop_progress_x = fraction * width + radius;
+        if (stop_x <= stop_progress_x)
+        {
+            stop = ImMax(0.0f, stop - (stop_progress_x - stop_x));
+            stop_x = stop_progress_x;
+        }
+        if (stop > 0.0f)
+            dl->AddCircleFilled(ImVec2(bb.Min.x + stop_x + stop * 0.5f, mid), stop * 0.5f, active_col);
+    }
+
+    const float fill_x1 = bb.Min.x + head;
+    const float tail = ImClamp(ImLerp(0.0f, width, fill_n0), lo, hi);
+    if (head > tail + 0.25f)
+        ImGuiM3PathRoundedRect(dl, ImRect(bb.Min.x + tail, mid - radius, fill_x1, mid + radius), pill, active_col);
 
     // Default displaying the fraction as percentage string, but user can override it
     // Don't display text for indeterminate bars by default
@@ -3558,7 +3585,10 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     const float handle_w = ImLerp(m3.slider_handle_width, m3.slider_handle_width_pressed, ImSaturate(narrow)) * m3.density;
     const float half_handle = handle_w * 0.5f;
     const float row_h = frame_bb.GetHeight();
-    const float handle_h = ImMin(m3.slider_handle_height * m3.density, row_h);
+    // M3's handle is 44dp tall on a 16dp track - deliberately taller than the row
+    // it sits in - so it is allowed a bounded overflow rather than being squashed
+    // down to the frame height.
+    const float handle_h = ImMin(m3.slider_handle_height * m3.density, row_h + 10.0f * m3.density);
     const float handle_r = ImMin(half_handle, handle_h * 0.5f);
     const ImVec2 handle_center = grab_bb.GetCenter();
 
@@ -3593,7 +3623,7 @@ bool ImGui::SliderScalar(const char* label, ImGuiDataType data_type, void* p_dat
     // Handle pill, with the state layer behind it.
     if (grab_bb.Max.x > grab_bb.Min.x && handle_h > 0.0f)
     {
-        const float layer_r = ImMin(m3.state_layer_size * m3.density * 0.5f, row_h * 0.5f);
+        const float layer_r = ImMin(m3.state_layer_size * m3.density * 0.5f, handle_h * 0.5f);
         window->DrawList->AddCircleFilled(handle_center, layer_r,
                                           ImGuiM3StateLayerU32(ImGuiM3Role_Primary, (hovered && slider_held) ? ImGuiM3State_Pressed : hovered ? ImGuiM3State_Hovered : ImGuiM3State_Enabled),
                                           window->DrawList->_CalcCircleAutoSegmentCount(layer_r));

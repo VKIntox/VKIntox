@@ -195,17 +195,17 @@ struct ImGuiM3Metrics
     float       chip_icon = 18.0f;
     float       dialog_radius = 28.0f;
     float       dialog_min_width = 280.0f;
-    float       menu_radius = 24.0f;
-    float       menu_padding_x = 12.0f;
-    float       menu_padding_y = 8.0f;
-    float       menu_item_height = 40.0f;
+    float       menu_radius = 16.0f;
+    float       menu_padding_x = 6.0f;
+    float       menu_padding_y = 6.0f;
+    float       menu_item_height = 48.0f;
     float       snackbar_radius = 4.0f;
     float       snackbar_height_1 = 48.0f;
     float       snackbar_height_2 = 68.0f;
     float       search_bar_height = 56.0f;
 
     // Navigation.
-    float       nav_bar_height = 80.0f;
+    float       nav_bar_height = 66.0f;
     float       nav_rail_width = 80.0f;
     float       nav_indicator_width = 64.0f;
     float       nav_indicator_height = 32.0f;
@@ -266,7 +266,16 @@ struct ImGuiM3Metrics
 
     // Misc.
     float       divider_thickness = 1.0f;
+    // md.comp.progress-indicator.linear.*, dp. wavy needs the taller container
+    // (4dp stroke + 3dp of amplitude either side).
     float       progress_track_height = 4.0f;
+    float       progress_height_wavy = 10.0f;
+    float       progress_stroke_thickness = 4.0f;
+    float       progress_gap = 4.0f;
+    float       progress_stop_size = 4.0f;
+    float       progress_wavelength = 40.0f;
+    float       progress_wave_speed = 40.0f;         // dp/s; == wavelength, so one wave per second
+    float       progress_amplitude_duration = 0.5f;  // md.sys.motion.duration.long2
     float       state_layer_size = 40.0f;
     float       state_layer_target_size = 48.0f;
     float       focus_indicator_thickness = 3.0f;
@@ -399,15 +408,57 @@ IMGUI_API ImGuiM3BackgroundObject& ImGuiM3GetBackgroundObject();
 IMGUI_API ImFont*             ImGuiM3FontMedium();
 IMGUI_API ImFont*             ImGuiM3FontBold();
 IMGUI_API ImFont*             ImGuiM3FontExtraBold();
+IMGUI_API ImFont*             ImGuiM3FontRegular();
+// Body-family bold (Roboto Flex 700). Used for supporting lines that need to
+// read as emphasis without switching to the document face.
+IMGUI_API ImFont*             ImGuiM3FontBodyBold();
 // Font indices are unstable with MergeMode entries, so faces arrive by pointer.
 IMGUI_API void                ImGuiM3SetTextFonts(ImFont* regular, ImFont* medium, ImFont* bold, ImFont* extra_bold);
+IMGUI_API void                ImGuiM3SetBodyBoldFont(ImFont* body_bold);
+
+// Material 3 type scale. `brand` roles use the document face, the rest the body
+// face. see the inline table in imgui_m3.cc for the exact spec values.
+enum ImGuiM3TypeStyle
+{
+    ImGuiM3Type_DisplayLarge, ImGuiM3Type_DisplayMedium, ImGuiM3Type_DisplaySmall,
+    ImGuiM3Type_HeadlineLarge, ImGuiM3Type_HeadlineMedium, ImGuiM3Type_HeadlineSmall,
+    ImGuiM3Type_TitleLarge, ImGuiM3Type_TitleMedium, ImGuiM3Type_TitleSmall,
+    ImGuiM3Type_BodyLarge, ImGuiM3Type_BodyMedium, ImGuiM3Type_BodySmall,
+    ImGuiM3Type_LabelLarge, ImGuiM3Type_LabelMedium, ImGuiM3Type_LabelSmall,
+    ImGuiM3Type_COUNT
+};
+
+struct ImGuiM3TypeSpec
+{
+    float size = 14.0f;          // sp
+    float line_height = 20.0f;   // sp
+    float tracking = 0.0f;       // px (ImGui cannot letter-space; exposed for layout)
+    int   weight = 400;
+    bool  brand = false;         // brand/document face vs body face
+};
+
+IMGUI_API ImGuiM3TypeSpec ImGuiM3GetTypeStyle(ImGuiM3TypeStyle style);
+IMGUI_API ImFont*         ImGuiM3TypeStyleFont(ImGuiM3TypeStyle style);
+IMGUI_API void            ImGuiM3PushTextStyle(ImGuiM3TypeStyle style, float scale = 1.0f);
+IMGUI_API void            ImGuiM3PopTextStyle();
+
+// 4dp baseline spacing scale. dp values.
+struct ImGuiM3Spacing
+{
+    float none = 0.0f, xxs = 2.0f, xs = 4.0f, s = 8.0f, sm = 12.0f, m = 16.0f;
+    float ml = 24.0f, l = 32.0f, xl = 40.0f, xxl = 48.0f, xxxl = 64.0f;
+};
+IMGUI_API const ImGuiM3Spacing& ImGuiM3GetSpacing();
 
 // Adds the Material Symbols font as its own atlas face; call before the atlas
 // is built. ranges selects which codepoints to rasterise (null = all of the PUA).
 IMGUI_API bool                ImGuiM3LoadIconFont(const char* path, float size_px, const ImWchar* ranges = nullptr);
+// A second, heavier (wght=700) icon face used by the dock's weight morph.
+IMGUI_API bool                ImGuiM3LoadIconFontBold(const char* path, float size_px, const ImWchar* ranges = nullptr);
 // Merges the icon font into the last-added face for inline icon glyphs.
 IMGUI_API bool                ImGuiM3MergeIconFont(const char* path, float size_px, const ImWchar* ranges = nullptr);
 IMGUI_API ImFont*             ImGuiM3IconFont();
+IMGUI_API ImFont*             ImGuiM3IconFontBold();
 IMGUI_API bool                ImGuiM3IsDark();
 IMGUI_API ImU32               ImGuiM3SourceColor();
 IMGUI_API ImGuiM3Variant      ImGuiM3GetVariant();
@@ -493,6 +544,12 @@ IMGUI_API void ImGuiM3DrawStateLayer(ImDrawList* draw_list, const ImRect& bb, Im
 IMGUI_API void ImGuiM3TreeNodeArrow(ImDrawList* draw_list, ImVec2 pos, float px, ImU32 col, bool open);
 // centres a lone Material Symbols glyph on its ink box, not the text line box.
 IMGUI_API void ImGuiM3DrawIcon(ImDrawList* draw_list, const char* glyph, const ImRect& bb, float px, ImU32 col);
+// Heavier-weight draw for the icon. The stb backend has no variable-font axis,
+// so a bolder look is faked by smearing a few sub-pixel offset copies.
+// weight01: 0 = regular, 1 = bold.
+IMGUI_API void ImGuiM3DrawIconFace(ImDrawList* draw_list, ImFont* icon, const char* glyph, const ImRect& bb, float px, ImU32 col);
+// Draws `glyph` eased between the regular and 700 icon faces.
+IMGUI_API void ImGuiM3DrawIconMorph(ImDrawList* draw_list, const char* glyph, const ImRect& bb, float px, ImU32 col, float weight01);
 // ink-box centre as offsets from the layout position; false when the glyph will
 // not resolve, so the caller can fall back.
 IMGUI_API bool ImGuiM3IconInkCenterXY(ImFont* font, float px, const char* glyph, ImVec2& out_center);
@@ -501,7 +558,8 @@ IMGUI_API float ImGuiM3IconInkCenter(ImFont* font, float px, const char* glyph);
 // Fill + optional outline, matching M3's container variants.
 IMGUI_API void ImGuiM3DrawContainer(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, ImU32 fill, ImU32 outline, float outline_width);
 // Two-layer M3 shadow (key + ambient) under a container.
-IMGUI_API void ImGuiM3DrawElevation(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, int level);
+// `alpha_scale` fades the shadow with a caller that animates its own opacity
+IMGUI_API void ImGuiM3DrawElevation(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, int level, float alpha_scale = 1.0f);
 // Rounded rect path helper honouring per-corner radii. Leaves the path filled.
 IMGUI_API void ImGuiM3PathRoundedRect(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, ImU32 col);
 // Translucent backdrop, the M3 scrim at 32%.
@@ -518,26 +576,61 @@ IMGUI_API ImGuiM3Role ImGuiM3SurfaceContainerForElevation(ImGuiM3Role role, int 
 namespace ImGui
 {
     IMGUI_API bool M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVec2& size_arg = ImVec2(0, 0), bool strong_label = false);
+    // the width M3Button would size itself to, for laying a row out before it submits
+    IMGUI_API float M3ButtonWidth(const char* label, bool strong_label = false);
     IMGUI_API bool M3IconButton(const char* glyph, const char* tooltip, ImGuiM3ButtonVariant variant = ImGuiM3Button_Text);
     IMGUI_API bool M3Switch(const char* label, bool* v);
     IMGUI_API bool M3SwitchWithID(const char* label, const char* id, bool* v);
+    // Same switch at an arbitrary size, for the hero rows.
+    IMGUI_API bool M3SwitchScaled(const char* label, const char* id, bool* v, float scale);
     IMGUI_API bool M3Fab(const char* glyph, const char* tooltip, bool large = false);
     IMGUI_API void M3Icon(const char* glyph, ImVec2 size_arg = ImVec2(0, 0));
     IMGUI_API void M3SectionHeader(const char* label, const char* icon = NULL);
     IMGUI_API void M3Divider(ImGuiM3Role role = ImGuiM3Role_OutlineVariant);
-    // titled content card: surface-container-low, sized to its contents.
-    IMGUI_API void M3CardBegin(const char* id, const char* title = NULL, const char* icon = NULL);
+    // Titled content card: surface-container-low, sized to its contents.
+    // `support` is an optional one-line description under the title.
+    IMGUI_API void M3CardBegin(const char* id, const char* title = NULL, const char* icon = NULL, const char* support = NULL);
     IMGUI_API void M3CardEnd();
+    // Expressive hero header: a big accent-filled circle carrying a dark icon,
+    // with the label (and optional supporting line) vertically centred against
+    // it. `circle_px` is the circle diameter in dp; 0 uses the 56dp default.
+    IMGUI_API void M3HeroHeader(const char* glyph, const char* label, const char* support = NULL, float circle_px = 0.0f);
+    // Height the hero row will occupy, so callers can centre companions on it.
+    IMGUI_API float M3HeroHeight(float circle_px = 0.0f);
+    // Hero row with a trailing switch: the label block stays centred against the
+    // icon, the switch sits at the far right of the same row. `reserve_x` leaves
+    // room to its left for caller-drawn controls. `out_row` (optional) receives
+    // the row rect so those controls can be centred on it.
+    IMGUI_API bool M3HeroSwitch(const char* glyph, const char* label, const char* id, bool* v,
+                                const char* tooltip = NULL, float scale = 1.15f, float reserve_x = 0.0f,
+                                struct ImRect* out_row = NULL);
     IMGUI_API void M3ListItem(const char* label, bool selected, bool* p_selected = NULL);
-    IMGUI_API void M3LinearProgress(float fraction, const ImVec2& size_arg = ImVec2(-1, 0));
+    // M3 linear progress: round caps, 4dp seam, and the expressive wave on top
+    IMGUI_API void M3LinearProgress(float fraction, const ImVec2& size_arg = ImVec2(-1, 0), bool active = false);
     IMGUI_API bool M3Chip(const char* label, bool* p_selected);
     IMGUI_API void M3StatusChip(const char* label, ImGuiM3Role role);
     // segments sharing one shape with 2dp padding; `icons` is one codepoint per
-    // segment.
-    IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL, bool allow_overflow = false);
+    // `hovered` gets the segment under the pointer, or -1. the row submits one
+    // item per segment, so IsItemHovered() after it only answers for the last one.
+    IMGUI_API bool M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons = NULL, bool allow_overflow = false, int* hovered = NULL);
+
+    // Bottom navigation dock: a pill-shaped bar, one destination per entry. The
+    // active destination shows its icon and label in an accent pill; the others
+    // show only their icon. Switching animates the label into/out of the icon,
+    // the pill's scale and opacity, and the icon's weight.
+    IMGUI_API bool M3NavigationDock(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons);
     // full theme editor: generation knobs, every token, and the file path with
     // reload status.
     IMGUI_API void M3ThemeEditor();
+    // The editor split into the pieces the Appearance card and its pushed pages
+    // use: Colors = seed, generation knobs and every role; Blur = backdrop blur;
+    // Shape = density, shape scale and the derived token read-outs; Components =
+    // the widget showcase; File = path plus the reload / write actions.
+    IMGUI_API void M3ThemeEditorColors();
+    IMGUI_API void M3ThemeEditorBlur();
+    IMGUI_API void M3ThemeEditorShape();
+    IMGUI_API void M3ThemeEditorComponents();
+    IMGUI_API void M3ThemeEditorFile();
 }
 
 #endif // IMGUI_M3_H_INCLUDED

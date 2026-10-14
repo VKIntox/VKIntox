@@ -449,6 +449,7 @@ static ThemeState g_theme;
 
 // Material Symbols face, cleared by the shutdown hook alongside the theme.
 static ImFont* g_icon_font = nullptr;
+static ImFont* g_icon_font_bold = nullptr;
 
 // 2025 reference palette for #6750A4, so the first run is the real baseline.
 struct PresetHexes { const char* role; uint32_t light; uint32_t dark; };
@@ -611,7 +612,10 @@ static void ApplyMetricToken(const char* key, const char* value, ImGuiM3Metrics&
     MET(list_item_height_1) MET(list_item_height_2) MET(list_item_height_3)
     MET(list_item_radius) MET(list_item_radius_expressive)
     MET(list_leading_icon) MET(list_leading_icon_expressive) MET(list_avatar) MET(list_image)
-    MET(divider_thickness) MET(progress_track_height)
+    MET(divider_thickness)
+    MET(progress_track_height) MET(progress_height_wavy) MET(progress_stroke_thickness)
+    MET(progress_gap) MET(progress_stop_size)
+    MET(progress_wavelength) MET(progress_wave_speed) MET(progress_amplitude_duration)
     MET(state_layer_size) MET(state_layer_target_size)
     MET(focus_indicator_thickness) MET(focus_indicator_outer_offset) MET(focus_indicator_inner_offset)
     MET(scrim_opacity)
@@ -1296,6 +1300,7 @@ void ImGuiM3Shutdown()
     g_theme.file_path.clear();
     g_theme.initialised = false;
     g_icon_font = nullptr;
+    g_icon_font_bold = nullptr;
 }
 
 // fills every ImGuiCol_ slot from roles, leaving nothing on imgui's defaults.
@@ -1473,8 +1478,8 @@ void ImGuiM3ApplyToStyle(float ui_scale)
     style.ItemInnerSpacing    = ImVec2(12.0f * d, 12.0f * d);
     style.CellPadding         = ImVec2(16.0f * d, 12.0f * d);
     style.IndentSpacing       = 24.0f * d;
-    style.ScrollbarSize       = 16.0f * d;
-    style.ScrollbarPadding    = 2.0f * d;
+    style.ScrollbarSize       = 8.0f * d;
+    style.ScrollbarPadding    = 0.0f;
     style.GrabMinSize         = 40.0f * d;
     style.TabMinWidthBase     = 64.0f * d;
     style.TabMinWidthShrink   = 48.0f * d;
@@ -1529,7 +1534,7 @@ static float SpringStep(ImGuiID id, float target, float damping_ratio, float sti
     SpringEntry& entry = g_springs[id];
     entry.last_seen = g_spring_clock;
 
-    const float dt = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f, 1.0f / 240.0f, 1.0f / 15.0f);
+    const float dt_frame = ImClamp(ImGui::GetIO().DeltaTime > 0.0f ? ImGui::GetIO().DeltaTime : 1.0f / 60.0f, 1.0f / 240.0f, 1.0f / 15.0f);
     const float omega = ImSqrt(ImMax(1.0f, stiffness));
 
     if (!entry.initialized)
@@ -1542,14 +1547,20 @@ static float SpringStep(ImGuiID id, float target, float damping_ratio, float sti
         return target;
     }
 
-    // Semi-implicit Euler on a damped harmonic oscillator.
-    const float displacement = entry.spring.value - target;
-    const float acceleration = -stiffness * displacement - 2.0f * damping_ratio * omega * entry.spring.velocity;
-    entry.spring.velocity += acceleration * dt;
-    entry.spring.value += entry.spring.velocity * dt;
+    // sub-stepped: explicit damping needs 2*zeta*omega*dt < 1, and effects-fast
+    // (3800) breaks that at 60Hz, so the spring diverged instead of settling.
+    const int   substeps = ImClamp((int)ImCeil(dt_frame * omega * 4.0f), 1, 64);
+    const float dt = dt_frame / (float)substeps;
+    for (int step = 0; step < substeps; ++step)
+    {
+        const float displacement = entry.spring.value - target;
+        const float acceleration = -stiffness * displacement - 2.0f * damping_ratio * omega * entry.spring.velocity;
+        entry.spring.velocity += acceleration * dt;
+        entry.spring.value += entry.spring.velocity * dt;
+    }
 
     // settle below a thousandth of a pixel and stop touching the entry.
-    if (ImAbs(displacement) < 0.001f && ImAbs(entry.spring.velocity) < 0.001f)
+    if (ImAbs(entry.spring.value - target) < 0.001f && ImAbs(entry.spring.velocity) < 0.001f)
     {
         entry.spring.value = target;
         entry.spring.velocity = 0.0f;
@@ -1605,6 +1616,8 @@ static ImFont* g_font_regular = nullptr;
 static ImFont* g_font_medium = nullptr;
 static ImFont* g_font_bold = nullptr;
 static ImFont* g_font_extra_bold = nullptr;
+static ImFont* g_font_body_bold = nullptr;
+static const ImGuiM3Spacing g_spacing;
 
 void ImGuiM3SetTextFonts(ImFont* regular, ImFont* medium, ImFont* bold, ImFont* extra_bold)
 {
@@ -1614,9 +1627,80 @@ void ImGuiM3SetTextFonts(ImFont* regular, ImFont* medium, ImFont* bold, ImFont* 
     g_font_extra_bold = extra_bold;
 }
 
-ImFont* ImGuiM3FontMedium()    { return g_font_medium ? g_font_medium : g_font_regular; }
-ImFont* ImGuiM3FontBold()      { return g_font_bold ? g_font_bold : g_font_regular; }
-ImFont* ImGuiM3FontExtraBold() { return g_font_extra_bold ? g_font_extra_bold : g_font_regular; }
+void ImGuiM3SetBodyBoldFont(ImFont* body_bold)
+{
+    g_font_body_bold = body_bold;
+}
+
+// The atlas always carries at least one face once the loader has run, so a
+// missing theme family degrades to it rather than handing drawing code a null
+// font (AddText(font, ...) dereferences it).
+static ImFont* FirstAtlasFont()
+{
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    return (atlas && atlas->Fonts.Size > 0) ? atlas->Fonts[0] : nullptr;
+}
+
+ImFont* ImGuiM3FontMedium()    { return g_font_medium ? g_font_medium : (g_font_regular ? g_font_regular : FirstAtlasFont()); }
+ImFont* ImGuiM3FontBold()      { return g_font_bold ? g_font_bold : (g_font_regular ? g_font_regular : FirstAtlasFont()); }
+ImFont* ImGuiM3FontExtraBold() { return g_font_extra_bold ? g_font_extra_bold : (g_font_regular ? g_font_regular : FirstAtlasFont()); }
+ImFont* ImGuiM3FontBodyBold()  { return g_font_body_bold ? g_font_body_bold : (g_font_medium ? g_font_medium : (g_font_regular ? g_font_regular : FirstAtlasFont())); }
+ImFont* ImGuiM3FontRegular()   { return g_font_regular ? g_font_regular : FirstAtlasFont(); }
+
+// Material 3 type scale (v0.192). Sizes/line-heights are sp, tracking is px.
+// brand styles use the document face (Google Sans Flex), plain styles the body
+// face (Roboto Flex).
+static const ImGuiM3TypeSpec kImGuiM3TypeScale[ImGuiM3Type_COUNT] = {
+    /* DisplayLarge   */ { 57.0f, 64.0f, -0.25f, 400, true  },
+    /* DisplayMedium  */ { 45.0f, 52.0f,  0.00f, 400, true  },
+    /* DisplaySmall   */ { 36.0f, 44.0f,  0.00f, 400, true  },
+    /* HeadlineLarge  */ { 32.0f, 40.0f,  0.00f, 400, true  },
+    /* HeadlineMedium */ { 28.0f, 36.0f,  0.00f, 400, true  },
+    /* HeadlineSmall  */ { 24.0f, 32.0f,  0.00f, 400, true  },
+    /* TitleLarge     */ { 22.0f, 28.0f,  0.00f, 400, true  },
+    /* TitleMedium    */ { 16.0f, 24.0f,  0.15f, 500, false },
+    /* TitleSmall     */ { 14.0f, 20.0f,  0.10f, 500, false },
+    /* BodyLarge      */ { 16.0f, 24.0f,  0.50f, 400, false },
+    /* BodyMedium     */ { 14.0f, 20.0f,  0.25f, 400, false },
+    /* BodySmall      */ { 12.0f, 16.0f,  0.40f, 400, false },
+    /* LabelLarge     */ { 14.0f, 20.0f,  0.10f, 500, false },
+    /* LabelMedium    */ { 12.0f, 16.0f,  0.50f, 500, false },
+    /* LabelSmall     */ { 11.0f, 16.0f,  0.50f, 500, false },
+};
+
+ImGuiM3TypeSpec ImGuiM3GetTypeStyle(ImGuiM3TypeStyle style)
+{
+    if (style < 0 || style >= ImGuiM3Type_COUNT)
+        style = ImGuiM3Type_BodyMedium;
+    return kImGuiM3TypeScale[style];
+}
+
+ImFont* ImGuiM3TypeStyleFont(ImGuiM3TypeStyle style)
+{
+    const ImGuiM3TypeSpec s = ImGuiM3GetTypeStyle(style);
+    if (s.brand)
+        return s.size >= 36.0f ? ImGuiM3FontExtraBold() : ImGuiM3FontBold();
+    return s.weight >= 500 ? ImGuiM3FontMedium() : ImGuiM3FontRegular();
+}
+
+// Apply a typescale role. `scale` multiplies the size (e.g. a hero readout).
+void ImGuiM3PushTextStyle(ImGuiM3TypeStyle style, float scale)
+{
+    const ImGuiM3TypeSpec s = ImGuiM3GetTypeStyle(style);
+    const float density = ImGuiM3GetMetrics().density;
+    ImGui::PushFont(ImGuiM3TypeStyleFont(style), s.size * scale * density);
+}
+
+void ImGuiM3PopTextStyle()
+{
+    ImGui::PopFont();
+}
+
+// 4dp baseline spacing scale (md.sys.spacing style). values are dp.
+const ImGuiM3Spacing& ImGuiM3GetSpacing()
+{
+    return g_spacing;
+}
 
 // Material Symbols icon face.
 
@@ -1636,6 +1720,21 @@ bool ImGuiM3LoadIconFont(const char* path, float size_px, const ImWchar* ranges)
 }
 
 ImFont* ImGuiM3IconFont() { return g_icon_font; }
+
+bool ImGuiM3LoadIconFontBold(const char* path, float size_px, const ImWchar* ranges)
+{
+    if (!path || !ImGui::GetCurrentContext())
+        return false;
+    static const ImWchar all_icon_ranges[] = {0xE000, 0xF8FF, 0};
+    ImFontConfig cfg;
+    cfg.PixelSnapH = true;
+    cfg.OversampleH = 2;
+    cfg.OversampleV = 2;
+    g_icon_font_bold = ImGui::GetIO().Fonts->AddFontFromFileTTF(path, size_px, &cfg, ranges ? ranges : all_icon_ranges);
+    return g_icon_font_bold != nullptr;
+}
+
+ImFont* ImGuiM3IconFontBold() { return g_icon_font_bold; }
 
 bool ImGuiM3MergeIconFont(const char* path, float size_px, const ImWchar* ranges)
 {
@@ -1874,9 +1973,8 @@ void ImGuiM3DrawStateLayer(ImDrawList* draw_list, const ImRect& bb, ImGuiM3Shape
     ImGuiM3PathRoundedRect(draw_list, bb, rounding, col);
 }
 
-void ImGuiM3DrawIcon(ImDrawList* draw_list, const char* glyph, const ImRect& bb, float px, ImU32 col)
+void ImGuiM3DrawIconFace(ImDrawList* draw_list, ImFont* icon, const char* glyph, const ImRect& bb, float px, ImU32 col)
 {
-    ImFont* icon = ImGuiM3IconFont();
     if (!icon || !glyph || px <= 0.0f)
         return;
     // centre the glyph's *ink*, not its advance box: Material Symbols have
@@ -1891,6 +1989,33 @@ void ImGuiM3DrawIcon(ImDrawList* draw_list, const char* glyph, const ImRect& bb,
     }
     const ImVec2 pos(bb.GetCenter().x - ink_center.x, bb.GetCenter().y - ink_center.y);
     draw_list->AddText(icon, px, pos, col, glyph);
+}
+
+void ImGuiM3DrawIcon(ImDrawList* draw_list, const char* glyph, const ImRect& bb, float px, ImU32 col)
+{
+    ImGuiM3DrawIconFace(draw_list, ImGuiM3IconFont(), glyph, bb, px, col);
+}
+
+void ImGuiM3DrawIconMorph(ImDrawList* draw_list, const char* glyph, const ImRect& bb, float px, ImU32 col, float weight01)
+{
+    // cross-fade the regular face into the 700 face: the heavier strokes cover
+    // the lighter ones, so the mark thickens without the dilation's blob.
+    const float w = ImSaturate(weight01);
+    ImFont* regular = ImGuiM3IconFont();
+    ImFont* bold = ImGuiM3IconFontBold();
+    if (!bold || w <= 0.001f)
+    {
+        ImGuiM3DrawIconFace(draw_list, regular, glyph, bb, px, col);
+        return;
+    }
+    if (w >= 0.999f)
+    {
+        ImGuiM3DrawIconFace(draw_list, bold, glyph, bb, px, col);
+        return;
+    }
+    const ImU32 fade = (col & 0x00FFFFFFu) | ((ImU32)((float)((col >> 24) & 0xFFu) * w) << 24);
+    ImGuiM3DrawIconFace(draw_list, regular, glyph, bb, px, col);
+    ImGuiM3DrawIconFace(draw_list, bold, glyph, bb, px, fade);
 }
 
 bool ImGuiM3IconInkCenterXY(ImFont* font, float px, const char* text, ImVec2& out_center)
@@ -1941,32 +2066,41 @@ void ImGuiM3TreeNodeArrow(ImDrawList* draw_list, ImVec2 pos, float px, ImU32 col
                     ImRect(ImVec2(pos.x, cy - px * 0.5f), ImVec2(pos.x + px, cy + px * 0.5f)), px, col);
 }
 
-void ImGuiM3DrawElevation(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, int level)
+// no blur in imgui, so the shadow is a stack of rounded rects. its reach comes
+// from the blur tokens (a blur radius doubled, plus the spread), not a small
+// constant. each layer carries the *difference* of the falloff, because the
+// layers overlap concentrically and stacking their alpha piles up into a ring.
+void ImGuiM3DrawElevation(ImDrawList* draw_list, const ImRect& bb, ImGuiM3ShapeRounding rounding, int level, float alpha_scale)
 {
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
     level = clampInt(0, 5, level);
     if (level == 0)
         return;
     const ImVec4 shadow_color = ImGuiM3Color(ImGuiM3Role_Shadow);
-    const float key_y = m.key_shadow_y[level];
-    const float ambient_y = m.ambient_shadow_y[level];
-    const float spread = 3.0f + m.ambient_shadow_spread[level];
-    const float total_alpha = ImMin(1.0f, m.key_shadow_opacity + m.ambient_shadow_opacity);
 
-    // no blur in ImGui, so stack rounded rects that grow outward while fading.
-    // a single offset rect reads as a hard band; the stack reads as a soft M3
-    // shadow, densest at the card edge and gone by the outer bound.
-    const int steps = 6;
+    const float extent = ImMax(m.ambient_shadow_blur[level] * 2.0f + m.ambient_shadow_spread[level],
+                               ImMax(m.key_shadow_blur[level] * 2.0f, 4.0f));
+    const float peak = ImMin(1.0f, (m.key_shadow_opacity + m.ambient_shadow_opacity) * 0.5f) *
+                       ImClamp(alpha_scale, 0.0f, 1.0f);
+    const int steps = ImClamp((int)ImCeil(extent), 8, 24);
+    const float step_t = 1.0f / (float)steps;
+
+    auto falloff = [peak](float t) {
+        const float u = 1.0f - ImClamp(t, 0.0f, 1.0f);
+        return peak * u * u;
+    };
+
     for (int step = steps; step >= 1; --step)
     {
-        const float t = static_cast<float>(step) / static_cast<float>(steps);
-        const float grow = spread * t;
-        const float dy = ambient_y * t + key_y * (1.0f - t);
-        ImRect r(ImVec2(bb.Min.x - grow, bb.Min.y - grow + dy),
-                 ImVec2(bb.Max.x + grow, bb.Max.y + grow + dy));
+        const float t = (float)step / (float)steps;   // 1 = outermost
+        const float grow = extent * t;
+        // key sits close and low, ambient spreads wide
+        const float dy = m.ambient_shadow_y[level] * t + m.key_shadow_y[level] * (1.0f - t);
+        const ImRect r(ImVec2(bb.Min.x - grow, bb.Min.y - grow + dy),
+                       ImVec2(bb.Max.x + grow, bb.Max.y + grow + dy));
         ImGuiM3ShapeRounding rr = rounding;
         rr.tl += grow; rr.tr += grow; rr.br += grow; rr.bl += grow;
-        const float alpha = total_alpha * (1.0f - t) * 0.42f;
+        const float alpha = ImMax(0.0f, falloff(t) - falloff(t + step_t));
         ImGuiM3PathRoundedRect(draw_list, r, rr, PackU32(WithAlpha(shadow_color, alpha)));
     }
 }
@@ -2074,7 +2208,19 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
     const ButtonPaint paint = PaintFor(variant);
     const ImGuiID id = window->GetID(label);
+
+    // measure in the face the label is drawn in: the weights of this variable
+    // font have different advances, so measuring in the frame's face missizes
+    // every button whose label carries an icon glyph
+    ImFont* label_font = strong_label ? ImGuiM3FontBold() : ImGuiM3FontMedium();
+    if (!label_font)
+        label_font = ImGuiM3FontMedium();
+    const float label_scale = strong_label ? 1.05f : 1.0f;
+    if (label_font)
+        PushFont(label_font, GetFontSize() * label_scale);
     const ImVec2 label_size = CalcTextSize(label, NULL, true);
+    if (label_font)
+        PopFont();
 
     ImVec2 pos = window->DC.CursorPos;
     ImVec2 size = CalcItemSize(size_arg, label_size.x + m.button_padding_x * 2.0f * m.density, m.button_height_default * m.density);
@@ -2111,10 +2257,6 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
     PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(paint.label_role));
     // Dialog actions read a step stronger than the default medium: M3's
     // label-large at a touch more size, bold when the caller asks for it.
-    ImFont* label_font = strong_label ? ImGuiM3FontBold() : ImGuiM3FontMedium();
-    if (!label_font)
-        label_font = ImGuiM3FontMedium();
-    const float label_scale = strong_label ? 1.05f : 1.0f;
     if (label_font)
         PushFont(label_font, GetFontSize() * label_scale);
     const ImVec2 weighted_label_size = label_font ? CalcTextSize(label, NULL, true) : label_size;
@@ -2131,6 +2273,19 @@ bool ImGui::M3Button(const char* label, ImGuiM3ButtonVariant variant, const ImVe
 
     IMGUI_TEST_ENGINE_ITEM_INFO(id, label, g.LastItemData.StatusFlags);
     return pressed;
+}
+
+float ImGui::M3ButtonWidth(const char* label, bool strong_label)
+{
+    const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+    ImFont* label_font = strong_label ? ImGuiM3FontBold() : ImGuiM3FontMedium();
+    const float label_scale = strong_label ? 1.05f : 1.0f;
+    if (label_font)
+        PushFont(label_font, GetFontSize() * label_scale);
+    const float w = CalcTextSize(label, NULL, true).x;
+    if (label_font)
+        PopFont();
+    return w + m.button_padding_x * 2.0f * m.density;
 }
 
 bool ImGui::M3IconButton(const char* glyph, const char* tooltip, ImGuiM3ButtonVariant variant)
@@ -2150,19 +2305,27 @@ bool ImGui::M3IconButton(const char* glyph, const char* tooltip, ImGuiM3ButtonVa
 
 bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
 {
+    return M3SwitchScaled(label, id_str, v, 1.0f);
+}
+
+// `scale` grows every dimension together, so the hero rows can carry a switch
+// that reads at the same weight as their 56dp disc.
+bool ImGui::M3SwitchScaled(const char* label, const char* id_str, bool* v, float scale)
+{
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = GetCurrentWindow();
     if (window->SkipItems)
         return false;
 
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+    scale = ImMax(scale, 0.2f);
     const ImGuiID id = window->GetID(id_str);
     const ImVec2 label_size = label ? CalcTextSize(label, NULL, true) : ImVec2(0, 0);
 
-    const float track_w = m.switch_track_width * m.density;
-    const float track_h = m.switch_track_height * m.density;
+    const float track_w = m.switch_track_width * m.density * scale;
+    const float track_h = m.switch_track_height * m.density * scale;
     const ImVec2 pos = window->DC.CursorPos;
-    const float row_h = ImMax(track_h, m.list_item_height_1 * m.density);
+    const float row_h = ImMax(track_h, m.list_item_height_1 * m.density * scale);
     const ImRect total_bb(pos, pos + ImVec2(track_w + (label_size.x > 0.0f ? g.Style.ItemInnerSpacing.x + label_size.x : 0.0f), row_h));
     const ImRect track_bb(ImVec2(pos.x, pos.y + (row_h - track_h) * 0.5f), ImVec2(pos.x + track_w, pos.y + (row_h - track_h) * 0.5f + track_h));
     ItemSize(total_bb);
@@ -2192,10 +2355,10 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
     // The spring's overshoot is clamped to the track: without it the circle can
     // grow past the pill's height or push its travel negative and leave the pill.
     const float handle_size = ImMin(
-        (m.switch_handle_with_icon + (m.switch_pressed_handle - m.switch_handle_with_icon) * press_t) * m.density,
+        (m.switch_handle_with_icon + (m.switch_pressed_handle - m.switch_handle_with_icon) * press_t) * m.density * scale,
         track_h);
     const float track_width = ImMax(
-        track_w + (m.switch_pressed_track_width - m.switch_track_width) * m.density * press_t,
+        track_w + (m.switch_pressed_track_width - m.switch_track_width) * m.density * scale * press_t,
         handle_size);
     const float inset = (track_h - handle_size) * 0.5f;
 
@@ -2207,7 +2370,7 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
 
     ImGuiM3DrawContainer(window->DrawList, track_bb, track_rounding, PackU32(on ? track_on_color : track_off_color),
                          PackU32(on ? ImGuiM3Color(ImGuiM3Role_SurfaceTint) : outline_off_color),
-                         m.switch_track_outline * m.density);
+                         m.switch_track_outline * m.density * scale);
 
     // State layer on the track.
     ImGuiM3State state = (hovered && held) ? ImGuiM3State_Pressed : hovered ? ImGuiM3State_Hovered : ImGuiM3State_Enabled;
@@ -2223,7 +2386,7 @@ bool ImGui::M3SwitchWithID(const char* label, const char* id_str, bool* v)
     window->DrawList->AddCircleFilled(handle_center, handle_r, handle_col, window->DrawList->_CalcCircleAutoSegmentCount(handle_r));
 
     // Handle shadow, so the thumb reads as raised.
-    window->DrawList->AddCircleFilled(handle_center + ImVec2(0.0f, 1.0f), handle_r,
+    window->DrawList->AddCircleFilled(handle_center + ImVec2(0.0f, 1.0f * scale), handle_r,
                                       PackU32(WithAlpha(ImGuiM3Color(ImGuiM3Role_Shadow), 0.30f)),
                                       window->DrawList->_CalcCircleAutoSegmentCount(handle_r));
     window->DrawList->AddCircleFilled(handle_center, handle_r, handle_col, window->DrawList->_CalcCircleAutoSegmentCount(handle_r));
@@ -2352,21 +2515,27 @@ void ImGui::M3Icon(const char* glyph, ImVec2 size_arg)
 void ImGui::M3SectionHeader(const char* label, const char* icon)
 {
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-    // M3 "emphasized" title-small: bold face plus primary colour.
+    // M3 "emphasized" title: the document face at the title-medium step.
     PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_Primary));
+    const ImGuiM3TypeSpec ts = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleMedium);
+    const float title_px = ts.size * ImGuiM3GetMetrics().density;
     ImFont* bold = ImGuiM3FontBold();
     if (bold)
-        PushFont(bold, GetFontSize());
+        PushFont(bold, title_px);
     if (icon)
     {
+        // bring the card glyph up a touch so it reads at the title's weight.
+        if (bold)
+            PushFont(bold, title_px * 1.18f);
         TextUnformatted(icon);
+        if (bold)
+            PopFont();
         SameLine();
     }
     TextUnformatted(label);
     if (bold)
         PopFont();
     PopStyleColor();
-    M3Divider();
     (void)m;
 }
 
@@ -2382,20 +2551,93 @@ void ImGui::M3Divider(ImGuiM3Role role)
         window->DrawList->AddRectFilled(bb.Min, bb.Max, ImGuiM3ColorU32(role));
 }
 
-void ImGui::M3CardBegin(const char* id, const char* title, const char* icon)
+void ImGui::M3CardBegin(const char* id, const char* title, const char* icon, const char* support)
 {
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
     PushID(id);
-    PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f) * m.density);
-    PushStyleVar(ImGuiStyleVar_WindowRounding, ImGuiM3Radius(ImGuiM3Shape_Large));
+    PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f, 16.0f) * m.density);
+    PushStyleVar(ImGuiStyleVar_WindowRounding, ImGuiM3Radius(ImGuiM3Shape_LargeIncreased));
     PushStyleColor(ImGuiCol_ChildBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
     // AutoResizeY so a stack of cards each hug their contents.
     BeginChild("##card", ImVec2(0, 0),
                ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
                ImGuiWindowFlags_None);
     CardDepth++;
+    // A titled card that was handed an icon leads with a hero: expressive's big
+    // accent disc, one per card, at the very top of it.
     if (title)
-        M3SectionHeader(title, icon);
+    {
+        if (icon)
+            M3HeroHeader(icon, title);
+        else
+            M3SectionHeader(title, NULL);
+    }
+    if (support && support[0])
+    {
+        PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
+        ImGuiM3PushTextStyle(ImGuiM3Type_BodySmall);
+        TextUnformatted(support);
+        ImGuiM3PopTextStyle();
+        PopStyleColor();
+    }
+}
+
+void ImGui::M3HeroHeader(const char* glyph, const char* label, const char* support, float circle_px)
+{
+    ImGuiWindow* window = GetCurrentWindow();
+    if (window->SkipItems)
+        return;
+
+    const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+    const float density = m.density;
+    const float circle = (circle_px > 0.0f ? circle_px : 56.0f) * density;
+    const float gap = 16.0f * density;
+    const float title_px = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge).size * density;
+    const float support_px = ImGuiM3GetTypeStyle(ImGuiM3Type_BodySmall).size * density;
+    ImFont* title_font = ImGuiM3FontBold();
+    ImFont* support_font = ImGuiM3FontBodyBold();
+    const bool has_support = support && support[0];
+
+    PushFont(title_font, title_px);
+    const ImVec2 title_size = CalcTextSize(label ? label : "", NULL, true);
+    PopFont();
+    ImVec2 support_size(0.0f, 0.0f);
+    if (has_support)
+    {
+        PushFont(support_font, support_px);
+        support_size = CalcTextSize(support, NULL, true);
+        PopFont();
+    }
+
+    const float support_gap = has_support ? 2.0f * density : 0.0f;
+    const float text_h = title_size.y + support_size.y + support_gap;
+    const float block_h = ImMax(circle, text_h);
+    const ImVec2 pos = window->DC.CursorPos;
+    const ImVec2 avail = GetContentRegionAvail();
+    const float width = ImMax(avail.x, block_h);
+    Dummy(ImVec2(width, block_h));
+
+    ImDrawList* dl = window->DrawList;
+    const float cy = pos.y + block_h * 0.5f;
+    // accent disc, dark glyph: expressive's hero leading icon.
+    dl->AddCircleFilled(ImVec2(pos.x + circle * 0.5f, cy), circle * 0.5f,
+                        ImGuiM3ColorU32(ImGuiM3Role_PrimaryContainer), 48);
+    if (glyph && ImGuiM3IconFont())
+    {
+        const float icon_px = circle * 0.56f;
+        ImGuiM3DrawIcon(dl, glyph,
+                        ImRect(ImVec2(pos.x + (circle - icon_px) * 0.5f, cy - icon_px * 0.5f),
+                               ImVec2(pos.x + (circle + icon_px) * 0.5f, cy + icon_px * 0.5f)),
+                        icon_px, ImGuiM3ColorU32(ImGuiM3Role_OnPrimaryContainer));
+    }
+
+    const float text_x = pos.x + circle + gap;
+    const float text_y = cy - text_h * 0.5f;
+    dl->AddText(title_font, title_px, ImVec2(text_x, text_y),
+                ImGuiM3ColorU32(ImGuiM3Role_OnSurface), label ? label : "");
+    if (has_support)
+        dl->AddText(support_font, support_px, ImVec2(text_x, text_y + title_size.y + support_gap),
+                    ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant), support);
 }
 
 void ImGui::M3CardEnd()
@@ -2406,6 +2648,70 @@ void ImGui::M3CardEnd()
     PopStyleColor(1);
     PopStyleVar(2);
     PopID();
+}
+
+float ImGui::M3HeroHeight(float circle_px)
+{
+    const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+    const float circle = (circle_px > 0.0f ? circle_px : 56.0f) * m.density;
+    const float title_px = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge).size * m.density;
+    PushFont(ImGuiM3FontBold(), title_px);
+    const ImVec2 title_size = CalcTextSize("Ag", NULL, true);
+    PopFont();
+    return ImMax(circle, title_size.y);
+}
+
+bool ImGui::M3HeroSwitch(const char* glyph, const char* label, const char* id, bool* v,
+                         const char* tooltip, float scale, float reserve_x, ImRect* out_row)
+{
+    ImGuiWindow* window = GetCurrentWindow();
+    if (window->SkipItems)
+        return false;
+
+    const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+    const float density = m.density;
+    const float circle = 56.0f * density;
+    const float gap = 16.0f * density;
+    const float title_px = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge).size * density;
+    ImFont* title_font = ImGuiM3FontBold();
+
+    PushFont(title_font, title_px);
+    const ImVec2 title_size = CalcTextSize(label ? label : "", NULL, true);
+    PopFont();
+
+    const float switch_row_h = m.list_item_height_1 * density * scale;
+    const float switch_w = m.switch_track_width * density * scale;
+    const float row_h = ImMax(ImMax(circle, title_size.y), switch_row_h);
+    const ImVec2 pos = window->DC.CursorPos;
+    const float avail = ImMax(GetContentRegionAvail().x, 1.0f);
+    const float row_w = ImMax(avail, row_h);
+    Dummy(ImVec2(row_w, row_h));
+    if (out_row)
+        *out_row = ImRect(pos, ImVec2(pos.x + row_w, pos.y + row_h));
+
+    ImDrawList* dl = window->DrawList;
+    const float cy = pos.y + row_h * 0.5f;
+    dl->AddCircleFilled(ImVec2(pos.x + circle * 0.5f, cy), circle * 0.5f,
+                        ImGuiM3ColorU32(ImGuiM3Role_PrimaryContainer), 48);
+    if (glyph && ImGuiM3IconFont())
+    {
+        const float icon_px = circle * 0.56f;
+        ImGuiM3DrawIcon(dl, glyph,
+                        ImRect(ImVec2(pos.x + (circle - icon_px) * 0.5f, cy - icon_px * 0.5f),
+                               ImVec2(pos.x + (circle + icon_px) * 0.5f, cy + icon_px * 0.5f)),
+                        icon_px, ImGuiM3ColorU32(ImGuiM3Role_OnPrimaryContainer));
+    }
+    dl->AddText(title_font, title_px, ImVec2(pos.x + circle + gap, cy - title_size.y * 0.5f),
+                ImGuiM3ColorU32(ImGuiM3Role_OnSurface), label ? label : "");
+
+    SetCursorScreenPos(ImVec2(pos.x + row_w - reserve_x - switch_w, cy - switch_row_h * 0.5f));
+    const bool changed = M3SwitchScaled("", id, v, scale);
+    if (tooltip && IsItemHovered())
+        SetTooltip("%s", tooltip);
+
+    SetCursorScreenPos(ImVec2(pos.x, pos.y + row_h));
+    Dummy(ImVec2(0.0f, 0.0f));
+    return changed;
 }
 
 void ImGui::M3ListItem(const char* label, bool selected, bool* p_selected)
@@ -2458,24 +2764,172 @@ void ImGui::M3ListItem(const char* label, bool selected, bool* p_selected)
     IMGUI_TEST_ENGINE_ITEM_INFO(id, label, g.LastItemData.StatusFlags);
 }
 
-void ImGui::M3LinearProgress(float fraction, const ImVec2& size_arg)
+// md.comp.progress-indicator, linear: a round-capped `active-indicator.thickness`
+// stroke in the `with-wave.height` container, split by the
+// `track-active-indicator-space` seam, dot at `stop-indicator.size`.
+//
+// the wave is one quadratic per half wavelength, so it is C1 at the anchors. the
+// phase is folded into x, so the ribbon always spans exactly cap to head.
+
+// wave centreline offset at amplitude 1; `phase` scrolls it, one wavelength per period
+static float WavyProgressOffset(float x, float wavelength, float peak)
+{
+    const float half = wavelength * 0.5f;
+    const float k = ImFloor(x / half);
+    const float t = (x - k * half) / half;
+    const float sign = (ImFmod(k, 2.0f) == 0.0f) ? 1.0f : -1.0f;
+    return 4.0f * peak * t * (1.0f - t) * sign;
+}
+
+// tweens over duration.long2 rather than switching, so the wave grows in and out
+static float WavyProgressAmplitude(ImGuiID id, float target, float duration)
+{
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    if (storage == nullptr)
+        return target;
+    float value   = storage->GetFloat(id ^ 0x7761u, -1.0f);
+    float from    = storage->GetFloat(id ^ 0x7762u, 0.0f);
+    float to      = storage->GetFloat(id ^ 0x7763u, 0.0f);
+    float elapsed = storage->GetFloat(id ^ 0x7764u, 0.0f);
+
+    if (value < 0.0f)
+    {
+        // first sighting: adopt the target, so a bar that opens at 40% is already
+        // waving rather than growing one in.
+        storage->SetFloat(id ^ 0x7761u, target);
+        storage->SetFloat(id ^ 0x7762u, target);
+        storage->SetFloat(id ^ 0x7763u, target);
+        storage->SetFloat(id ^ 0x7764u, duration);
+        return target;
+    }
+
+    if (to != target)
+    {
+        from = value;   // retarget from wherever the wave is, not from where it left
+        to = target;
+        elapsed = 0.0f;
+    }
+
+    value = to;
+    if (elapsed < duration)
+    {
+        elapsed = ImMin(elapsed + ImClamp(ImGui::GetIO().DeltaTime, 0.0f, 1.0f / 15.0f), duration);
+        const float t = duration > 0.0f ? elapsed / duration : 1.0f;
+        value = ImLerp(from, to, to > from ? ImGuiM3EaseStandard(t) : ImGuiM3EaseEmphasizedAccelerate(t));
+    }
+
+    storage->SetFloat(id ^ 0x7761u, value);
+    storage->SetFloat(id ^ 0x7762u, from);
+    storage->SetFloat(id ^ 0x7763u, to);
+    storage->SetFloat(id ^ 0x7764u, elapsed);
+    return value;
+}
+
+// stroked, not filled: the concave-fill ear-clip is quadratic (milliseconds at
+// this point count) while the thick-line path is linear. it leaves the caps
+// unfringed (see the AddPolyline TODO), hence the two circles on top.
+static void DrawWavyProgressBand(ImDrawList* dl, float x_start, float x_end, float y_center,
+                                 float radius, float wavelength, float peak, float phase, ImU32 col)
+{
+    // sub-pixel sagitta, so the silhouette is the curve and not the mesh
+    const float chord = ImClamp(wavelength / 24.0f, 2.0f, 4.0f);
+    const int steps = ImClamp((int)ImCeil((x_end - x_start) / chord), 1, 2048);
+
+    static std::vector<ImVec2> centre;
+    centre.resize(steps + 1);
+    for (int i = 0; i <= steps; ++i)
+    {
+        const float x = ImLerp(x_start, x_end, (float)i / (float)steps);
+        centre[i] = ImVec2(x, y_center + WavyProgressOffset(x + phase, wavelength, peak));
+    }
+
+    dl->AddPolyline(centre.data(), steps + 1, col, ImDrawFlags_None, radius * 2.0f);
+    dl->AddCircleFilled(centre[0], radius, col);
+    dl->AddCircleFilled(centre[steps], radius, col);
+}
+
+// `wavy` adds the expressive wave; flat is the same component in the 4dp container
+void ImGui::M3LinearProgress(float fraction, const ImVec2& size_arg, bool wavy)
 {
     const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+    const float d = m.density;
+
     ImGuiWindow* window = GetCurrentWindow();
-    const float track_h = m.progress_track_height * m.density;
-    ImVec2 size = CalcItemSize(size_arg, CalcItemWidth(), track_h);
+    const float container_h = (wavy ? m.progress_height_wavy : m.progress_track_height) * d;
+    ImVec2 size = CalcItemSize(size_arg, CalcItemWidth(), container_h);
+    // the stroke is centred on the midline and has to fit
+    size.y = ImMax(size.y, container_h);
     const ImVec2 pos = window->DC.CursorPos;
     const ImRect bb(pos, pos + size);
     ItemSize(size);
-    if (!ItemAdd(bb, 0))
+    const ImGuiID id = window->GetID("##m3_linear_progress");
+    if (!ItemAdd(bb, id))
         return;
 
     fraction = ImSaturate(fraction);
-    ImGuiM3PathRoundedRect(window->DrawList, bb, ImGuiM3ShapeRounding{ 0, 0, 0, 0 }, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHighest));
+    ImDrawList* dl = window->DrawList;
 
-    ImRect indicator(bb.Min, ImVec2(bb.Min.x + bb.GetWidth() * fraction, bb.Max.y));
-    if (indicator.GetWidth() > 0.0f)
-        ImGuiM3PathRoundedRect(window->DrawList, indicator, ImGuiM3ShapeRounding{ 0, 0, 0, 0 }, ImGuiM3ColorU32(ImGuiM3Role_Primary));
+    const float width = size.x;
+    const float mid = bb.GetCenter().y;
+    const float stroke = m.progress_stroke_thickness * d;
+    const float radius = ImMin(stroke * 0.5f, size.y * 0.5f);
+    const float peak = ImMax((size.y - stroke) * 0.5f, 0.0f);   // 3dp at the token defaults
+    // a wave narrower than its own amplitude would fold the ribbon over itself
+    const float wavelength = ImMax(m.progress_wavelength * d, ImMax(peak * 4.0f, stroke * 2.0f));
+    const float gap = m.progress_gap * d;
+
+    const ImU32 active_col = ImGuiM3ColorU32(ImGuiM3Role_Primary);
+    const ImU32 track_col = ImGuiM3ColorU32(ImGuiM3Role_SecondaryContainer);
+    const ImGuiM3ShapeRounding pill{ radius, radius, radius, radius };
+
+    // Amplitude is flat for the first 10% and the last 5% of the travel and full
+    // in between, tweened rather than switched so the wave grows in and out.
+    float amplitude = 0.0f;
+    if (wavy)
+        amplitude = ImClamp(WavyProgressAmplitude(id, (fraction > 0.1f && fraction < 0.95f) ? 1.0f : 0.0f,
+                                                  m.progress_amplitude_duration), 0.0f, 1.0f);
+
+    // the head is held a cap inside each end so its caps fit
+    const float head_raw = fraction * width;
+    const float head = ImClamp(head_raw, radius, ImMax(width - radius, radius));
+    // the *unclamped* head: at zero there is no cap to leave room for
+    const float seam = (head_raw < radius) ? 0.0f : ImMin(head_raw - radius, gap);
+    const float spacing = (head_raw >= radius) ? seam + radius * 2.0f : seam;
+    if (width - radius > head + spacing)
+    {
+        const float track_x0 = bb.Min.x + ImMax(radius, head + spacing) - radius;
+        ImGuiM3PathRoundedRect(dl, ImRect(track_x0, mid - radius, bb.Min.x + width, mid + radius), pill, track_col);
+    }
+
+    // dot at the track's end; the head eats into it rather than overlapping
+    float stop = ImMin(stroke, m.progress_stop_size * d);
+    float stop_x = width - stop;
+    const float stop_progress_x = fraction * width + radius;
+    if (stop_x <= stop_progress_x)
+    {
+        stop = ImMax(0.0f, stop - (stop_progress_x - stop_x));
+        stop_x = stop_progress_x;
+    }
+    if (stop > 0.0f)
+        dl->AddCircleFilled(ImVec2(bb.Min.x + stop_x + stop * 0.5f, mid), stop * 0.5f, active_col);
+
+    const float tail = radius;
+    if (head <= tail + 0.25f)
+        return;
+
+    if (amplitude <= 0.0f)
+    {
+        // flat: the wave has collapsed onto the midline, which is the 4dp pill.
+        ImGuiM3PathRoundedRect(dl, ImRect(bb.Min.x + tail - radius, mid - radius,
+                                          bb.Min.x + head + radius, mid + radius), pill, active_col);
+        return;
+    }
+
+    // one wavelength per wavelength/wave-speed seconds, so once a second by default
+    const float cycles_per_s = m.progress_wave_speed / ImMax(m.progress_wavelength, 1e-3f);
+    const float phase = ImFmod(static_cast<float>(ImGui::GetTime()) * cycles_per_s, 1.0f) * wavelength;
+    DrawWavyProgressBand(dl, bb.Min.x + tail, bb.Min.x + head, mid, radius, wavelength, amplitude * peak,
+                         phase, active_col);
 }
 
 bool ImGui::M3Chip(const char* label, bool* p_selected)
@@ -2520,8 +2974,11 @@ void ImGui::M3StatusChip(const char* label, ImGuiM3Role role)
 
 // Connected button group.
 
-bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons, bool allow_overflow)
+bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons, bool allow_overflow, int* out_hovered)
 {
+    if (out_hovered)
+        *out_hovered = -1;
+
     ImGuiWindow* window = GetCurrentWindow();
     if (window->SkipItems || count <= 0 || !labels || !selected || *selected < 0 || *selected >= count)
         return false;
@@ -2617,6 +3074,8 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
         {
             bool hovered, held;
             const bool pressed = ButtonBehavior(bb, seg_id, &hovered, &held);
+            if (hovered && out_hovered)
+                *out_hovered = i;
             const bool is_selected = (i == *selected);
             ImGuiM3ShapeRounding rounding = ImGuiM3ConnectedSegmentRounding(bb.GetSize(), i, count);
 
@@ -2713,40 +3172,171 @@ bool ImGui::M3ConnectedButtonGroup(const char* id, const char* const* labels, in
     return changed;
 }
 
+bool ImGui::M3NavigationDock(const char* id, const char* const* labels, int count, int* selected, const ImWchar* icons)
+{
+    ImGuiWindow* window = GetCurrentWindow();
+    if (window->SkipItems || count <= 0 || !labels || !selected || *selected < 0 || *selected >= count)
+        return false;
+
+    const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+    const float d = m.density;
+    const float dockH = m.nav_bar_height * d;
+    const float avail = ImMax(GetContentRegionAvail().x, 1.0f);
+    const float base = avail / (float)count;
+    const float iconPx = 24.0f * d;
+
+    const ImVec2 dockMin = window->DC.CursorPos;
+    const ImRect dockBB(dockMin, ImVec2(dockMin.x + avail, dockMin.y + dockH));
+    ItemSize(dockBB.GetSize());
+
+    ImDrawList* dl = window->DrawList;
+    const float dockR = dockH * 0.5f;
+    const ImGuiM3ShapeRounding dockRound{ dockR, dockR, dockR, dockR };
+    ImGuiM3DrawElevation(dl, dockBB, dockRound, 3);
+    ImGuiM3PathRoundedRect(dl, dockBB, dockRound, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainer));
+
+    ImFont* iconFont = ImGuiM3IconFont();
+    ImFont* labelFont = ImGuiM3FontBold();
+    const float labelSize = ImGuiM3GetTypeStyle(ImGuiM3Type_LabelLarge).size * d;
+    // the icon rides above an always-visible label; the accent pill wraps the
+    // icon only and never the label.
+    const float iconCy = dockMin.y + dockH * 0.5f - 10.0f * d;
+    const float labelCy = iconCy + iconPx * 0.5f + 5.0f * d + labelSize * 0.5f;
+    const float indW = ImMin(m.nav_indicator_width * d, base - 10.0f * d);
+    const float indH = m.nav_indicator_height * d;
+    const float indR = indH * 0.5f;
+    const ImGuiM3ShapeRounding indRound{ indR, indR, indR, indR };
+
+    PushID(id);
+
+    // static slot widths: the destinations never resize, only the accent pill
+    // behind the active icon animates.
+    ImVector<ImGuiID> sids; sids.resize(count);
+    ImVector<float> ts; ts.resize(count);
+    for (int i = 0; i < count; i++)
+    {
+        PushID(i);
+        sids[i] = window->GetID("##dest");
+        PopID();
+        ts[i] = ImSaturate(ImGuiM3SpringStepSpatialDefault(sids[i] ^ 0x4E415649u, (i == *selected) ? 1.0f : 0.0f));
+    }
+
+    bool changed = false;
+    int newSel = *selected;
+    float x = dockBB.Min.x;
+
+    // per-destination click pulse: a dip-and-overshoot on the icon when the
+    // already-active tab is tapped again.
+    static double pulseStart[32] = {};
+    const double now = GetTime();
+
+    for (int i = 0; i < count; i++)
+    {
+        const float wI = base;
+        const ImRect slotBB(ImVec2(x, dockBB.Min.y), ImVec2(x + wI, dockBB.Max.y));
+        x += wI;
+
+        PushID(i);
+        const ImGuiID sid = sids[i];
+        if (ItemAdd(slotBB, sid))
+        {
+            bool hovered, held;
+            const bool pressed = ButtonBehavior(slotBB, sid, &hovered, &held);
+            const float t = ts[i];
+            const ImVec2 c = slotBB.GetCenter();
+
+            float pulseScale = 1.0f;
+            {
+                const double age = now - pulseStart[i];
+                if (age >= 0.0 && age < 0.6)
+                {
+                    const float u = (float)age;
+                    pulseScale = 1.0f - 0.22f * expf(-7.0f * u) * sinf(16.0f * u);
+                }
+            }
+
+            char iconUtf8[8] = {};
+            if (iconFont && icons)
+            {
+                const int n = ImTextCharToUtf8(iconUtf8, (unsigned int)icons[i]);
+                iconUtf8[n] = '\0';
+            }
+
+            const ImRect ind(ImVec2(c.x - indW * 0.5f, iconCy - indH * 0.5f),
+                             ImVec2(c.x + indW * 0.5f, iconCy + indH * 0.5f));
+
+            // the only motion: the accent pill scales out of the icon centre.
+            if (t > 0.01f)
+            {
+                const ImRect pill(ImVec2(c.x - indW * 0.5f * t, iconCy - indH * 0.5f * t),
+                                  ImVec2(c.x + indW * 0.5f * t, iconCy + indH * 0.5f * t));
+                ImGuiM3PathRoundedRect(dl, pill, indRound,
+                                       PackU32(WithAlpha(ImGuiM3Color(ImGuiM3Role_SecondaryContainer), t)));
+            }
+
+            // hover affordance matches the accent pill exactly
+            if (hovered)
+                ImGuiM3DrawStateLayer(dl, ind, indRound, ImGuiM3Role_OnSurface,
+                                      held ? ImGuiM3State_Pressed : ImGuiM3State_Hovered);
+
+            // the icon darkens and thickens with the accent, but only the click
+            // pulse resizes it.
+            const ImVec4 icRest = ImGuiM3Color(ImGuiM3Role_OnSurfaceVariant);
+            const ImVec4 icAct  = ImGuiM3Color(ImGuiM3Role_OnSecondaryContainer);
+            const ImVec4 ic = ImVec4(ImLerp(icRest.x, icAct.x, t), ImLerp(icRest.y, icAct.y, t),
+                                     ImLerp(icRest.z, icAct.z, t), ImLerp(icRest.w, icAct.w, t));
+            const float iconDraw = iconPx * pulseScale;
+            const ImRect iconBB(ImVec2(c.x - iconDraw * 0.5f, iconCy - iconDraw * 0.5f),
+                                ImVec2(c.x + iconDraw * 0.5f, iconCy + iconDraw * 0.5f));
+            if (iconUtf8[0])
+                ImGuiM3DrawIconMorph(dl, iconUtf8, iconBB, iconDraw, PackU32(ic), t);
+
+            // the label is always visible, below the pill and outside it
+            {
+                const ImVec4 lcRest = ImGuiM3Color(ImGuiM3Role_OnSurfaceVariant);
+                const ImVec4 lcAct  = ImGuiM3Color(ImGuiM3Role_OnSurface);
+                const ImVec4 lc = ImVec4(ImLerp(lcRest.x, lcAct.x, t), ImLerp(lcRest.y, lcAct.y, t),
+                                         ImLerp(lcRest.z, lcAct.z, t), 1.0f);
+                PushStyleColor(ImGuiCol_Text, PackU32(lc));
+                if (labelFont)
+                    PushFont(labelFont, labelSize);
+                const ImVec2 ls = CalcTextSize(labels[i], NULL, true);
+                RenderText(ImVec2(c.x - ls.x * 0.5f, labelCy - ls.y * 0.5f), labels[i]);
+                if (labelFont)
+                    PopFont();
+                PopStyleColor();
+            }
+
+            RenderNavCursor(slotBB, sid);
+
+            if (pressed && i != *selected)
+            {
+                newSel = i;
+                changed = true;
+            }
+            else if (pressed)
+            {
+                // re-tapping the active tab: kick the icon pulse.
+                pulseStart[i] = now;
+            }
+        }
+        PopID();
+    }
+
+    PopID();
+    if (changed)
+        *selected = newSel;
+    return changed;
+}
+
 // Theme editor.
 
-void ImGui::M3ThemeEditor()
+// The editor, split by concern so each group can be shown where it belongs:
+// inline in the Appearance card, or on a page pushed from it.
+
+void ImGui::M3ThemeEditorColors()
 {
-    const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-
-    // Backdrop blur. This edits the same struct the overlay renderer reads, so a
-    // change is live immediately, and writes the values back to the `.colors`
-    // file so they persist with the rest of the theme.
-    M3SectionHeader("Blur");
-    {
-        ImGuiM3BlurSettings& bs = ImGuiM3GetBlurSettings();
-        bool changed = false;
-
-        changed |= M3Switch("Blur", &bs.blur);
-        changed |= ImGui::SliderFloat("Background opacity", &bs.background_opacity, 0.0f, 1.0f, "%.2f");
-        changed |= ImGui::SliderFloat("Size", &bs.size, 0.5f, 20.0f, "%.1f");
-        changed |= ImGui::SliderInt("Passes", &bs.passes, 1, 10);
-
-        // Keep the shared struct legal regardless of what the widgets or a
-        // hand-edited file produced.
-        bs.background_opacity = ImSaturate(bs.background_opacity);
-        if (bs.passes < 1)   bs.passes = 1;
-        if (bs.passes > 10)  bs.passes = 10;
-        if (bs.size < 0.0f)  bs.size = 0.0f;
-
-        if (changed)
-            ImGuiM3WriteThemeFile(ImGuiM3GetThemeFile());
-    }
-    ImGui::TextDisabled("Blur is skipped when Background opacity is above 0.99.");
-
-    // source + generation knobs
-    M3SectionHeader("Source");
-
+    // seed + generation knobs
     ImGuiColorEditFlags flags = ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_DisplayHex | ImGuiColorEditFlags_AlphaPreviewHalf;
 
     // source_rgba is kept in lock-step with the seed by ResolveTheme, so the picker
@@ -2760,6 +3350,8 @@ void ImGui::M3ThemeEditor()
         ImGuiM3ApplyToStyle(1.0f);
         ImGuiM3WriteThemeFile(ImGuiM3GetThemeFile());
     }
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Seed color");
 
     const char* variant_items = "tonal-spot\0expressive\0vibrant\0neutral\0monochrome\0fidelity\0content\0";
     int variant = (int)g_theme.variant;
@@ -2790,30 +3382,9 @@ void ImGui::M3ThemeEditor()
         ImGuiM3WriteThemeFile(ImGuiM3GetThemeFile());
     }
 
-    // live reload status
-    M3SectionHeader("Theme file");
-    ImGui::TextDisabled("%s", ImGuiM3GetThemeFile() ? ImGuiM3GetThemeFile() : "(no file — in-memory only)");
-    if (ImGui::Button("Write preset to file"))
-        ImGuiM3WriteThemeFile(ImGuiM3GetThemeFile());
-    ImGui::SameLine();
-    if (ImGui::Button("Reload now"))
-    {
-        const char* path = ImGuiM3GetThemeFile();
-        if (path)
-        {
-            LoadThemeFile(path);
-            ImGuiM3ApplyToStyle(1.0f);
-            g_theme.reloaded = true;
-        }
-    }
-    if (const char* msg = ImGuiM3ConsumeReloadMessage())
-        ImGui::TextColored(ImGuiM3Color(ImGuiM3Role_Tertiary), "%s", msg);
-    if (const char* err = ImGuiM3GetError())
-        ImGui::TextColored(ImGuiM3Color(ImGuiM3Role_Error), "%s", err);
-
     // colour roles
     M3SectionHeader("Color roles");
-    if (ImGui::SmallButton("Reset overrides"))
+    if (ImGui::M3Button("Reset overrides", ImGuiM3Button_Tonal))
     {
         g_theme.role_flags[0] = 0;
         g_theme.role_flags[1] = 0;
@@ -2823,6 +3394,7 @@ void ImGui::M3ThemeEditor()
     }
 
     // Three columns of role swatches, each with a hex read-out and a picker.
+    // Right-click a swatch to hand the role back to the generator.
     const int per_column = (ImGuiM3Role_COUNT + 2) / 3;
     ImGui::Columns(3, "m3_roles", true);
     for (int i = 0; i < ImGuiM3Role_COUNT; i++)
@@ -2844,9 +3416,36 @@ void ImGui::M3ThemeEditor()
         PopID();
     }
     ImGui::Columns(1);
+}
 
-    // shape and metric tokens
-    M3SectionHeader("Shape and metrics");
+void ImGui::M3ThemeEditorBlur()
+{
+    // Backdrop blur. This edits the same struct the overlay renderer reads, so a
+    // change is live immediately, and writes the values back to the `.colors`
+    // file so they persist with the rest of the theme.
+    ImGuiM3BlurSettings& bs = ImGuiM3GetBlurSettings();
+    bool changed = false;
+
+    changed |= M3Switch("Blur", &bs.blur);
+    changed |= ImGui::SliderFloat("Background opacity", &bs.background_opacity, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::SliderFloat("Size", &bs.size, 0.5f, 20.0f, "%.1f");
+    changed |= ImGui::SliderInt("Passes", &bs.passes, 1, 10);
+
+    // Keep the shared struct legal regardless of what the widgets or a
+    // hand-edited file produced.
+    bs.background_opacity = ImSaturate(bs.background_opacity);
+    if (bs.passes < 1)   bs.passes = 1;
+    if (bs.passes > 10)  bs.passes = 10;
+    if (bs.size < 0.0f)  bs.size = 0.0f;
+
+    if (changed)
+        ImGuiM3WriteThemeFile(ImGuiM3GetThemeFile());
+    ImGui::TextDisabled("Blur is skipped when Background opacity is above 0.99.");
+}
+
+void ImGui::M3ThemeEditorShape()
+{
+    const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
     ImGui::SliderFloat("Density", &g_theme.metrics.density, 0.5f, 2.0f, "%.2fx");
     ImGui::SliderFloat("Shape scale", &g_theme.metrics.shape_scale, 0.0f, 2.0f, "%.2f");
     ImGui::TextDisabled("corner scale: none %.0f  xs %.0f  s %.0f  m %.0f  l %.0f  l+ %.0f  xl %.0f  xl+ %.0f  xxl %.0f",
@@ -2854,9 +3453,10 @@ void ImGui::M3ThemeEditor()
                         m.corner_xl_increased, m.corner_xxl);
     ImGui::TextDisabled("button %.0f  icon button %.0f  fab %.0f  list item %.0f  tab %.0f",
                         m.button_height_default, m.icon_button_size, m.fab_size, m.list_item_height_1, m.tab_height);
+}
 
-    // component showcase
-    M3SectionHeader("Components");
+void ImGui::M3ThemeEditorComponents()
+{
     if (M3Button("Filled", ImGuiM3Button_Filled, ImVec2(0, 0))) {}
     ImGui::SameLine();
     if (M3Button("Tonal", ImGuiM3Button_Tonal, ImVec2(0, 0))) {}
@@ -2877,5 +3477,46 @@ void ImGui::M3ThemeEditor()
     M3StatusChip("ERROR", ImGuiM3Role_Error);
 
     M3LinearProgress(0.65f);
+}
+
+void ImGui::M3ThemeEditorFile()
+{
+    ImGui::TextDisabled("%s", ImGuiM3GetThemeFile() ? ImGuiM3GetThemeFile() : "(no file - in-memory only)");
+    // Reload first, outlined; writing the preset out is the primary action.
+    if (ImGui::M3Button("Reload now", ImGuiM3Button_Outlined))
+    {
+        const char* path = ImGuiM3GetThemeFile();
+        if (path)
+        {
+            LoadThemeFile(path);
+            ImGuiM3ApplyToStyle(1.0f);
+            g_theme.reloaded = true;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::M3Button("Write preset to file", ImGuiM3Button_Filled))
+        ImGuiM3WriteThemeFile(ImGuiM3GetThemeFile());
+    // Status lines read as supporting text: smaller, dimmed, bold.
+    ImGuiM3PushTextStyle(ImGuiM3Type_BodySmall);
+    if (const char* msg = ImGuiM3ConsumeReloadMessage())
+        ImGui::TextColored(ImGuiM3Color(ImGuiM3Role_Tertiary), "%s", msg);
+    if (const char* err = ImGuiM3GetError())
+        ImGui::TextColored(ImGuiM3Color(ImGuiM3Role_Error), "%s", err);
+    ImGuiM3PopTextStyle();
+}
+
+// Full editor kept as one call for callers that want the whole thing in order.
+void ImGui::M3ThemeEditor()
+{
+    M3SectionHeader("Blur");
+    M3ThemeEditorBlur();
+    M3SectionHeader("Colors");
+    M3ThemeEditorColors();
+    M3SectionHeader("Theme file");
+    M3ThemeEditorFile();
+    M3SectionHeader("Shape and metrics");
+    M3ThemeEditorShape();
+    M3SectionHeader("Components");
+    M3ThemeEditorComponents();
     (void)ImGui::IsItemHovered();
 }

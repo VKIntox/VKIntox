@@ -4654,6 +4654,13 @@ static bool ImGui_ImplStbTrueType_FontSrcInit(ImFontAtlas* atlas, ImFontConfig* 
         IM_ASSERT_USER_ERROR(0, "stbtt_InitFont(): failed to parse FontData. It is correct and complete? Check FontDataSize.");
         return false;
     }
+    // Pin variable-font axes before any metric or outline is read, so weight,
+    // optical size, width and optical rounding bake into this source.
+    if (src->VariationAxisCount > 0)
+    {
+        const int axis_count = ImMin(src->VariationAxisCount, 8);
+        stbtt_SetVariationCoords(&bd_font_data->FontInfo, src->VariationAxisTags, src->VariationAxisValues, axis_count);
+    }
     src->FontLoaderData = bd_font_data;
 
     const float ref_size = src->DstFont->Sources[0]->SizePixels;

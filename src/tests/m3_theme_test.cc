@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -493,6 +494,46 @@ static void testIconFont()
 // path as the switch. testMotionAndSegments already proves the spring animates
 // on press rather than snapping, so the morph value is covered there.
 
+// --- 9. Type scale and spacing ---------------------------------------------
+//
+// The Material 3 v0.192 typescale, transcribed from material-web's
+// _md-sys-typescale.scss (sizes/line-heights in sp, tracking in px). A missing
+// size or a wrong weight here would silently de-spec the whole overlay.
+static void testTypeScale()
+{
+    struct Expected { ImGuiM3TypeStyle style; float size, line, track; int weight; bool brand; };
+    const Expected want[] = {
+        {ImGuiM3Type_DisplayLarge,   57, 64, -0.25f, 400, true },
+        {ImGuiM3Type_DisplayMedium,  45, 52,  0.00f, 400, true },
+        {ImGuiM3Type_DisplaySmall,   36, 44,  0.00f, 400, true },
+        {ImGuiM3Type_HeadlineLarge,  32, 40,  0.00f, 400, true },
+        {ImGuiM3Type_HeadlineMedium, 28, 36,  0.00f, 400, true },
+        {ImGuiM3Type_HeadlineSmall,  24, 32,  0.00f, 400, true },
+        {ImGuiM3Type_TitleLarge,     22, 28,  0.00f, 400, true },
+        {ImGuiM3Type_TitleMedium,    16, 24,  0.15f, 500, false},
+        {ImGuiM3Type_TitleSmall,     14, 20,  0.10f, 500, false},
+        {ImGuiM3Type_BodyLarge,      16, 24,  0.50f, 400, false},
+        {ImGuiM3Type_BodyMedium,     14, 20,  0.25f, 400, false},
+        {ImGuiM3Type_BodySmall,      12, 16,  0.40f, 400, false},
+        {ImGuiM3Type_LabelLarge,     14, 20,  0.10f, 500, false},
+        {ImGuiM3Type_LabelMedium,    12, 16,  0.50f, 500, false},
+        {ImGuiM3Type_LabelSmall,     11, 16,  0.50f, 500, false},
+    };
+    for (const Expected& e : want)
+    {
+        const ImGuiM3TypeSpec s = ImGuiM3GetTypeStyle(e.style);
+        expect(std::fabs(s.size - e.size) < 0.001f, "typescale size matches the spec");
+        expect(std::fabs(s.line_height - e.line) < 0.001f, "typescale line-height matches the spec");
+        expect(std::fabs(s.tracking - e.track) < 0.001f, "typescale tracking matches the spec");
+        expect(s.weight == e.weight, "typescale weight matches the spec");
+        expect(s.brand == e.brand, "typescale brand/body family matches the spec");
+    }
+
+    const ImGuiM3Spacing& sp = ImGuiM3GetSpacing();
+    expect(sp.xs == 4.0f && sp.s == 8.0f && sp.sm == 12.0f && sp.m == 16.0f && sp.ml == 24.0f && sp.l == 32.0f,
+           "spacing tokens sit on the 4dp grid");
+}
+
 int main()
 {
     const std::string dir = tempDir();
@@ -510,6 +551,7 @@ int main()
     testVariants();
     testMotionAndSegments();
     testIconFont();
+    testTypeScale();
 
     ImGuiM3SetThemeFile(nullptr);
     ImGuiM3Shutdown();

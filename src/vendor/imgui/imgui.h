@@ -3676,6 +3676,13 @@ struct ImFontConfig
     float           RasterizerDensity;      // 1.0f     // [LEGACY: this only makes sense when ImGuiBackendFlags_RendererHasTextures is not supported] DPI scale multiplier for rasterization. Not altering other font metrics: makes it easy to swap between e.g. a 100% and a 400% fonts for a zooming display, or handle Retina screen. IMPORTANT: If you change this it is expected that you increase/decrease font scale roughly to the inverse of this, otherwise quality may look lowered.
     float           ExtraSizeScale;         // 1.0f     // Extra rasterizer scale over SizePixels.
 
+    // Variable-font axis coordinates, in design units, matched by 4-char tag
+    // (e.g. 'wght' == 0x77676874). Only meaningful for variable fonts. Axes not
+    // listed here (and all axes when the count is 0) stay at their default.
+    int             VariationAxisCount;     // 0
+    ImU32           VariationAxisTags[8];   // 0
+    float           VariationAxisValues[8]; // 0
+
     // [Internal]
     ImFontFlags     Flags;                  // Font flags (don't use just yet, will be exposed in upcoming 1.92.X updates)
     ImFont*         DstFont;                // Target font (as we merging fonts, multiple ImFontConfig may target the same font)
