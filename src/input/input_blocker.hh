@@ -24,7 +24,17 @@ namespace VKIntox
     // Global gate: is the overlay on screen at all. Cheap to check.
     void setInputBlocked(bool blocked);
 
-    // Newest pointer position in surface pixels. Drives the x11 grab and the
+    // The interactive shell is up (toasts alone do not count). The keyboard is
+    // only taken away from the game while this is on: every grab transition
+    // makes Wine drop the game's cursor capture, so the keyboard grab must not
+    // follow a bare pointer crossing.
+    void setInputInteractive(bool interactive);
+
+    // The overlay is consuming keys right now (a text field is active or a popup
+    // is open); with the shell up, this is what engages the keyboard grab.
+    void setOverlayWantsKeyboard(bool wantsKeyboard);
+
+    // Newest pointer position in surface pixels. Drives the x11 grabs and the
     // follow-the-pointer keyboard rule.
     void updatePointerPosition(float x, float y);
 
@@ -36,7 +46,7 @@ namespace VKIntox
 
     // Diagnostics: the configured gate plus the live per-backend state.
     bool inputBlockingEnabled();
-    bool inputGrabActive();        // X11 server-side pointer+keyboard grab
+    bool inputGrabActive();        // X11: a server-side pointer or keyboard grab is up
     bool inputKeyboardWithheld();  // Wayland keys withheld from the game
     bool inputPointerOverOverlay();
 } // namespace VKIntox

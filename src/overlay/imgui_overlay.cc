@@ -434,6 +434,7 @@ namespace VKIntox
     void ImGuiOverlay::toggle()
     {
         visible = !visible;
+        Logger::debug(std::string("overlay toggled ") + (visible ? "on" : "off"));
         setInputBlocked(visible);
 
         // Pointer confinement was removed: the overlay renders inside the game's
@@ -1869,6 +1870,8 @@ namespace VKIntox
             frameInputRects.clear();
             setInputRects(nullptr, 0);
             setInputBlocked(false);
+            setInputInteractive(false);
+            setOverlayWantsKeyboard(false);
             setWaylandInputSurfaceRects(nullptr, 0);
             return VK_NULL_HANDLE;
         }
@@ -2013,10 +2016,20 @@ namespace VKIntox
         io.MouseDrawCursor = (getSurfaceKind() == SurfaceKind::Wayland);
 
         auto publishOverlayInput = [&]() {
-            if (settingsManager.getOverlayBlockInput())
+            const bool blocking = settingsManager.getOverlayBlockInput();
+            if (blocking)
                 setInputRects(frameInputRects.data(), static_cast<int>(frameInputRects.size()));
             else
                 setInputRects(nullptr, 0);
+
+            // Keys are only taken from the game while the overlay consumes them:
+            // a text field is active or a popup is open. Taking them for a bare
+            // pointer crossing makes Wine drop the game's cursor capture (it
+            // reads the grab's focus events as a window-manager grab).
+            const bool interactive = shellActive && blocking;
+            setInputInteractive(interactive);
+            setOverlayWantsKeyboard(interactive
+                && (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup)));
             updatePointerPosition(static_cast<float>(mouse.x), static_cast<float>(mouse.y));
         };
 

@@ -93,6 +93,8 @@ VKIntox_src = [
 
 x11_dep = dependency('x11')
 xi_dep = dependency('xi')
+# XTest hands held keys and buttons to the game across a grab transition.
+xtst_dep = dependency('xtst')
 wayland_client_dep = dependency('wayland-client')
 xkbcommon_dep = dependency('xkbcommon')
 wayland_protocols_dep = dependency('wayland-protocols')
@@ -201,14 +203,14 @@ shader_asset_inc = include_directories('effects/shaders')
 # present on the desktop and inside Flatpak runtimes. Optional: without it the
 # shader manager falls back to the in-overlay file browser.
 gio_dep = dependency('gio-2.0', required: false)
-vkintox_deps = [x11_dep, xi_dep, wayland_client_dep, xkbcommon_dep, reshade_dep]
+vkintox_deps = [x11_dep, xi_dep, xtst_dep, wayland_client_dep, xkbcommon_dep, reshade_dep]
 vkintox_cpp_args = ['-DIMGUI_IMPL_VULKAN_NO_PROTOTYPES']
 if gio_dep.found()
     vkintox_deps += gio_dep
     vkintox_cpp_args += '-DVKINTOX_HAVE_GIO=1'
 endif
 
-shared_library('vkintox',
+vkintox_lib = shared_library('vkintox',
     VKIntox_src, overlay_src, imgui_src, shader_include,
     link_with: [keyboard_input_x11_lib, mouse_input_lib, input_blocker_lib,
                 x11_display_lib, mouse_input_x11_lib,
@@ -280,6 +282,19 @@ vk_handle_tests = executable('vkintox-vk-handle-tests',
     'core/logger.cc',
     include_directories : [core_inc, render_inc, source_inc])
 test('vk handle ordering', vk_handle_tests)
+
+# X11 input blocking: the pointer grab follows the cursor while the keyboard grab
+# only engages when the overlay consumes keys (a grab transition makes Wine drop
+# the game's cursor capture), and held keys/buttons are handed to the game across
+# each grab, or the game keeps holding whatever was down. Drives the layer's real
+# blocker against a stand-in window, so it needs a display and synthesises input:
+# opt in with VKINTOX_X11_INPUT_TEST=1.
+libdl_dep = meson.get_compiler('cpp').find_library('dl', required : false)
+x11_input_handoff_tests = executable('vkintox-x11-input-handoff-tests',
+    'tests/x11_input_handoff_test.cc',
+    dependencies : [x11_dep, xtst_dep, libdl_dep],
+    include_directories : [source_inc])
+test('x11 input handoff', x11_input_handoff_tests, args: [vkintox_lib.full_path()])
 
 # DepthCopyState serializes the CmdEndRenderPass* -> QueueSubmit handoff and the
 # copy ring against DestroyDevice. A missing lock only shows as an intermittent
