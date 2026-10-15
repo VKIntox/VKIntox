@@ -6,17 +6,17 @@
 
 vulkan post-processing layer with advanced depth buffer resolve for linux.
 
-[![version](https://img.shields.io/badge/version-0.2.0--experimental-blueviolet?style=flat-square)](#)
+[![version](https://img.shields.io/badge/version-0.2.0--rc1-blueviolet?style=flat-square)](#)
 [![license](https://img.shields.io/badge/license-zlib-2e8b57?style=flat-square)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-linux-555555?style=flat-square)](#)
-[![CI](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml/badge.svg?branch=v0.2.0-experimental&style=flat-square)](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml)
+[![CI](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml)
 
 </div>
 
 ---
 
 > [!WARNING]
-> this is the `v0.2.0-experimental` line: expect breakage and active development. the `main` branch is the stable one, and this readme describes the experimental branch.
+> this is `v0.2.0-rc1`: a release candidate. the 0.2.0 line is feature-complete but still soaking, so expect rough edges before the final tag.
 
 ## showcase
 
