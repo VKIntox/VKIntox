@@ -2,6 +2,15 @@ name: Flatpak library build
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the asset name (default: the VERSION file)"
+        required: false
+        type: string
+      date:
+        description: "Build date to stamp into the asset name, YYYYMMDD (default: today, UTC)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -36,11 +45,31 @@ jobs:
             packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json
 
       - name: Name library with version and build date
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version }}
+          DATE_OVERRIDE: ${{ inputs.date }}
         run: |
           lib="$RUNNER_TEMP/vkintox-flatpak-build/files/lib/libvkintox.so"
           test -s "$lib"
-          version=$(tr -d '\n' < VERSION)
-          cp "$lib" "libvkintox_flatpak_${version}_$(date -u +'%Y%m%d').so"
+
+          version="$VERSION_OVERRIDE"
+          [ -n "$version" ] || version=$(tr -d '\n' < VERSION)
+          case "$version" in
+            *[!A-Za-z0-9._-]*|"")
+              echo "version must be non-empty and safe for a file name, got: $version" >&2
+              exit 1
+              ;;
+          esac
+
+          date_value="$DATE_OVERRIDE"
+          if [ -z "$date_value" ]; then
+            date_value=$(date -u +'%Y%m%d')
+          elif ! printf '%s' "$date_value" | grep -Eq '^[0-9]{8}$'; then
+            echo "date override must be YYYYMMDD, got: $date_value" >&2
+            exit 1
+          fi
+
+          cp "$lib" "libvkintox_flatpak_${version}_${date_value}.so"
 
       - name: Upload library
         uses: actions/upload-artifact@v4
