@@ -112,6 +112,11 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.depthResolveMode;
         }
+        int getDepthRebuildMode() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return std::clamp(settings.depthRebuildMode, 0, 1);
+        }
         std::string getDepthManualPin() const
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -223,6 +228,11 @@ namespace VKIntox
         {
             std::lock_guard<std::mutex> lock(mutex);
             settings.depthResolveMode = value;
+        }
+        void setDepthRebuildMode(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.depthRebuildMode = std::clamp(value, 0, 1);
         }
         void setDepthManualPin(const std::string& value)
         {

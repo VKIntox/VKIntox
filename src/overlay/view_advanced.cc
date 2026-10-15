@@ -581,6 +581,31 @@ namespace VKIntox
             }
         }
 
+        // --- Rebuild timing: what the refresh button below and every transform use ---
+        ImGui::Spacing();
+        {
+            const char* labels[] = { "Safe", "Fast" };
+            const char* hints[] = {
+                "Idle the GPU before rebuilding the depth resolve path, so nothing in flight is still reading what gets freed.",
+                "Rebuild behind the layer's own submit fences without idling. Reacts a frame sooner; a driver can fault if the app still references an old resolve target."
+            };
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Rebuild");
+            ImGui::SameLine(150.0f);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::PushID("##depth_rebuild");
+            int index = (settingsManager.getDepthRebuildMode() == 0) ? 0 : 1;
+            int hovered_segment = -1;
+            if (ImGui::M3ConnectedButtonGroup("##depth_rebuild_mode", labels, 2, &index, NULL, false, &hovered_segment))
+            {
+                settingsManager.setDepthRebuildMode(index);
+                markSettingsDirty();
+            }
+            if (hovered_segment >= 0)
+                ImGui::SetTooltip("%s", hints[hovered_segment]);
+            ImGui::PopID();
+        }
+
         // --- Footer ---
         ImGui::Spacing();
         const std::string redetectLabel = std::string(Icon::RefreshUtf8) + "  Refresh depth buffers";

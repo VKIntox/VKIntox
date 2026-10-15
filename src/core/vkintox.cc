@@ -237,6 +237,47 @@ namespace VKIntox
         return parseBoolEnvValue(value, false);
     }
 
+    // Smoke-test hook: VKINTOX_SMOKE_DEPTH_REFRESH=<ms> drops the depth
+    // selection on that interval, exactly what the Advanced tab's refresh does,
+    // so a run covers the rebuild path while the queue is loaded. Off unless set.
+    static void maybeForceSmokeDepthRefresh(LogicalDevice* logicalDevice)
+    {
+        static const int intervalMs = []
+        {
+            const char* value = std::getenv("VKINTOX_SMOKE_DEPTH_REFRESH");
+            if (value == nullptr)
+                return 0;
+            try
+            {
+                return std::max(0, std::stoi(value));
+            }
+            catch (...)
+            {
+                return 0;
+            }
+        }();
+        if (intervalMs <= 0 || logicalDevice == nullptr)
+            return;
+
+        static std::chrono::steady_clock::time_point lastFired{};
+        const auto now = std::chrono::steady_clock::now();
+        if (!lastFired.time_since_epoch().count())
+        {
+            lastFired = now;
+            return;
+        }
+        if (now - lastFired < std::chrono::milliseconds(intervalMs))
+            return;
+        lastFired = now;
+
+        scoped_lock l(globalLock);
+        logicalDevice->activeDepthState      = DepthState{};
+        logicalDevice->bestDepthCandidate    = LogicalDevice::DepthCandidateTrackingState{};
+        logicalDevice->pinnedDepthImageView  = VK_NULL_HANDLE;
+        logicalDevice->depthReallocPending   = true;
+        Logger::debug("smoke hook: forced depth re-detect");
+    }
+
 #ifdef VKINTOX_DEBUG
     static bool isDepthCopyDumpEnabled()
     {
@@ -3245,6 +3286,10 @@ namespace VKIntox
         if (!logicalDevice)
             return VK_ERROR_DEVICE_LOST;
 
+        // Test hook, see maybeForceSmokeDepthRefresh. Rebuilds the depth path
+        // while the app keeps presenting.
+        maybeForceSmokeDepthRefresh(logicalDevice);
+
         // Depth recovery is intentionally non-blocking.  If the currently
         // selected depth image does not exactly match the present swapchain,
         // do not submit our existing effect command buffer: it may reference
@@ -3277,6 +3322,17 @@ namespace VKIntox
                 }
                 else
                 {
+                    // Safe mode (the default) idles the queue before the rebuild
+                    // below frees command buffers and tears down resolve targets.
+                    // The per-image fences only cover the layer's own submissions;
+                    // the app's command buffers reference the same resolve
+                    // framebuffers and images through the injected resolve subpass,
+                    // so freeing them mid-flight hangs the GPU (device lost). The
+                    // old full-reload path idled the queue here too; fast mode is
+                    // the opt-in for skipping it.
+                    if (settingsManager.getDepthRebuildMode() == 0)
+                        logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
+
                     for (const auto& [_, sc] : swapchainMap)
                         if (sc && sc->logicalDevice == logicalDevice)
                             sc->depthReallocPending = true;
@@ -3325,11 +3381,28 @@ namespace VKIntox
                               + std::to_string(swapchainDepth.extent.height));
             }
 
-            for (const auto& scPtr : presentSwapchains)
+            for (size_t presentIndex = 0; presentIndex < presentSwapchains.size(); ++presentIndex)
             {
-                LogicalSwapchain* sc = scPtr.get();
+                LogicalSwapchain* sc = presentSwapchains[presentIndex].get();
                 if (!sc || sc->logicalDevice != logicalDevice)
                     continue;
+
+                // An in-flight fence for this image means its command buffer may
+                // still be executing. Submitting the next one unfenced would
+                // leave that work untracked, and the rebuild gate can only see
+                // fenced submissions, so skip our submit for this frame the way
+                // the depth-copy ring skips a busy slot.
+                const uint32_t presentImage = presentIndices[presentIndex];
+                if (presentImage < sc->effectSubmitFences.size()
+                    && presentImage < sc->effectSubmitFenceUsed.size()
+                    && sc->effectSubmitFenceUsed[presentImage]
+                    && sc->effectSubmitFences[presentImage] != VK_NULL_HANDLE
+                    && logicalDevice->vkd.GetFenceStatus(
+                           logicalDevice->device, sc->effectSubmitFences[presentImage]) != VK_SUCCESS)
+                {
+                    bypassDepthForPresent = true;
+                    break;
+                }
 
                 DepthState currentDepth = getDepthState(logicalDevice);
                 const bool currentValid = !hasDepthState(currentDepth)
@@ -3456,8 +3529,29 @@ namespace VKIntox
 
             // Signal this image's fence so we can safely update its
             // descriptor sets and rebuild its command buffer in future frames.
+            //
+            // The fence must be unsignaled to submit with it, and the rebuild
+            // gate reads "signaled" as "this image's last submission finished".
+            // So the reset belongs here, once that is already true. An
+            // in-flight fence is left alone and this submit goes unfenced: the
+            // next present re-arms it. (Resetting it early would let the old
+            // submission's signal track the new work and disarm the gate.)
             VkFence effectFence = (index < logicalSwapchain->effectSubmitFences.size())
                 ? logicalSwapchain->effectSubmitFences[index] : VK_NULL_HANDLE;
+            if (effectFence != VK_NULL_HANDLE
+                && index < logicalSwapchain->effectSubmitFenceUsed.size()
+                && logicalSwapchain->effectSubmitFenceUsed[index])
+            {
+                VkResult fenceStatus = logicalDevice->vkd.GetFenceStatus(logicalDevice->device, effectFence);
+                if (fenceStatus == VK_SUCCESS)
+                    logicalDevice->vkd.ResetFences(logicalDevice->device, 1, &effectFence);
+                else
+                {
+                    if (fenceStatus != VK_NOT_READY)
+                        Logger::warn("effect submit fence status returned " + std::to_string(fenceStatus));
+                    effectFence = VK_NULL_HANDLE;
+                }
+            }
             VkResult vr = logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &submitInfo, effectFence);
             if (vr != VK_SUCCESS)
             {

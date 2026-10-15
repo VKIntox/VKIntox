@@ -67,6 +67,12 @@ namespace VKIntox
         // 0 = auto (prefer average, fall back to sample-zero),
         // 1 = sample-zero, 2 = average. Only applied when supported by the device.
         int depthResolveMode;
+        // How a depth change rebuilds the resolve path and command buffers
+        // (Advanced tab). 0 = safe: idle the queue first, so nothing in flight
+        // references the targets being freed. 1 = fast: rebuild behind the
+        // layer's own submit fences without idling; quicker to react, but a
+        // driver can fault if the app still references an old resolve target.
+        int depthRebuildMode;
         // Optional manual depth buffer pin (Advanced tab). When non-empty, the
         // layer pins depth capture to this tracked image view key instead of
         // using the best-candidate heuristic. "" = auto-promotion.

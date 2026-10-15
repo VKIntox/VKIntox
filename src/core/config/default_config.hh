@@ -54,6 +54,7 @@ namespace VKIntox::DefaultConfig
         settings.showDebugWindow = false;
         settings.separateEffectParams = true;
         settings.depthResolveMode = 0;
+        settings.depthRebuildMode = 0;
         settings.depthManualPin.clear();
         settings.depthTransientWorkaround = true;
         settings.depthCaptureMethod = 2;

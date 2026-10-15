@@ -100,6 +100,7 @@
     FORVKFUNC(GetDeviceProcAddr) \
     FORVKFUNC(GetDeviceQueue) \
     FORVKFUNC(GetDeviceQueue2) \
+    FORVKFUNC(GetFenceStatus) \
     FORVKFUNC(GetImageMemoryRequirements) \
     FORVKFUNC(GetQueueCheckpointData2NV) \
     FORVKFUNC(GetQueueCheckpointDataNV) \

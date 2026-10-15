@@ -1443,9 +1443,10 @@ namespace VKIntox
         if (!logicalDevice || !sc)
             return false;
 
-        // Non-blocking safety check.  Never WaitForFences/QueueWaitIdle here.
-        // If any effect command buffer is still in flight, simply try again on
-        // a later present.
+        // Non-blocking safety check.  Never WaitForFences/QueueWaitIdle here:
+        // safe rebuild mode idles the queue before calling this, and fast mode
+        // accepts the wait-free gate.  If any effect command buffer is still in
+        // flight, simply try again on a later present.
         for (size_t index = 0; index < sc->effectSubmitFences.size(); ++index)
         {
             // Newly allocated swapchain command buffers have unsignaled fences
@@ -1587,11 +1588,10 @@ namespace VKIntox
         }
 
         // Defer command-buffer rebuild to a non-blocking safe point in
-        // QueuePresentKHR.  No QueueWaitIdle is performed by the depth path.
+        // QueuePresentKHR, which coalesces bursts and (in safe mode) idles the
+        // queue first. Arming all swapchains here would rebuild on the very next
+        // present of each, skipping both.
         logicalDevice->depthReallocPending = true;
-        for (auto& [_, swapchain] : swapchainMap)
-            if (swapchain && swapchain->logicalDevice == logicalDevice)
-                swapchain->depthReallocPending = true;
     }
 
     // Helper to reallocate and rewrite command buffers for a swapchain

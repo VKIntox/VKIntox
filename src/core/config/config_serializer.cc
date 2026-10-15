@@ -296,6 +296,11 @@ namespace VKIntox
                 try { settings.depthResolveMode = std::stoi(value); }
                 catch (...) { Logger::err("invalid depthResolveMode value: " + value); }
             }
+            else if (key == "depthRebuildMode")
+            {
+                try { settings.depthRebuildMode = std::clamp(std::stoi(value), 0, 1); }
+                catch (...) { Logger::err("invalid depthRebuildMode value: " + value); }
+            }
             else if (key == "depthManualPin")
                 settings.depthManualPin = value;
             else if (key == "depthTransientWorkaround")
@@ -389,6 +394,8 @@ namespace VKIntox
         file << "\n# Advanced (depth buffer)\n";
         file << "# depthResolveMode: 0=auto (prefer average), 1=sample-zero, 2=average\n";
         file << "depthResolveMode = " << settings.depthResolveMode << "\n";
+        file << "# depthRebuildMode: 0=safe (idle the queue before rebuilding), 1=fast (fence-gated)\n";
+        file << "depthRebuildMode = " << settings.depthRebuildMode << "\n";
         file << "depthManualPin = " << settings.depthManualPin << "\n";
         file << "depthTransientWorkaround = " << (settings.depthTransientWorkaround ? "true" : "false") << "\n";
         file << "# depthCaptureMethod: 0=off, 1=renderpass-end (recommended), 2=queue-submit (robust fallback)\n";

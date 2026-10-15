@@ -8,6 +8,11 @@
 #
 # usage: src/tests/smoke_vkcube.sh [LIBVKINTOX_SO] [SECONDS]
 #
+# VKINTOX_SMOKE_DEPTH_REFRESH sets how often, in ms, the run forces a depth
+# re-detect (default 500), which is what drives the rebuild assertions below.
+# VKINTOX_SMOKE_REBUILD_MODE=1 seeds the fast rebuild path instead of the safe
+# default; on a GPU, run both to cover the two.
+#
 # needs a display. on CI wrap it: xvfb-run -a src/tests/smoke_vkcube.sh
 # there is no GPU on a CI runner either, so point VK_ICD_FILENAMES at lavapipe
 # or the loader will find nothing to run on.
@@ -164,6 +169,12 @@ INI
     if [[ -n "${VKINTOX_SMOKE_NAV:-}" ]]; then
         printf '%s\n' "$VKINTOX_SMOKE_NAV" >>"$base/VKIntox.conf"
     fi
+
+    # Which path the forced rebuilds below take: 0 = safe (idles the queue),
+    # 1 = fast (fence-gated). Unset leaves the shipped default (safe).
+    if [[ -n "${VKINTOX_SMOKE_REBUILD_MODE:-}" ]]; then
+        printf 'depthRebuildMode = %s\n' "$VKINTOX_SMOKE_REBUILD_MODE" >>"$base/VKIntox.conf"
+    fi
 }
 
 seed_config
@@ -187,6 +198,7 @@ set +e
 # so the test cannot fail correctly without asking for debug.
 VK_LOADER_DEBUG=layer \
     VKINTOX_LOG_LEVEL=debug \
+    VKINTOX_SMOKE_DEPTH_REFRESH="${VKINTOX_SMOKE_DEPTH_REFRESH:-500}" \
     VK_LOADER_LAYERS_ENABLE="$LAYER_NAME" \
     VK_LOADER_LAYERS_DISABLE="$INSTALLED_LAYER" \
     VK_LAYER_PATH="$LAYER_DIR" \
@@ -213,6 +225,14 @@ if [[ -s "$LAYER_LOG" ]]; then
     ok "layer engaged ($(wc -l <"$LAYER_LOG") log lines)"
 else
     die "layer loaded but wrote no log; it may not have reached initialisation"
+fi
+
+# A panic means the layer hit a state it does not trust and soft-disabled itself
+# or tore the device down; for a smoke run that is a failure even when the
+# process limps on to the end, because nothing after it proves anything.
+if grep -qF 'VKIntox panic' "$LAYER_LOG"; then
+    grep -F 'VKIntox panic' "$LAYER_LOG" >&2
+    die "the layer panicked during the run (see the line above)"
 fi
 
 # Assert the effect actually engaged, not merely that the layer loaded.
@@ -265,6 +285,16 @@ fi
 # one.
 if grep -q 'depth resolve source view changed' "$LAYER_LOG"; then
     ok "depth resolve engaged"
+
+    # VKINTOX_SMOKE_DEPTH_REFRESH drops the depth selection every 500ms, the
+    # same as clicking "Refresh depth buffers", so the rebuild below runs
+    # repeatedly while the queue is loaded. A rebuild frees command buffers and
+    # tears down resolve targets: getting the fence gating or the safe-mode wait
+    # wrong turns that into a GPU hang, which reads here as a missing rebuild
+    # (present stopped) or a device-lost panic, not as a silent difference.
+    rebuilds=$(grep -c 'deferred depth change rebuilt presented swapchain' "$LAYER_LOG" || true)
+    (( rebuilds > 0 )) || die "the refresh hook ran but no depth rebuild happened; the rebuild path is not covered"
+    ok "$rebuilds depth rebuild(s) while presenting"
 elif grep -q 'detected depth image' "$LAYER_LOG"; then
     warn "depth attachment seen but resolve never engaged (pre-existing under X11 + lavapipe; CI cannot cover the depth path)"
 else

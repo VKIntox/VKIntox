@@ -143,18 +143,23 @@ namespace VKIntox
             return;
         }
 
-        // Non-blocking fence check - skip descriptor update if previous CB still running
+        // Non-blocking fence check - skip descriptor update if previous CB still running.
+        // The submit path owns the reset: a signaled fence means the submission
+        // that used this image finished, so leaving it signaled is what the
+        // rebuild gate reads. Resetting it here would let an in-flight
+        // submission look done.
         if (imageIndex < logicalSwapchain->effectSubmitFences.size()
+            && imageIndex < logicalSwapchain->effectSubmitFenceUsed.size()
+            && logicalSwapchain->effectSubmitFenceUsed[imageIndex]
             && logicalSwapchain->effectSubmitFences[imageIndex] != VK_NULL_HANDLE)
         {
-            VkResult status = logicalDevice->vkd.WaitForFences(
-                logicalDevice->device, 1, &logicalSwapchain->effectSubmitFences[imageIndex], VK_TRUE, 0);
-            if (status == VK_TIMEOUT || status == VK_ERROR_DEVICE_LOST)
+            VkResult status = logicalDevice->vkd.GetFenceStatus(
+                logicalDevice->device, logicalSwapchain->effectSubmitFences[imageIndex]);
+            if (status != VK_SUCCESS)
             {
                 Logger::debug("recordDepthResolveSnapshotViaShader: fence not ready, skipping snapshot");
                 return;
             }
-            logicalDevice->vkd.ResetFences(logicalDevice->device, 1, &logicalSwapchain->effectSubmitFences[imageIndex]);
         }
 
         VkDescriptorImageInfo imageInfo = {};
