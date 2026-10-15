@@ -7,10 +7,9 @@ set -euo pipefail
 REPO="buwryme/VKIntox"
 WORKFLOW="flatpak-build.yml"
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
-# the M3 font set, the curated EffectPackages.ini and the built-in shaders are
-# not on main yet, so seed all of them from the experimental branch.
-# TODO: point this at main once those assets are merged.
-ASSET_REF="v0.2.0-experimental"
+# the M3 font set, the curated EffectPackages.ini and the built-in shaders all
+# live on main with the rest of the release.
+ASSET_REF="main"
 EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/$ASSET_REF/assets/EffectPackages.ini}"
 
 if [[ -t 1 ]]; then
