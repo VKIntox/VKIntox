@@ -4,6 +4,7 @@
 
 #include "logger.hh"
 #include "logical_device.hh"
+#include "util.hh"
 
 namespace VKIntox
 {
@@ -78,6 +79,22 @@ namespace VKIntox
         pendingReleases.clear();
     }
 
+    void recordSubmittedBatch(LogicalDevice* logicalDevice, const char* kind, uint32_t imageIndex,
+                              VkSemaphore waitSemaphore, VkSemaphore signalSemaphore, VkFence fence)
+    {
+        if (!logicalDevice)
+            return;
+
+        const uint64_t seq = logicalDevice->submitJournalSeq.fetch_add(1, std::memory_order_relaxed);
+        auto& entry = logicalDevice->submitJournal[seq % LogicalDevice::kSubmitJournalSize];
+        entry.seq             = seq;
+        entry.kind            = kind;
+        entry.imageIndex      = imageIndex;
+        entry.waitSemaphore   = waitSemaphore;
+        entry.signalSemaphore = signalSemaphore;
+        entry.fence           = fence;
+    }
+
     bool waitQueueIdleBounded(LogicalDevice* logicalDevice, const char* reason, uint32_t timeoutMs)
     {
         if (!logicalDevice || logicalDevice->queue == VK_NULL_HANDLE)
@@ -120,6 +137,26 @@ namespace VKIntox
         Logger::warn(std::string("bounded queue idle timed out (vkWaitForFences=") + std::to_string(result) + "): "
                      + (reason ? reason : "unspecified")
                      + "; a submission that never completes is holding the queue");
+
+        // the batches the queue might be stuck on, oldest first with fence state
+        const uint64_t journalSeq = logicalDevice->submitJournalSeq.load(std::memory_order_relaxed);
+        const uint32_t journalCount = journalSeq < LogicalDevice::kSubmitJournalSize
+            ? static_cast<uint32_t>(journalSeq) : LogicalDevice::kSubmitJournalSize;
+        Logger::warn("submit journal, newest last (" + std::to_string(journalCount) + " entries):");
+        for (uint32_t i = 0; i < journalCount; i++)
+        {
+            const auto& entry = logicalDevice->submitJournal[(journalSeq - journalCount + i) % LogicalDevice::kSubmitJournalSize];
+            const VkResult fenceStatus = entry.fence != VK_NULL_HANDLE
+                ? logicalDevice->vkd.GetFenceStatus(logicalDevice->device, entry.fence)
+                : VK_SUCCESS;
+            Logger::warn("  #" + std::to_string(entry.seq)
+                         + " " + std::string(entry.kind ? entry.kind : "?")
+                         + " img=" + std::to_string(entry.imageIndex)
+                         + " wait=" + convertToString(entry.waitSemaphore)
+                         + " signal=" + convertToString(entry.signalSemaphore)
+                         + " fence=" + convertToString(entry.fence)
+                         + " fenceStatus=" + std::to_string(fenceStatus));
+        }
         return false;
     }
 

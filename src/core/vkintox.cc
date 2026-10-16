@@ -1533,6 +1533,8 @@ namespace VKIntox
 
         // Use fence to track command buffer completion (prevents reuse while in flight)
         VkFence overlayFence = logicalDevice->imguiOverlay->getCommandBufferFence(index);
+        recordSubmittedBatch(logicalDevice, "overlay", index,
+                             swapchain->semaphores[index], swapchain->overlaySemaphores[index], overlayFence);
         VkResult vr = logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &overlaySubmit, overlayFence);
         if (vr == VK_SUCCESS)
             outSemaphore = swapchain->overlaySemaphores[index];
@@ -2572,6 +2574,19 @@ namespace VKIntox
             auto devIt = deviceMap.find(GetKey(queue));
             if (devIt != deviceMap.end())
                 logicalDevice = devIt->second.get();
+        }
+
+        if (logicalDevice && submitCount > 0 && pSubmits)
+        {
+            // journal the app's batch so a stuck queue can be traced past it
+            VkSemaphore appWait = VK_NULL_HANDLE;
+            if (pSubmits[0].waitSemaphoreCount > 0 && pSubmits[0].pWaitSemaphores)
+                appWait = pSubmits[0].pWaitSemaphores[0];
+            VkSemaphore appSignal = VK_NULL_HANDLE;
+            const VkSubmitInfo& lastSubmit = pSubmits[submitCount - 1];
+            if (lastSubmit.signalSemaphoreCount > 0 && lastSubmit.pSignalSemaphores)
+                appSignal = lastSubmit.pSignalSemaphores[lastSubmit.signalSemaphoreCount - 1];
+            recordSubmittedBatch(logicalDevice, "app", UINT32_MAX, appWait, appSignal, fence);
         }
 
         const int method = settingsManager.getDepthCaptureMethod();
@@ -3648,6 +3663,9 @@ namespace VKIntox
                     effectFence = VK_NULL_HANDLE;
                 }
             }
+            recordSubmittedBatch(logicalDevice, "effect", index,
+                                 submitInfo.waitSemaphoreCount > 0 ? submitInfo.pWaitSemaphores[0] : VK_NULL_HANDLE,
+                                 logicalSwapchain->semaphores[index], effectFence);
             VkResult vr = logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &submitInfo, effectFence);
             if (vr != VK_SUCCESS)
             {

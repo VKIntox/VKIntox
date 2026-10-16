@@ -146,6 +146,21 @@ namespace VKIntox
         // Owns its own mutex; see DepthCopyState for the lock-order contract.
         DepthCopyState depthCopy;
 
+        // ring of the last submitted batches (layer and app) so a queue that
+        // stops completing can be traced to the submission that wedged it
+        struct SubmitJournalEntry
+        {
+            uint64_t    seq             = 0;
+            const char* kind            = nullptr;
+            uint32_t    imageIndex      = 0;
+            VkSemaphore waitSemaphore   = VK_NULL_HANDLE;
+            VkSemaphore signalSemaphore = VK_NULL_HANDLE;
+            VkFence     fence           = VK_NULL_HANDLE;
+        };
+        static constexpr uint32_t kSubmitJournalSize = 32;
+        SubmitJournalEntry    submitJournal[kSubmitJournalSize];
+        std::atomic<uint64_t> submitJournalSeq{0};
+
         // A chain reload requested by the UI, deferred until every swapchain's
         // in-flight effect submissions have completed. Replaces the global
         // QueueWaitIdle that used to stall the present thread on every toggle.

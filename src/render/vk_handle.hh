@@ -134,6 +134,11 @@ namespace VKIntox
     bool waitQueueIdleBounded(LogicalDevice* logicalDevice, const char* reason,
                               uint32_t timeoutMs = kQueueIdleTimeoutMs);
 
+    // records one submitted batch in the device's small submit journal; the
+    // image index is a label for the dump, not a real image when unknown
+    void recordSubmittedBatch(LogicalDevice* logicalDevice, const char* kind, uint32_t imageIndex,
+                              VkSemaphore waitSemaphore, VkSemaphore signalSemaphore, VkFence fence);
+
 } // namespace VKIntox
 
 #endif // VK_HANDLE_HPP_INCLUDED
