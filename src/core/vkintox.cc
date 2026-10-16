@@ -3638,35 +3638,54 @@ namespace VKIntox
             submitInfo.signalSemaphoreCount = 1;
             submitInfo.pSignalSemaphores    = &logicalSwapchain->semaphores[index];
 
-            // Signal this image's fence so we can safely update its
-            // descriptor sets and rebuild its command buffer in future frames.
-            //
-            // The fence must be unsignaled to submit with it, and the rebuild
-            // gate reads "signaled" as "this image's last submission finished".
-            // So the reset belongs here, once that is already true. An
-            // in-flight fence is left alone and this submit goes unfenced: the
-            // next present re-arms it. (Resetting it early would let the old
-            // submission's signal track the new work and disarm the gate.)
-            VkFence effectFence = (index < logicalSwapchain->effectSubmitFences.size())
-                ? logicalSwapchain->effectSubmitFences[index] : VK_NULL_HANDLE;
-            if (effectFence != VK_NULL_HANDLE
-                && index < logicalSwapchain->effectSubmitFenceUsed.size()
-                && logicalSwapchain->effectSubmitFenceUsed[index])
+            VkResult vr = VK_SUCCESS;
             {
-                VkResult fenceStatus = logicalDevice->vkd.GetFenceStatus(logicalDevice->device, effectFence);
-                if (fenceStatus == VK_SUCCESS)
-                    logicalDevice->vkd.ResetFences(logicalDevice->device, 1, &effectFence);
-                else
+                // serialized with the destroy hooks and the drain: between this
+                // check and the submit the render thread must not be able to
+                // retire the generation these buffers reference
+                scoped_lock submitLock(globalLock);
+
+                // a depth-generation change leaves the recorded buffers pointing
+                // at dying resources; submit nothing until the rebuild re-records
+                if (logicalDevice->depthTransitionHold || logicalDevice->depthReallocPending
+                    || logicalSwapchain->depthReallocPending)
                 {
-                    if (fenceStatus != VK_NOT_READY)
-                        Logger::warn("effect submit fence status returned " + std::to_string(fenceStatus));
-                    effectFence = VK_NULL_HANDLE;
+                    bypassDepthForPresent = true;
+                    break;
                 }
+
+                // Signal this image's fence so we can safely update its
+                // descriptor sets and rebuild its command buffer in future frames.
+                //
+                // The fence must be unsignaled to submit with it, and the rebuild
+                // gate reads "signaled" as "this image's last submission finished".
+                // So the reset belongs here, once that is already true. An
+                // in-flight fence is left alone and this submit goes unfenced: the
+                // next present re-arms it. (Resetting it early would let the old
+                // submission's signal track the new work and disarm the gate.)
+                VkFence effectFence = (index < logicalSwapchain->effectSubmitFences.size())
+                    ? logicalSwapchain->effectSubmitFences[index] : VK_NULL_HANDLE;
+                if (effectFence != VK_NULL_HANDLE
+                    && index < logicalSwapchain->effectSubmitFenceUsed.size()
+                    && logicalSwapchain->effectSubmitFenceUsed[index])
+                {
+                    VkResult fenceStatus = logicalDevice->vkd.GetFenceStatus(logicalDevice->device, effectFence);
+                    if (fenceStatus == VK_SUCCESS)
+                        logicalDevice->vkd.ResetFences(logicalDevice->device, 1, &effectFence);
+                    else
+                    {
+                        if (fenceStatus != VK_NOT_READY)
+                            Logger::warn("effect submit fence status returned " + std::to_string(fenceStatus));
+                        effectFence = VK_NULL_HANDLE;
+                    }
+                }
+                recordSubmittedBatch(logicalDevice, "effect", index,
+                                     submitInfo.waitSemaphoreCount > 0 ? submitInfo.pWaitSemaphores[0] : VK_NULL_HANDLE,
+                                     logicalSwapchain->semaphores[index], effectFence);
+                vr = logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &submitInfo, effectFence);
+                if (vr == VK_SUCCESS && index < logicalSwapchain->effectSubmitFenceUsed.size())
+                    logicalSwapchain->effectSubmitFenceUsed[index] = true;
             }
-            recordSubmittedBatch(logicalDevice, "effect", index,
-                                 submitInfo.waitSemaphoreCount > 0 ? submitInfo.pWaitSemaphores[0] : VK_NULL_HANDLE,
-                                 logicalSwapchain->semaphores[index], effectFence);
-            VkResult vr = logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &submitInfo, effectFence);
             if (vr != VK_SUCCESS)
             {
                 reportDeviceLostDiagnostics(logicalDevice, logicalDevice->queue, "vkQueueSubmit(effect)", vr);
@@ -3674,8 +3693,6 @@ namespace VKIntox
                     panicLayer(logicalDevice, "Vulkan device lost during effect submit");
                 return vr;
             }
-            if (index < logicalSwapchain->effectSubmitFenceUsed.size())
-                logicalSwapchain->effectSubmitFenceUsed[index] = true;
 
             maybeDumpDepthResolveImage(logicalDevice, logicalSwapchain, index, logicalDevice->queue);
 
