@@ -13,9 +13,7 @@ namespace VKIntox
     static bool hasDepthResolveResources(const LogicalSwapchain* logicalSwapchain, size_t commandBufferCount)
     {
         return logicalSwapchain != nullptr
-               && logicalSwapchain->depthResolvePerImage.size() == commandBufferCount
-               && (!logicalSwapchain->depthResolveMsaaChain
-                   || logicalSwapchain->depthResolveTransformedPerImage.size() == commandBufferCount);
+               && logicalSwapchain->depthResolvePerImage.size() == commandBufferCount;
     }
 
     static bool hasDepthState(const DepthState& state)
@@ -75,7 +73,7 @@ namespace VKIntox
         if (!logicalSwapchain)
             return VK_IMAGE_LAYOUT_UNDEFINED;
 
-        return (logicalSwapchain->depthResolveUsesShader || logicalSwapchain->depthResolveMsaaChain)
+        return logicalSwapchain->depthResolveUsesShader
             ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
             : getInternalDepthReadOnlyLayout(logicalSwapchain->depthResolveFormat);
     }
@@ -118,38 +116,6 @@ namespace VKIntox
             trackedView = createSingleImageView(logicalDevice, depthState.format, depthState.image, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT);
 
         return trackedView != VK_NULL_HANDLE ? trackedView : depthState.imageView;
-    }
-
-    // must match DepthParams in the resolve shader: five int32, glsl bool is
-    // 4 bytes not c++ bool's 1 (assert below catches drift).
-    static void pushDepthTransformConstants(LogicalDevice* logicalDevice, LogicalSwapchain* logicalSwapchain, VkCommandBuffer commandBuffer)
-    {
-        if (logicalSwapchain->depthResolvePipelineLayout == VK_NULL_HANDLE)
-            return;
-
-        struct DepthPushConstants
-        {
-            int32_t depthMode;
-            int32_t invertDepth;
-            int32_t normalize;
-            int32_t flipDepth;
-            int32_t flopDepth;
-        };
-        static_assert(sizeof(DepthPushConstants) == sizeof(int32_t) * 5, "DepthPushConstants must be 20 bytes to match the shader");
-
-        DepthPushConstants pushData = {};
-        pushData.depthMode = static_cast<int32_t>(settingsManager.getDepthSourceChannel());
-        pushData.invertDepth = settingsManager.getDepthInvert() ? 1 : 0;
-        pushData.normalize = 1;
-        pushData.flipDepth = settingsManager.getDepthFlip() ? 1 : 0;
-        pushData.flopDepth = settingsManager.getDepthFlop() ? 1 : 0;
-
-        logicalDevice->vkd.CmdPushConstants(commandBuffer,
-                                            logicalSwapchain->depthResolvePipelineLayout,
-                                            VK_SHADER_STAGE_FRAGMENT_BIT,
-                                            0,
-                                            sizeof(DepthPushConstants),
-                                            &pushData);
     }
 
     static void recordDepthResolveSnapshotViaShader(LogicalDevice*    logicalDevice,
@@ -293,7 +259,44 @@ namespace VKIntox
                                                   nullptr);
         logicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, logicalSwapchain->depthResolvePipeline);
         
-        pushDepthTransformConstants(logicalDevice, logicalSwapchain, commandBuffer);
+        // Push depth parameters to shader (mode, inversion, normalization)
+        // Only push if we have a valid pipeline layout with push constant range
+        if (logicalSwapchain->depthResolvePipelineLayout != VK_NULL_HANDLE)
+        {
+            // Struct must match GLSL layout(push_constant) uniform DepthParams exactly:
+            //   int  depthMode;    = int32_t (4 bytes)
+            //   bool invertDepth; = int32_t (4 bytes in GLSL)
+            //   bool normalize;   = int32_t (4 bytes in GLSL)
+            //   bool flipDepth;   = int32_t (4 bytes in GLSL)
+            //   bool flopDepth;   = int32_t (4 bytes in GLSL)
+            // Total: 20 bytes
+            struct DepthPushConstants {
+                int32_t depthMode;
+                int32_t invertDepth;
+                int32_t normalize;
+                int32_t flipDepth;
+                int32_t flopDepth;
+            };
+            
+            static_assert(sizeof(DepthPushConstants) == sizeof(int32_t) * 5, 
+                          "DepthPushConstants size must be 20 bytes to match GLSL");
+            
+            DepthPushConstants pushData = {};
+            pushData.depthMode = static_cast<int32_t>(settingsManager.getDepthSourceChannel()); // 0=R, 1=Alpha, etc.
+            pushData.invertDepth = settingsManager.getDepthInvert() ? 1 : 0;
+            pushData.normalize = 1; // Always normalize for safety
+            pushData.flipDepth = settingsManager.getDepthFlip() ? 1 : 0;
+            pushData.flopDepth = settingsManager.getDepthFlop() ? 1 : 0;
+            
+            logicalDevice->vkd.CmdPushConstants(
+                commandBuffer,
+                logicalSwapchain->depthResolvePipelineLayout,
+                VK_SHADER_STAGE_FRAGMENT_BIT,
+                0,
+                sizeof(DepthPushConstants),
+                &pushData
+            );
+        }
         
         logicalDevice->vkd.CmdDraw(commandBuffer, 3, 1, 0, 0);
         logicalDevice->vkd.CmdEndRenderPass(commandBuffer);
@@ -373,13 +376,8 @@ namespace VKIntox
 
         for (uint32_t i = 0; i < commandBuffers.size(); i++)
         {
-            // the chain target is safe to bind from the first frame: its
-            // transform pass records into the same command buffer before the
-            // effects draw, so the layout is valid by execution time.
-            const VkImageView  boundDepthImageView = depthResolveTargetUsable
-                ? (logicalSwapchain->depthResolveMsaaChain ? logicalSwapchain->depthResolveTransformedPerImage[i].imageView
-                                                           : logicalSwapchain->depthResolvePerImage[i].imageView)
-                : VK_NULL_HANDLE;
+            const VkImageView  boundDepthImageView = depthResolveTargetUsable ? logicalSwapchain->depthResolvePerImage[i].imageView
+                                                                               : VK_NULL_HANDLE;
             const VkImageLayout boundDepthLayout   = depthResolveTargetUsable ? getDepthResolveReadOnlyLayout(logicalSwapchain)
                                                                                : VK_IMAGE_LAYOUT_UNDEFINED;
             for (auto& effect : effects)
@@ -411,14 +409,14 @@ namespace VKIntox
     // initializeDepthResolveLayout. No draws are recorded; the resolve happens
     // implicitly at subpass end. The resolve target ends in the read-only depth
     // layout so effects can sample it.
-    static bool recordDepthResolveSnapshotViaMsaaSubpass(LogicalDevice*     logicalDevice,
+    static void recordDepthResolveSnapshotViaMsaaSubpass(LogicalDevice*     logicalDevice,
                                                          LogicalSwapchain*  logicalSwapchain,
                                                          VkCommandBuffer    commandBuffer,
                                                          uint32_t           imageIndex,
                                                          const DepthState&  depthState)
     {
         if (imageIndex >= logicalSwapchain->depthResolveMsaaFramebuffers.size())
-            return false;
+            return;
 
         const bool sourceInGeneral = (depthState.observedLayout == VK_IMAGE_LAYOUT_GENERAL);
 
@@ -493,116 +491,6 @@ namespace VKIntox
                 + " mode=" + std::to_string(logicalSwapchain->depthResolveMode)
                 + " sourceWasGeneral=" + std::string(sourceInGeneral ? "true" : "false");
         });
-
-        return true;
-    }
-
-    // msaa + transform: the hardware resolve subpass writes a depth-format
-    // 1-sample intermediate, then the sampler shader applies invert/mirror and
-    // channel decode into the r32 target effects read.
-    static void recordDepthResolveSnapshotViaMsaaTransformChain(LogicalDevice*    logicalDevice,
-                                                                LogicalSwapchain* logicalSwapchain,
-                                                                VkCommandBuffer   commandBuffer,
-                                                                uint32_t          imageIndex,
-                                                                const DepthState& depthState)
-    {
-        if (imageIndex >= logicalSwapchain->depthResolveTransformedPerImage.size()
-            || imageIndex >= logicalSwapchain->depthResolveDescriptorSets.size()
-            || imageIndex >= logicalSwapchain->depthResolveFramebuffers.size())
-        {
-            return;
-        }
-
-        if (!recordDepthResolveSnapshotViaMsaaSubpass(logicalDevice, logicalSwapchain, commandBuffer, imageIndex, depthState))
-            return;
-
-        // the intermediate is in the read-only depth layout once the resolve
-        // pass ends; scope its writes before the shader samples it.
-        VkImageMemoryBarrier sourceBarrier = {};
-        sourceBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        sourceBarrier.image = logicalSwapchain->depthResolvePerImage[imageIndex].image;
-        sourceBarrier.oldLayout = getInternalDepthReadOnlyLayout(logicalSwapchain->depthResolveFormat);
-        sourceBarrier.newLayout = sourceBarrier.oldLayout;
-        sourceBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        sourceBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        sourceBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        sourceBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        sourceBarrier.subresourceRange.aspectMask =
-            isStencilFormat(logicalSwapchain->depthResolveFormat) ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
-                                                                  : VK_IMAGE_ASPECT_DEPTH_BIT;
-        sourceBarrier.subresourceRange.baseMipLevel = 0;
-        sourceBarrier.subresourceRange.levelCount = 1;
-        sourceBarrier.subresourceRange.baseArrayLayer = 0;
-        sourceBarrier.subresourceRange.layerCount = 1;
-
-        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
-                                               VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                                               VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                               0,
-                                               0,
-                                               nullptr,
-                                               0,
-                                               nullptr,
-                                               1,
-                                               &sourceBarrier);
-
-        DepthResolvePerImage& target = logicalSwapchain->depthResolveTransformedPerImage[imageIndex];
-
-        VkImageMemoryBarrier targetBarrier = {};
-        targetBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        targetBarrier.image = target.image;
-        targetBarrier.oldLayout = target.initialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                                                     : VK_IMAGE_LAYOUT_UNDEFINED;
-        targetBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        targetBarrier.srcAccessMask = target.initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
-        targetBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        targetBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        targetBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        targetBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        targetBarrier.subresourceRange.baseMipLevel = 0;
-        targetBarrier.subresourceRange.levelCount = 1;
-        targetBarrier.subresourceRange.baseArrayLayer = 0;
-        targetBarrier.subresourceRange.layerCount = 1;
-
-        logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
-                                               target.initialized
-                                                   ? (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT)
-                                                   : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                               0,
-                                               0,
-                                               nullptr,
-                                               0,
-                                               nullptr,
-                                               1,
-                                               &targetBarrier);
-
-        VkRenderPassBeginInfo renderPassBeginInfo = {};
-        renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassBeginInfo.renderPass = logicalSwapchain->depthResolveRenderPass;
-        renderPassBeginInfo.framebuffer = logicalSwapchain->depthResolveFramebuffers[imageIndex];
-        renderPassBeginInfo.renderArea.offset = {0, 0};
-        renderPassBeginInfo.renderArea.extent = {logicalSwapchain->depthResolveExtent.width, logicalSwapchain->depthResolveExtent.height};
-        VkClearValue clearValue = {};
-        clearValue.color.float32[0] = 1.0f;
-        renderPassBeginInfo.clearValueCount = 1;
-        renderPassBeginInfo.pClearValues = &clearValue;
-
-        logicalDevice->vkd.CmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-        logicalDevice->vkd.CmdBindDescriptorSets(commandBuffer,
-                                                  VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                  logicalSwapchain->depthResolvePipelineLayout,
-                                                  0,
-                                                  1,
-                                                  &logicalSwapchain->depthResolveDescriptorSets[imageIndex],
-                                                  0,
-                                                  nullptr);
-        logicalDevice->vkd.CmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, logicalSwapchain->depthResolvePipeline);
-        pushDepthTransformConstants(logicalDevice, logicalSwapchain, commandBuffer);
-        logicalDevice->vkd.CmdDraw(commandBuffer, 3, 1, 0, 0);
-        logicalDevice->vkd.CmdEndRenderPass(commandBuffer);
-
-        target.initialized = true;
     }
 
     // MSAA depth resolve FALLBACK via vkCmdResolveImage.
@@ -823,12 +711,6 @@ namespace VKIntox
         if (logicalSwapchain->depthResolveUsesShader)
         {
             recordDepthResolveSnapshotViaShader(logicalDevice, logicalSwapchain, commandBuffer, imageIndex, depthState);
-            return;
-        }
-
-        if (logicalSwapchain->depthResolveMsaaChain)
-        {
-            recordDepthResolveSnapshotViaMsaaTransformChain(logicalDevice, logicalSwapchain, commandBuffer, imageIndex, depthState);
             return;
         }
 
