@@ -322,7 +322,7 @@ namespace VKIntox
                                                &sourceBarrier);
     }
 
-    std::vector<VkCommandBuffer> allocateCommandBuffer(LogicalDevice* logicalDevice, uint32_t count)
+    std::vector<VkCommandBuffer> allocateCommandBuffer(LogicalDevice* logicalDevice, uint32_t count, VkCommandPool pool)
     {
         std::vector<VkCommandBuffer> commandBuffers(count);
 
@@ -330,7 +330,9 @@ namespace VKIntox
         allocInfo.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.pNext              = nullptr;
         allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandPool        = logicalDevice->commandPool;
+        // Swapchain-scoped pools keep one swapchain's buffers alive while a
+        // replacement swapchain is being created and the old one is torn down.
+        allocInfo.commandPool        = pool != VK_NULL_HANDLE ? pool : logicalDevice->commandPool;
         allocInfo.commandBufferCount = count;
 
         VkResult result = logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &allocInfo, commandBuffers.data());

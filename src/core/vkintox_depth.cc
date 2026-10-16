@@ -1600,18 +1600,24 @@ namespace VKIntox
         LogicalSwapchain* logicalSwapchain,
         const DepthState& depth)
     {
+        // Every buffer this swapchain owns lives in its own pool; the pool may
+        // be gone if a passthrough swapchain is being rebuilt, so guard it.
+        const VkCommandPool pool = logicalSwapchain->commandPool != VK_NULL_HANDLE
+            ? logicalSwapchain->commandPool
+            : logicalDevice->commandPool;
+
         // Free existing command buffers
-        if (!logicalSwapchain->commandBuffersEffect.empty())
+        if (pool != VK_NULL_HANDLE && !logicalSwapchain->commandBuffersEffect.empty())
         {
             logicalDevice->vkd.FreeCommandBuffers(
-                logicalDevice->device, logicalDevice->commandPool,
+                logicalDevice->device, pool,
                 logicalSwapchain->commandBuffersEffect.size(),
                 logicalSwapchain->commandBuffersEffect.data());
         }
-        if (!logicalSwapchain->commandBuffersNoEffect.empty())
+        if (pool != VK_NULL_HANDLE && !logicalSwapchain->commandBuffersNoEffect.empty())
         {
             logicalDevice->vkd.FreeCommandBuffers(
-                logicalDevice->device, logicalDevice->commandPool,
+                logicalDevice->device, pool,
                 logicalSwapchain->commandBuffersNoEffect.size(),
                 logicalSwapchain->commandBuffersNoEffect.data());
         }
@@ -1619,7 +1625,7 @@ namespace VKIntox
         ensureDepthResolveResources(logicalSwapchain, depth);
 
         // Allocate and write effect command buffers
-        logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount);
+        logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, pool);
         writeCommandBuffers(logicalDevice,
                             logicalSwapchain,
                             logicalSwapchain->effects,
@@ -1627,7 +1633,7 @@ namespace VKIntox
                             depth);
 
         // Allocate and write no-effect command buffers
-        logicalSwapchain->commandBuffersNoEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount);
+        logicalSwapchain->commandBuffersNoEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, pool);
         writeCommandBuffers(logicalDevice,
                             logicalSwapchain,
                             {logicalSwapchain->defaultTransfer},

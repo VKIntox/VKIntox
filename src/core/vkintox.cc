@@ -2298,14 +2298,49 @@ namespace VKIntox
         logicalSwapchain->imageCount = fetchedImageCount;
         logicalSwapchain->images = std::move(realImages);
 
+        // Swapchains the fake-image scheme cannot represent: zero-sized ones
+        // (created transiently while a window or drawable is being rebuilt) and
+        // layered ones. Serve the real images and pass presents through instead
+        // of failing a fetch the game is not prepared to recover from.
+        const bool zeroExtent = logicalSwapchain->imageExtent.width == 0 || logicalSwapchain->imageExtent.height == 0;
+        const bool layered = logicalSwapchain->swapchainCreateInfo.imageArrayLayers > 1;
+        if (zeroExtent || layered)
+        {
+            Logger::warn(std::string("swapchain is unusable for effects (")
+                         + (zeroExtent ? "zero extent" : "multi-layer")
+                         + "), serving real images and passing presents through");
+            logicalSwapchain->passthrough = true;
+        }
+
         // a surface neither backend processes gets the real images so it still
         // presents. wayland and x11 both get the fakes below; the present path
         // copies them into the real swapchain.
-        if (!isWayland() && !isX11())
+        if (logicalSwapchain->passthrough || (!isWayland() && !isX11()))
         {
             *pCount = std::min<uint32_t>(*pCount, logicalSwapchain->imageCount);
             std::memcpy(swapchainImages, logicalSwapchain->images.data(), sizeof(VkImage) * (*pCount));
             return *pCount < logicalSwapchain->imageCount ? VK_INCOMPLETE : VK_SUCCESS;
+        }
+
+        // Per-swapchain command pool, created before anything else so a driver
+        // that refuses it degrades to passthrough before any state exists.
+        {
+            VkCommandPoolCreateInfo poolCI = {};
+            poolCI.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            poolCI.flags            = 0;
+            poolCI.queueFamilyIndex = logicalDevice->queueFamilyIndex;
+            VkResult poolResult = logicalDevice->vkd.CreateCommandPool(
+                logicalDevice->device, &poolCI, nullptr, &logicalSwapchain->commandPool);
+            if (poolResult != VK_SUCCESS || logicalSwapchain->commandPool == VK_NULL_HANDLE)
+            {
+                Logger::err("Failed to create per-swapchain command pool (" + std::to_string(poolResult)
+                            + "), serving real images and passing presents through");
+                logicalSwapchain->commandPool = VK_NULL_HANDLE;
+                logicalSwapchain->passthrough = true;
+                *pCount = std::min<uint32_t>(*pCount, logicalSwapchain->imageCount);
+                std::memcpy(swapchainImages, logicalSwapchain->images.data(), sizeof(VkImage) * (*pCount));
+                return *pCount < logicalSwapchain->imageCount ? VK_INCOMPLETE : VK_SUCCESS;
+            }
         }
 
         // Create image views for overlay rendering
@@ -2354,8 +2389,13 @@ namespace VKIntox
             createFakeSwapchainImages(logicalDevice, logicalSwapchain->swapchainCreateInfo, fakeImageCount, logicalSwapchain->fakeImageMemories);
         if (logicalSwapchain->fakeImages.empty())
         {
-            Logger::err("Failed to create fake swapchain images");
-            return VK_ERROR_OUT_OF_HOST_MEMORY;
+            // Do not fail the fetch: the game gets its real images and keeps
+            // presenting, the layer simply chains no effects on this swapchain.
+            Logger::err("Failed to create fake swapchain images; serving real images and passing presents through");
+            logicalSwapchain->passthrough = true;
+            *pCount = std::min<uint32_t>(*pCount, logicalSwapchain->imageCount);
+            std::memcpy(swapchainImages, logicalSwapchain->images.data(), sizeof(VkImage) * (*pCount));
+            return *pCount < logicalSwapchain->imageCount ? VK_INCOMPLETE : VK_SUCCESS;
         }
         Logger::debug("created fake swapchain images");
 
@@ -2383,7 +2423,7 @@ namespace VKIntox
         Logger::debug("selected effect count: " + std::to_string(selectedEffects.size()));
         Logger::debug("effect count: " + std::to_string(logicalSwapchain->effects.size()));
 
-        logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount);
+        logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, logicalSwapchain->commandPool);
         Logger::debug("allocated ComandBuffers " + std::to_string(logicalSwapchain->commandBuffersEffect.size()) + " for swapchain "
                       + convertToString(swapchain));
 
@@ -2430,7 +2470,7 @@ namespace VKIntox
             logicalSwapchain->images,
             config.get());
 
-        logicalSwapchain->commandBuffersNoEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount);
+        logicalSwapchain->commandBuffersNoEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, logicalSwapchain->commandPool);
 
         writeCommandBuffers(logicalDevice,
                             logicalSwapchain,
@@ -3025,6 +3065,7 @@ namespace VKIntox
         bool presentEffectSnapshot = false;
         std::vector<std::shared_ptr<LogicalSwapchain>> presentSwapchains;
         std::vector<uint32_t> presentIndices;
+        bool presentHasPassthrough = false;
 
         // REMOVED: No longer need rawDeviceForRealloc/queueForRealloc since we removed QueueWaitIdle
 
@@ -3259,7 +3300,19 @@ namespace VKIntox
 
                 LogicalSwapchain* logicalSwapchain = swapIt->second.get();
                 uint32_t index = pPresentInfo->pImageIndices[i];
-                if (index >= logicalSwapchain->imageCount
+                if (logicalSwapchain->passthrough)
+                {
+                    // Real images were served for this swapchain; only the real
+                    // image list bounds the index, and the whole present goes
+                    // straight through below.
+                    if (index >= logicalSwapchain->images.size())
+                    {
+                        Logger::err("present image index out of bounds for passthrough swapchain");
+                        return VK_ERROR_OUT_OF_DATE_KHR;
+                    }
+                    presentHasPassthrough = true;
+                }
+                else if (index >= logicalSwapchain->imageCount
                     || index >= logicalSwapchain->semaphores.size()
                     || index >= logicalSwapchain->overlaySemaphores.size()
                     || index >= logicalSwapchain->imageViews.size())
@@ -3271,7 +3324,7 @@ namespace VKIntox
                 const auto& commandBuffers = presentEffectSnapshot
                     ? logicalSwapchain->commandBuffersEffect
                     : logicalSwapchain->commandBuffersNoEffect;
-                if (index >= commandBuffers.size())
+                if (!logicalSwapchain->passthrough && index >= commandBuffers.size())
                 {
                     Logger::err("present command buffer index out of bounds");
                     return VK_ERROR_OUT_OF_DATE_KHR;
@@ -3285,6 +3338,20 @@ namespace VKIntox
         LogicalDevice* logicalDevice = logicalDeviceShared.get();
         if (!logicalDevice)
             return VK_ERROR_DEVICE_LOST;
+
+        if (presentHasPassthrough)
+        {
+            // At least one presented swapchain is not faked by the layer (zero
+            // extent, layered, or uninitializable). The only safe present is
+            // the application's own: submitting buffers recorded for images
+            // that were never served would fault, and returning an error would
+            // make the game recover from something that is not its fault.
+            VkResult passthroughResult = logicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+            reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueuePresentKHR(passthrough swapchain)", passthroughResult);
+            if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                panicLayer(logicalDevice, "Vulkan device lost during passthrough present");
+            return passthroughResult;
+        }
 
         // Test hook, see maybeForceSmokeDepthRefresh. Rebuilds the depth path
         // while the app keeps presenting.

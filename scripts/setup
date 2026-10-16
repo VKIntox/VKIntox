@@ -101,6 +101,7 @@ usage() {
 usage:
   curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
   curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- com.target.app
+  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- butter
   curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
 EOF
 }
@@ -277,6 +278,7 @@ case "$APP_ID" in
 esac
 
 [[ "$APP_ID" != "sober" ]] || APP_ID="org.vinegarhq.Sober"
+[[ "$APP_ID" != "butter" ]] || APP_ID="io.github.microlift.butter"
 
 for cmd in curl jq unzip flatpak flatpak-builder python3 sha256sum readelf grep install awk sed sort mktemp find head basename dirname; do need_cmd "$cmd"; done
 
@@ -765,5 +767,14 @@ section "enable layer"
 if ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
     warn "couldn't set ENABLE_VKINTOX; if the app is not installed yet, run:"
     printf '    flatpak override --user %s --env=ENABLE_VKINTOX=1\n' "$APP_ID"
+fi
+# butter's own GTK ui creates a vulkan instance to render itself when it
+# launches a game under rosemary. forcing the GL renderer keeps the layer out
+# of the ui process, so it only post-processes the game's own devices.
+if [[ "$APP_ID" == "io.github.microlift.butter" ]]; then
+    if ! flatpak override --user "$APP_ID" --env=GSK_RENDERER=gl 2>/dev/null; then
+        warn "couldn't set GSK_RENDERER=gl; if the app is not installed yet, run:"
+        printf '    flatpak override --user %s --env=GSK_RENDERER=gl\n' "$APP_ID"
+    fi
 fi
 ok "setup finished for $APP_ID"

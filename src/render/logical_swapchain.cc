@@ -14,27 +14,20 @@ namespace VKIntox
             Logger::info("[DESTROY-TRACE] LogicalSwapchain::destroy: QueueWaitIdle");
             logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
 
-            // Reset the command pool BEFORE destroying effects.  This puts all
-            // allocated command buffers back into the initial state, clearing
-            // any driver-internal tracking of which pipelines / render passes
-            // they reference.  Some NVIDIA driver versions crash if effect
-            // objects are destroyed while the driver still has tracking records.
-            Logger::info("[DESTROY-TRACE] ResetCommandPool");
-            logicalDevice->vkd.ResetCommandPool(logicalDevice->device, logicalDevice->commandPool, 0);
-
-            // Free command buffers
-            if (!commandBuffersEffect.empty())
+            // Destroy this swapchain's own command pool BEFORE the effects go.
+            // Destroying the pool frees every command buffer allocated from it
+            // and clears the driver's tracking records in one step — the same
+            // guarantee the old device-pool reset bought, but scoped to this
+            // swapchain. A replacement swapchain created before this one was
+            // destroyed therefore keeps every buffer it allocated.
+            if (commandPool != VK_NULL_HANDLE)
             {
-                logicalDevice->vkd.FreeCommandBuffers(
-                    logicalDevice->device, logicalDevice->commandPool, commandBuffersEffect.size(), commandBuffersEffect.data());
-                commandBuffersEffect.clear();
+                Logger::info("[DESTROY-TRACE] DestroyCommandPool");
+                logicalDevice->vkd.DestroyCommandPool(logicalDevice->device, commandPool, nullptr);
+                commandPool = VK_NULL_HANDLE;
             }
-            if (!commandBuffersNoEffect.empty())
-            {
-                logicalDevice->vkd.FreeCommandBuffers(
-                    logicalDevice->device, logicalDevice->commandPool, commandBuffersNoEffect.size(), commandBuffersNoEffect.data());
-                commandBuffersNoEffect.clear();
-            }
+            commandBuffersEffect.clear();
+            commandBuffersNoEffect.clear();
             Logger::info("[DESTROY-TRACE] command buffers freed");
 
             Logger::info("[DESTROY-TRACE] destroying " + std::to_string(effects.size()) + " effects");

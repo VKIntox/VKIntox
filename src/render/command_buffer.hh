@@ -12,7 +12,7 @@ namespace VKIntox
 {
     struct LogicalSwapchain;
 
-    std::vector<VkCommandBuffer> allocateCommandBuffer(LogicalDevice* logicalDevice, uint32_t count);
+    std::vector<VkCommandBuffer> allocateCommandBuffer(LogicalDevice* logicalDevice, uint32_t count, VkCommandPool pool = VK_NULL_HANDLE);
 
     void writeCommandBuffers(LogicalDevice*                                 logicalDevice,
                              LogicalSwapchain*                              logicalSwapchain,

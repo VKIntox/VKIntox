@@ -2,6 +2,7 @@
 #define DEFAULT_CONFIG_HH_INCLUDED
 
 #include <cstdint>
+#include <fstream>
 #include <string>
 
 #include "config_serializer.hh"
@@ -11,6 +12,28 @@
 // read them instead of carrying their own literals.
 namespace VKIntox::DefaultConfig
 {
+    // the flatpak app id this process runs inside, or empty when not in a
+    // flatpak sandbox. every process in a sandbox can read /.flatpak-info.
+    inline std::string flatpakAppId()
+    {
+        std::ifstream info("/.flatpak-info");
+        if (!info.is_open())
+            return {};
+
+        std::string line;
+        bool inApplication = false;
+        while (std::getline(info, line))
+        {
+            if (!line.empty() && line.front() == '[')
+            {
+                inApplication = (line == "[Application]");
+                continue;
+            }
+            if (inApplication && line.rfind("name=", 0) == 0)
+                return line.substr(5);
+        }
+        return {};
+    }
     // the shipped preset is pink-based Expressive and dark.
     inline constexpr uint32_t kThemeSource = 0xFFE91E63;
     inline constexpr ImGuiM3Variant kThemeVariant = ImGuiM3Variant_Expressive;
@@ -65,11 +88,13 @@ namespace VKIntox::DefaultConfig
         return settings;
     }
 
-    // per-game depth orientation. sober's depth reads inverted; macoblox (mldr)
-    // renders upside down, so it starts flipped. flop stays off for every game.
+    // per-game depth orientation. sober's depth reads inverted, and so does
+    // the mac client butter runs through rosemary; macoblox (mldr) renders
+    // upside down, so it starts flipped. flop stays off for every game.
     inline bool depthInvertForGame(const std::string& executableName)
     {
-        return executableName == "sober";
+        return executableName == "sober" || executableName == "rosemary"
+            || flatpakAppId() == "io.github.microlift.butter";
     }
 
     inline bool depthFlipForGame(const std::string& executableName)

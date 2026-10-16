@@ -35,6 +35,18 @@ namespace VKIntox
         std::vector<VkImage>                 images;
         std::vector<VkImageView>             imageViews;  // for overlay rendering
         std::vector<VkImage>                 fakeImages;
+        // Own command pool for this swapchain's effect command buffers. The
+        // device-level pool must not be reset while a replacement swapchain is
+        // mid-flight: games (Roblox included) create the new swapchain before
+        // destroying the old one, and a shared-pool reset invalidates the
+        // replacement's buffers the moment the old swapchain tears down.
+        VkCommandPool                        commandPool = VK_NULL_HANDLE;
+        // The layer never got (or cannot use) fake images for this swapchain:
+        // zero-sized or layered swapchains, or a failed fake-image allocation.
+        // Real images are served instead and presents go straight through, so
+        // the game keeps rendering and recreating however it likes instead of
+        // receiving an error it has to recover from.
+        bool                                 passthrough = false;
         size_t                               maxEffectSlots = 0;  // Max number of effects supported
         std::vector<VkCommandBuffer>         commandBuffersEffect;
         std::vector<VkCommandBuffer>         commandBuffersNoEffect;

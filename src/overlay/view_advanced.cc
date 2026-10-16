@@ -227,9 +227,20 @@ namespace VKIntox
         if (depthTransformPending)
         {
             std::lock_guard<std::mutex> l(globalLock);
-            // rebuilds the resolve path if a transform now needs the shader, and
+            // Rebuilds the resolve path if a transform now needs the shader, and
             // re-records the buffers so the new push constants take effect.
             logicalDevice->depthReallocPending = true;
+            // The resolve is only half the pipeline: ReShade effects bake the
+            // depth orientation into their compiled shaders through the
+            // RESHADE_DEPTH_INPUT_* macros, while the resolve applies it at
+            // runtime. Rebuilding just the resolve leaves the two halves on
+            // different generations until some later reload recompiles the
+            // effects and the image suddenly matches the new setting (or not,
+            // for a shader that already sampled the old one). Arm the gated,
+            // debounced chain rebuild here so macros, push constants and the
+            // saved config always flip together.
+            logicalDevice->pendingChainEffects = getActiveEffects();
+            logicalDevice->pendingChainReload = true;
             depthTransformPending = false;
         }
     }
