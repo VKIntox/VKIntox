@@ -1980,11 +1980,13 @@ namespace VKIntox
         preprocessor.add_macro_definition("BUFFER_COLOR_DEPTH", (inputOutputFormatUNORM == VK_FORMAT_A2R10G10B10_UNORM_PACK32) ? "10" : "8");
         preprocessor.add_macro_definition("BUFFER_COLOR_BIT_DEPTH", "BUFFER_COLOR_DEPTH");
         
-        // Pass current depth mode settings to ReShade for proper depth interpretation
-        // This ensures flawless depth passthrough to effects (DOF, SSAO, etc.)
+        // Pass the static source encoding to ReShade so effects interpret the
+        // resolved depth correctly. The user's invert/flip/flop transforms are
+        // runtime resolve push constants and must not be baked in as macros:
+        // doing both meant a chain reload recompiled the effects and cancelled
+        // the transform that was already applied to the depth image.
         const int depthMode = settingsManager.getDepthSourceChannel();
-        const bool depthInvert = settingsManager.getDepthInvert();
-        addReshadeDepthMacros(preprocessor, depthMode, depthInvert);
+        addReshadeDepthMacros(preprocessor, depthMode);
 
         // Keep runtime compilation behavior aligned with reshade_parser compatibility shims.
         preprocessor.append_string(
