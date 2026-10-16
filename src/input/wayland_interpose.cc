@@ -17,6 +17,7 @@
 #include "wayland_interpose.hh"
 #include "input_blocker.hh"
 #include "wayland_display.hh"
+#include "wayland_syncobj_gate.hh"
 #include "logger.hh"
 
 // Forward-declare to avoid pulling in mouse_input_wayland.hh (which
@@ -545,6 +546,41 @@ wl_proxy* wl_proxy_marshal_array_flags(struct wl_proxy* proxy,
         (opcode == 4 || opcode == 5 || opcode == 6))
     {
         return nullptr;
+    }
+
+    if (cls)
+    {
+        // feed the explicit-sync gate: pairings, point sets and every commit,
+        // so it can hold foreign commits out of an open present sequence
+        if (std::strcmp(cls, "wl_surface") == 0)
+        {
+            if (opcode == 6) // commit
+            {
+                const uint32_t id = wl_proxy_get_id(proxy);
+                VKIntox::WaylandSyncobjGate::beginCommit(id);
+                struct wl_proxy* result = real(proxy, opcode, iface, version, flags, args);
+                VKIntox::WaylandSyncobjGate::endCommit(id);
+                return result;
+            }
+        }
+        else if (std::strcmp(cls, "wp_linux_drm_syncobj_surface_v1") == 0)
+        {
+            const uint32_t id = wl_proxy_get_id(proxy);
+            if (opcode == 0) // destroy
+                VKIntox::WaylandSyncobjGate::noteSyncobjDestroyed(id);
+            else if (opcode == 1 || opcode == 2) // set_acquire_point / set_release_point
+                VKIntox::WaylandSyncobjGate::notePointSetForSyncobj(id);
+        }
+        else if (std::strcmp(cls, "wp_linux_drm_syncobj_manager_v1") == 0 && opcode == 1) // get_surface
+        {
+            // args[0] is the new_id slot, args[1] the surface it describes
+            struct wl_proxy* created = real(proxy, opcode, iface, version, flags, args);
+            if (created && args)
+                VKIntox::WaylandSyncobjGate::noteSyncobjSurface(
+                    wl_proxy_get_id(created),
+                    wl_proxy_get_id(reinterpret_cast<struct wl_proxy*>(args[1].o)));
+            return created;
+        }
     }
 
     return real(proxy, opcode, iface, version, flags, args);

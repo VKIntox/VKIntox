@@ -177,11 +177,17 @@ wayland_pointer_constraints_lib = static_library('wayland_pointer_constraints',
     link_with: [wayland_input_common_lib],
     dependencies: [wayland_client_dep],
     include_directories: [include_directories('core', 'core/config')])
+# Explicit-sync commit gate for the wayland interpose: keeps a foreign window
+# commit out of an open linux-drm-syncobj point sequence.
+wayland_syncobj_gate_lib = static_library('wayland_syncobj_gate',
+    'input/wayland_syncobj_gate.cc',
+    include_directories: [include_directories('core', 'core/config')])
 # Wayland event interposition — wraps game's pointer/keyboard listeners to
 # suppress events when overlay has input blocked. Needs default visibility
 # for the wl_proxy_add_listener symbol override.
 wayland_interpose_lib = static_library('wayland_interpose',
     'input/wayland_interpose.cc',
+    link_with: [wayland_syncobj_gate_lib],
     dependencies: [wayland_client_dep],
     c_args: ['-fvisibility=default'],
     cpp_args: ['-fvisibility=default'],
@@ -309,6 +315,17 @@ test('depth copy state', depth_copy_state_tests)
 # The compile cache is what stops a chain reload from re-parsing every ReShade
 # effect. Its keying and bound are the contract, and a missing lock would only
 # show as a rare corrupt module under load, so it is hammered directly.
+# The explicit-sync gate's hold-and-release ordering is invisible until a
+# compositor kills the connection over a racing commit, so its state machine
+# is driven directly with threads.
+wayland_syncobj_gate_tests = executable('vkintox-wayland-syncobj-gate-tests',
+    'tests/wayland_syncobj_gate_test.cc',
+    'input/wayland_syncobj_gate.cc',
+    'core/logger.cc',
+    dependencies : [threads_dep],
+    include_directories : [core_inc, input_inc, source_inc])
+test('wayland syncobj gate', wayland_syncobj_gate_tests)
+
 compile_cache_tests = executable('vkintox-compile-cache-tests',
     'effects/compile_cache_test.cc',
     dependencies : [threads_dep],
