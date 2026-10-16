@@ -295,7 +295,8 @@ static void wk_key(void* data, wl_keyboard* kb, uint32_t serial, uint32_t time, 
             held.erase(key);
     }
 
-    if (pointerBlocked())
+    // keys follow the pointer hitbox plus the overlay's own key consumption
+    if (pointerBlocked() || VKIntox::isOverlayConsumingKeys())
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gameKeyboards.find(kb);
@@ -378,8 +379,9 @@ static int wd_keyboard(const void* data, void* target, uint32_t opcode, const st
             held.erase(args[2].u);
     }
 
-    // keyboard has no coordinates; it follows the pointer's hitbox.
-    if (opcode == 3 && pointerBlocked())
+    // keyboard has no coordinates; it follows the hitbox and the overlay's
+    // own key consumption
+    if (opcode == 3 && (pointerBlocked() || VKIntox::isOverlayConsumingKeys()))
         return 0;
 
     std::lock_guard<std::mutex> lock(gameDataMutex);

@@ -44,6 +44,10 @@ namespace VKIntox
     // True when the overlay is on screen (regardless of hitbox).
     bool isInputBlocked();
 
+    // True while the overlay consumes keys (a text field is active or a popup
+    // is open). Wayland withholds key events on this, hitbox or not.
+    bool isOverlayConsumingKeys();
+
     // Diagnostics: the configured gate plus the live per-backend state.
     bool inputBlockingEnabled();
     bool inputGrabActive();        // X11: a server-side pointer or keyboard grab is up

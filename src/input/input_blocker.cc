@@ -131,6 +131,11 @@ namespace VKIntox
         return blocked.load(std::memory_order_acquire);
     }
 
+    bool isOverlayConsumingKeys()
+    {
+        return overlayConsumingKeys();
+    }
+
     bool inputBlockingEnabled()
     {
         return blockingEnabled.load(std::memory_order_acquire);
