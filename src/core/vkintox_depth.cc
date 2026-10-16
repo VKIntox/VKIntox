@@ -908,23 +908,6 @@ namespace VKIntox
     void updateDeviceDepthStateLocked(LogicalDevice* logicalDevice, const DepthState& depth, const char* reason);
     void reallocateCommandBuffers(LogicalDevice* logicalDevice, LogicalSwapchain* logicalSwapchain, const DepthState& depth);
 
-    static void destroyDepthResolveImages(LogicalSwapchain* logicalSwapchain, std::vector<DepthResolvePerImage>& images)
-    {
-        for (auto& perImg : images)
-        {
-            if (perImg.imageView != VK_NULL_HANDLE)
-                logicalSwapchain->logicalDevice->vkd.DestroyImageView(
-                    logicalSwapchain->logicalDevice->device, perImg.imageView, nullptr);
-            if (perImg.image != VK_NULL_HANDLE)
-                logicalSwapchain->logicalDevice->vkd.DestroyImage(
-                    logicalSwapchain->logicalDevice->device, perImg.image, nullptr);
-            if (perImg.memory != VK_NULL_HANDLE)
-                logicalSwapchain->logicalDevice->vkd.FreeMemory(
-                    logicalSwapchain->logicalDevice->device, perImg.memory, nullptr);
-        }
-        images.clear();
-    }
-
     void destroyDepthResolveResources(LogicalSwapchain* logicalSwapchain)
     {
         logicalSwapchain->depthResolveSourceView = VK_NULL_HANDLE;
@@ -985,15 +968,25 @@ namespace VKIntox
             logicalSwapchain->depthResolveSampler = VK_NULL_HANDLE;
         }
 
-        destroyDepthResolveImages(logicalSwapchain, logicalSwapchain->depthResolvePerImage);
-        destroyDepthResolveImages(logicalSwapchain, logicalSwapchain->depthResolveTransformedPerImage);
+        for (auto& perImg : logicalSwapchain->depthResolvePerImage)
+        {
+            if (perImg.imageView != VK_NULL_HANDLE)
+                logicalSwapchain->logicalDevice->vkd.DestroyImageView(
+                    logicalSwapchain->logicalDevice->device, perImg.imageView, nullptr);
+            if (perImg.image != VK_NULL_HANDLE)
+                logicalSwapchain->logicalDevice->vkd.DestroyImage(
+                    logicalSwapchain->logicalDevice->device, perImg.image, nullptr);
+            if (perImg.memory != VK_NULL_HANDLE)
+                logicalSwapchain->logicalDevice->vkd.FreeMemory(
+                    logicalSwapchain->logicalDevice->device, perImg.memory, nullptr);
+        }
+        logicalSwapchain->depthResolvePerImage.clear();
 
         logicalSwapchain->depthResolveDescriptorSets.clear();
         logicalSwapchain->depthResolveFormat = VK_FORMAT_UNDEFINED;
         logicalSwapchain->depthResolveExtent = {0, 0, 1};
         logicalSwapchain->depthResolveUsesShader = false;
         logicalSwapchain->depthResolveIsMsaa = false;
-        logicalSwapchain->depthResolveMsaaChain = false;
         logicalSwapchain->depthResolveSourceSamples = VK_SAMPLE_COUNT_1_BIT;
         logicalSwapchain->depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
     }
@@ -1003,14 +996,6 @@ namespace VKIntox
         std::vector<VkImageView> views(sc->depthResolvePerImage.size());
         for (size_t i = 0; i < sc->depthResolvePerImage.size(); i++)
             views[i] = sc->depthResolvePerImage[i].imageView;
-        return views;
-    }
-
-    static std::vector<VkImageView> collectDepthResolveTransformedViews(const LogicalSwapchain* sc)
-    {
-        std::vector<VkImageView> views(sc->depthResolveTransformedPerImage.size());
-        for (size_t i = 0; i < sc->depthResolveTransformedPerImage.size(); i++)
-            views[i] = sc->depthResolveTransformedPerImage[i].imageView;
         return views;
     }
 
@@ -1036,15 +1021,11 @@ namespace VKIntox
         // source to attachment-optimal before the resolve subpass and restore after.
         const bool useMsaaResolve = isMsaa
             && (logicalDevice->supportedDepthResolveModes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT);
-        // the hardware resolve can't decode a channel or mirror the image, so a
-        // requested transform rides a shader pass over the resolved intermediate.
-        const bool useMsaaTransformChain = useMsaaResolve && depthTransformRequested();
         logicalSwapchain->depthResolveUsesShader = useShaderResolve;
         logicalSwapchain->depthResolveIsMsaa = useMsaaResolve;
-        logicalSwapchain->depthResolveMsaaChain = useMsaaTransformChain;
         logicalSwapchain->depthResolveSourceSamples = depth.samples;
         Logger::debug("depth resolve path: "
-                      + std::string(useShaderResolve ? "shader" : (useMsaaTransformChain ? "msaa+transform" : (useMsaaResolve ? "msaa" : "copy")))
+                      + std::string(useShaderResolve ? "shader" : (useMsaaResolve ? "msaa" : "copy"))
                       + " observedLayout=" + convertToString(depth.observedLayout)
                       + " samples=" + std::to_string(depth.samples)
                       + " transform=" + std::string(depthTransformRequested() ? "yes" : "no"));
@@ -1128,46 +1109,11 @@ namespace VKIntox
                 // copy path take over (it will no-op harmlessly on MSAA since
                 // samples mismatch, but at least we won't crash).
                 logicalSwapchain->depthResolveIsMsaa = false;
-                logicalSwapchain->depthResolveMsaaChain = false;
             }
         }
 
-        if (!useShaderResolve && !useMsaaTransformChain)
+        if (!useShaderResolve)
             return;
-
-        if (useMsaaTransformChain)
-        {
-            logicalSwapchain->depthResolveTransformedPerImage.resize(logicalSwapchain->imageCount);
-            for (uint32_t i = 0; i < logicalSwapchain->imageCount; ++i)
-            {
-                VkDeviceMemory imageMemory = VK_NULL_HANDLE;
-                std::vector<VkImage> images = createImages(logicalDevice,
-                                                           1,
-                                                           logicalSwapchain->depthResolveExtent,
-                                                           VK_FORMAT_R32_SFLOAT,
-                                                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                                           imageMemory);
-                if (images.empty() || imageMemory == VK_NULL_HANDLE)
-                {
-                    Logger::err("initializeDepthResolveLayout: failed to create msaa transform target " + std::to_string(i));
-                    destroyDepthResolveResources(logicalSwapchain);
-                    return;
-                }
-                logicalSwapchain->depthResolveTransformedPerImage[i].image = images[0];
-                logicalSwapchain->depthResolveTransformedPerImage[i].memory = imageMemory;
-            }
-            std::vector<VkImage> rawImages(logicalSwapchain->depthResolveTransformedPerImage.size());
-            for (size_t idx = 0; idx < rawImages.size(); idx++)
-                rawImages[idx] = logicalSwapchain->depthResolveTransformedPerImage[idx].image;
-            auto views = createImageViews(logicalDevice,
-                                          VK_FORMAT_R32_SFLOAT,
-                                          rawImages,
-                                          VK_IMAGE_VIEW_TYPE_2D,
-                                          VK_IMAGE_ASPECT_COLOR_BIT);
-            for (size_t idx = 0; idx < views.size() && idx < logicalSwapchain->depthResolveTransformedPerImage.size(); idx++)
-                logicalSwapchain->depthResolveTransformedPerImage[idx].imageView = views[idx];
-        }
 
         logicalSwapchain->depthResolveSampler = createSampler(logicalDevice);
         logicalSwapchain->depthResolveDescriptorSetLayout = createImageSamplerDescriptorSetLayout(logicalDevice, 1);
@@ -1177,19 +1123,7 @@ namespace VKIntox
         imagePoolSize.descriptorCount = logicalSwapchain->imageCount;
         logicalSwapchain->depthResolveDescriptorPool = createDescriptorPool(logicalDevice, {imagePoolSize});
 
-        // chain sources are the resolved intermediates; the plain shader path
-        // samples the app's depth view directly.
-        std::vector<VkImageView> sourceViews;
-        if (useMsaaTransformChain)
-        {
-            sourceViews.resize(logicalSwapchain->imageCount);
-            for (uint32_t i = 0; i < logicalSwapchain->imageCount; ++i)
-                sourceViews[i] = logicalSwapchain->depthResolvePerImage[i].imageView;
-        }
-        else
-        {
-            sourceViews.assign(logicalSwapchain->imageCount, depth.imageView);
-        }
+        std::vector<VkImageView> sourceViews(logicalSwapchain->imageCount, depth.imageView);
         logicalSwapchain->depthResolveDescriptorSets = allocateAndWriteImageSamplerDescriptorSets(
             logicalDevice,
             logicalSwapchain->depthResolveDescriptorPool,
@@ -1197,41 +1131,17 @@ namespace VKIntox
             {logicalSwapchain->depthResolveSampler},
             {sourceViews});
 
-        if (useMsaaTransformChain && logicalSwapchain->depthResolveDescriptorSets.size() == logicalSwapchain->imageCount)
-        {
-            // the shared writer bakes GENERAL, but the intermediates sit in the
-            // read-only depth layout; a wrong claim here wedges the first sample.
-            const VkImageLayout intermediateLayout =
-                isStencilFormat(depth.format) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-                                              : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
-            for (uint32_t i = 0; i < logicalSwapchain->imageCount; ++i)
-            {
-                VkDescriptorImageInfo imageInfo = {};
-                imageInfo.sampler = logicalSwapchain->depthResolveSampler;
-                imageInfo.imageView = logicalSwapchain->depthResolvePerImage[i].imageView;
-                imageInfo.imageLayout = intermediateLayout;
-                VkWriteDescriptorSet write = {};
-                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write.dstSet = logicalSwapchain->depthResolveDescriptorSets[i];
-                write.dstBinding = 0;
-                write.descriptorCount = 1;
-                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                write.pImageInfo = &imageInfo;
-                logicalDevice->vkd.UpdateDescriptorSets(logicalDevice->device, 1, &write, 0, nullptr);
-            }
-        }
-
-        // the pass always targets the r32 effect-facing image; the chain's
-        // stored format is its depth-format intermediate, so it can't be used.
         logicalSwapchain->depthResolveRenderPass =
-            createRenderPass(logicalDevice, VK_FORMAT_R32_SFLOAT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            createRenderPass(logicalDevice, logicalSwapchain->depthResolveFormat, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-        // must match DepthParams in the resolve shader: five int32, glsl bool
-        // is 4 bytes not c++ bool's 1.
+        // Set up push constant range for depth resolve shaders
+        // CRITICAL: Size must match the GLSL struct exactly!
+        // GLSL layout: int(4) + bool(4) + bool(4) = 12 bytes
+        // (GLSL bool is always int32/4 bytes, not C++ bool which is 1 byte)
         VkPushConstantRange depthPushConstantRange = {};
         depthPushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         depthPushConstantRange.offset = 0;
-        depthPushConstantRange.size = sizeof(int32_t) * 5;
+        depthPushConstantRange.size = sizeof(int32_t) * 5; // 20 bytes: depthMode + invertDepth + normalize + flipDepth + flopDepth
 
         logicalSwapchain->depthResolvePipelineLayout = createGraphicsPipelineLayout(
             logicalDevice,
@@ -1260,11 +1170,7 @@ namespace VKIntox
         logicalDevice->vkd.DestroyShaderModule(logicalDevice->device, vertexModule, nullptr);
 
         logicalSwapchain->depthResolveFramebuffers = createFramebuffers(
-            logicalDevice,
-            logicalSwapchain->depthResolveRenderPass,
-            resolveExtent2D,
-            {useMsaaTransformChain ? collectDepthResolveTransformedViews(logicalSwapchain)
-                                   : collectDepthResolveImageViews(logicalSwapchain)});
+            logicalDevice, logicalSwapchain->depthResolveRenderPass, resolveExtent2D, {collectDepthResolveImageViews(logicalSwapchain)});
     }
     // Validate that a DepthState is safe to use for resolve/copy. Returns false
     // if any required field is missing, the underlying image is no longer
@@ -1501,8 +1407,6 @@ namespace VKIntox
             && (depth.observedLayout == VK_IMAGE_LAYOUT_GENERAL || depthTransformRequested());
         const bool wantsMsaaResolve = isMsaa
             && (logicalSwapchain->logicalDevice->supportedDepthResolveModes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT);
-        // must mirror initializeDepthResolveLayout, or every present rebuilds
-        const bool wantsMsaaChain = wantsMsaaResolve && depthTransformRequested();
         const VkFormat wantedResolveFormat = useShaderResolve ? VK_FORMAT_R32_SFLOAT : depth.format;
 
         // SOURCE-VIEW CHANGE DETECTION (Critical Bug 1, 2, 4 fix):
@@ -1522,15 +1426,12 @@ namespace VKIntox
             && logicalSwapchain->depthResolveExtent.depth == 1
             && logicalSwapchain->depthResolveUsesShader == useShaderResolve
             && logicalSwapchain->depthResolveIsMsaa == wantsMsaaResolve
-            && logicalSwapchain->depthResolveMsaaChain == wantsMsaaChain
             && logicalSwapchain->depthResolveSourceSamples == depth.samples
             && logicalSwapchain->depthResolvePerImage.size() == logicalSwapchain->imageCount
             && (!wantsMsaaResolve
                 || (logicalSwapchain->depthResolveMsaaRenderPass != VK_NULL_HANDLE
                     && logicalSwapchain->depthResolveMsaaFramebuffers.size() == logicalSwapchain->imageCount))
-            && (!wantsMsaaChain
-                || logicalSwapchain->depthResolveTransformedPerImage.size() == logicalSwapchain->imageCount)
-            && (!(useShaderResolve || wantsMsaaChain)
+            && (!useShaderResolve
                 || (logicalSwapchain->depthResolveDescriptorSets.size() == logicalSwapchain->imageCount
                     && logicalSwapchain->depthResolveRenderPass != VK_NULL_HANDLE
                     && logicalSwapchain->depthResolvePipelineLayout != VK_NULL_HANDLE
