@@ -427,28 +427,14 @@ namespace VKIntox
         if (!display)
             return;
 
-        // Drain any already-queued events first. If another thread is mid-read
-        // (prepare_read fails with EAGAIN) we must not read or retry in a loop:
-        // that spins until the other thread releases the read lock, which stalls
-        // the present thread whenever the game holds it. Just drain and return;
-        // the next frame tries again.
-        if (wl_display_prepare_read_queue(display, queue) != 0)
-        {
-            wl_display_dispatch_queue_pending(display, queue);
-            return;
-        }
-
-        // Non-blocking socket read — many games only call
-        // wl_display_dispatch_pending() in their render loop, which does
-        // NOT read from the socket.  Without this, button release and
-        // other events stay stuck in the kernel buffer.
-        wl_display_flush(display);
-        struct pollfd pfd = { wl_display_get_fd(display), POLLIN, 0 };
-        if (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN))
-            wl_display_read_events(display);
-        else
-            wl_display_cancel_read(display);
-
+        // Drain events already delivered to our queue. The socket itself is
+        // read by the game's event loop, which dispatches normally; stealing
+        // the display's read lock and reading the socket from here raced that
+        // loop. During a compositor resize the game's runloop spun against our
+        // lock and the app froze (100% on its main thread, no swapchain calls
+        // ever reaching the layer). The Wayland contract for extra queues is
+        // that the queue owner only dispatches its own pending events — exactly
+        // one reader owns the socket, and that is the application.
         wl_display_dispatch_queue_pending(display, queue);
     }
 

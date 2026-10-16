@@ -131,6 +131,21 @@ namespace VKIntox
         // when the pending rebuild was first armed, so a burst coalesces into one
         std::chrono::steady_clock::time_point depthReallocFirstArmed{};
 
+        // Set whenever a swapchain is created (including the create-before-
+        // destroy pattern games use for resize). While held, the depth
+        // subsystem is fully disengaged: getDepthState reports nothing, no
+        // snapshot copies are published and no resolve targets are rebuilt.
+        // Everything the depth path touches — the app's depth image, its
+        // render passes, our resolve targets — belongs to a frame generation,
+        // and a resize invalidates a whole generation of those at once. The
+        // hold releases on the first depth observation from the new generation
+        // (any accepted promotion), so nothing ever references an image the
+        // app is about to destroy. Without this, a resize left our deferred
+        // copies executing against the dying depth image: the GPU context
+        // switch timed out (NVRM Xid 109) and every later submit returned
+        // VK_ERROR_DEVICE_LOST.
+        bool depthTransitionHold = false;
+
         // Persistent depth storage — layer-internal depth image that outlives
         // app depth image destruction. NOT stored in the parallel
         // depthImages/depthFormats/depthImageViews vectors.

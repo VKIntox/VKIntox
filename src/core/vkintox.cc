@@ -2217,6 +2217,27 @@ namespace VKIntox
             logicalDevice->activeDepthState = {};
             logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
             logicalDevice->depthReallocPending = false;
+            // The previous generation's depth resources die with the old
+            // swapchain: hold the depth path off until the app has re-created
+            // and re-rendered its depth, so no deferred copy or resolve build
+            // ever executes against a dying image (that was the NVRM Xid 109
+            // context-switch timeout at resize).
+            if (!logicalDevice->depthTransitionHold)
+            {
+                logicalDevice->depthTransitionHold = true;
+                // Everything below belongs to the generation being replaced.
+                // Scopes recorded before the rebuild must not promote (a stale
+                // promotion would release the hold against the dying depth) and
+                // a published-but-unsubmitted copy must not ride into the new
+                // generation: both are exactly how the GPU ended up executing
+                // against a destroyed image (NVRM Xid 109 context-switch
+                // timeout).
+                logicalDevice->commandBufferDepthStates.clear();
+                logicalDevice->pendingTransferLinkedDepthScopes.clear();
+                logicalDevice->bestDepthCandidate = {};
+                logicalDevice->depthCopy.discardPending();
+                Logger::info("depth transition hold: swapchain rebuilt, waiting for a fresh depth observation");
+            }
             depthRetryStates.erase(logicalDevice);
             Logger::debug("CreateSwapchainKHR: cleared device depth state for fresh detection");
         }
@@ -2560,6 +2581,7 @@ namespace VKIntox
         const int method = settingsManager.getDepthCaptureMethod();
         if (!logicalDevice || method < 1 || method > 2
             || !depthCaptureActive()
+            || logicalDevice->depthTransitionHold
             || logicalDevice->softDisabled.load(std::memory_order_acquire)
             || submitCount == 0 || !pSubmits)
         {
@@ -3385,7 +3407,7 @@ namespace VKIntox
             // consuming this flag, newly discovered depth is captured but the
             // effects keep using command buffers recorded without depth until
             // a full config reload (F10/Delete) occurs.
-            if (logicalDevice->depthReallocPending)
+            if (logicalDevice->depthReallocPending && !logicalDevice->depthTransitionHold)
             {
                 // let the input settle: a burst of transform clicks used to arm a
                 // rebuild per frame, each freeing and re-recording the whole chain
@@ -3429,7 +3451,7 @@ namespace VKIntox
             {
                 LogicalSwapchain* sc = scPtr.get();
                 if (!sc || sc->logicalDevice != logicalDevice || !sc->depthReallocPending
-                    || sc->commandBuffersEffect.empty())
+                    || sc->commandBuffersEffect.empty() || logicalDevice->depthTransitionHold)
                     continue;
 
                 if (!depthRebuildFencesReady(logicalDevice, sc))
@@ -4533,7 +4555,11 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
+                    // Never publish a copy while the depth path is held off for
+                    // a swapchain rebuild: the promoted depth may be from the
+                    // generation the app is tearing down.
+                    if (!logicalDevice->depthTransitionHold)
+                        logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else
@@ -4586,7 +4612,11 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
+                    // Never publish a copy while the depth path is held off for
+                    // a swapchain rebuild: the promoted depth may be from the
+                    // generation the app is tearing down.
+                    if (!logicalDevice->depthTransitionHold)
+                        logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else
@@ -4638,7 +4668,11 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
+                    // Never publish a copy while the depth path is held off for
+                    // a swapchain rebuild: the promoted depth may be from the
+                    // generation the app is tearing down.
+                    if (!logicalDevice->depthTransitionHold)
+                        logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else
@@ -4690,7 +4724,11 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
+                    // Never publish a copy while the depth path is held off for
+                    // a swapchain rebuild: the promoted depth may be from the
+                    // generation the app is tearing down.
+                    if (!logicalDevice->depthTransitionHold)
+                        logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else
@@ -4742,7 +4780,11 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    logicalDevice->depthCopy.publish(promoted, sourceLayout);
+                    // Never publish a copy while the depth path is held off for
+                    // a swapchain rebuild: the promoted depth may be from the
+                    // generation the app is tearing down.
+                    if (!logicalDevice->depthTransitionHold)
+                        logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
             }
             else

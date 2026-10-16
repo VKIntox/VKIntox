@@ -618,6 +618,20 @@ namespace VKIntox
                                                     VkCommandBuffer commandBuffer,
                                                     const DepthState& depthState);
 
+    // A depth observation recorded from a live render scope is what a
+    // transition hold waits for (see LogicalDevice::depthTransitionHold): the
+    // app has re-created and re-rendered its depth for the new swapchain, so
+    // the depth path can safely re-engage. Destroy-path updates deliberately
+    // do not release the hold.
+    static void releaseDepthTransitionHoldLocked(LogicalDevice* logicalDevice, const char* reason)
+    {
+        if (logicalDevice && logicalDevice->depthTransitionHold)
+        {
+            Logger::info(std::string("depth transition hold released by ") + (reason ? reason : "observation"));
+            logicalDevice->depthTransitionHold = false;
+        }
+    }
+
     bool endTrackedDepthScope(LogicalDevice* logicalDevice,
                               VkCommandBuffer commandBuffer,
                               const char* reason,
@@ -707,6 +721,7 @@ namespace VKIntox
 
         if (isQualifiedDepthCandidate(logicalDevice, scopeState))
         {
+            releaseDepthTransitionHoldLocked(logicalDevice, reason);
             updateDeviceDepthStateLocked(logicalDevice, scopeState.depthState, reason);
         }
         else
@@ -775,6 +790,7 @@ namespace VKIntox
             matchesPresentableSnapshotTargetExtent(scopeState.depthState, snapshotTarget);
         logicalDevice->bestDepthCandidate.drawCount = scopeState.drawCount;
 
+        releaseDepthTransitionHoldLocked(logicalDevice, reason);
         updateDeviceDepthStateLocked(logicalDevice, scopeState.depthState, reason);
         recordDepthResolveSnapshotForCommandBuffer(logicalDevice, commandBuffer, scopeState.depthState, &snapshotTarget);
     }
@@ -1515,6 +1531,13 @@ namespace VKIntox
     // Get depth state from logical device (returns null handles if no depth images)
     DepthState getDepthState(LogicalDevice* logicalDevice)
     {
+        // A swapchain rebuild starts a new frame generation: the previous
+        // generation's depth image may be destroyed at any moment, so report
+        // no depth at all until a candidate from the new generation has been
+        // observed and promoted.
+        if (logicalDevice->depthTransitionHold)
+            return {};
+
         if (logicalDevice->pinnedDepthImageView != VK_NULL_HANDLE)
         {
             auto it = logicalDevice->depthViewStates.find(logicalDevice->pinnedDepthImageView);
