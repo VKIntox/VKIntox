@@ -1000,8 +1000,8 @@ namespace VKIntox
     }
 
     // A depth transform can only be applied by the shader resolve: the transfer
-    // copy and the hardware MSAA resolve subpass cannot decode a channel or
-    // mirror the image. Any requested transform therefore forces the shader path.
+    // copy has no way to decode a channel or mirror the image. So any requested
+    // transform forces the shader path even for attachment-layout depth.
     static bool depthTransformRequested()
     {
         return settingsManager.getDepthInvert()
@@ -1014,15 +1014,12 @@ namespace VKIntox
     {
         LogicalDevice* logicalDevice = logicalSwapchain->logicalDevice;
         const bool isMsaa = depth.samples != VK_SAMPLE_COUNT_1_BIT;
-        // Transforms only exist in the shader path, so multisampled depth uses
-        // it too whenever one is requested; otherwise MSAA resolves through the
-        // hardware subpass.
-        const bool useShaderResolve = depthTransformRequested()
-            || (!isMsaa && depth.observedLayout == VK_IMAGE_LAYOUT_GENERAL);
+        const bool useShaderResolve = !isMsaa
+            && (depth.observedLayout == VK_IMAGE_LAYOUT_GENERAL || depthTransformRequested());
         // MSAA depth resolve via depth-stencil resolve subpass (core 1.2). Works
         // for both GENERAL and non-GENERAL layouts: when GENERAL, we barrier the
         // source to attachment-optimal before the resolve subpass and restore after.
-        const bool useMsaaResolve = isMsaa && !useShaderResolve
+        const bool useMsaaResolve = isMsaa
             && (logicalDevice->supportedDepthResolveModes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT);
         logicalSwapchain->depthResolveUsesShader = useShaderResolve;
         logicalSwapchain->depthResolveIsMsaa = useMsaaResolve;
@@ -1032,16 +1029,15 @@ namespace VKIntox
                       + " observedLayout=" + convertToString(depth.observedLayout)
                       + " samples=" + std::to_string(depth.samples)
                       + " transform=" + std::string(depthTransformRequested() ? "yes" : "no"));
-        // The subpass and copy paths keep the native depth format; both shader
-        // resolve variants land in R32_SFLOAT.
+        // The MSAA subpass and 1-sample transfer-copy paths keep the native depth
+        // format. Only the 1-sample+GENERAL shader fallback uses R32_SFLOAT.
         logicalSwapchain->depthResolveFormat = useShaderResolve ? VK_FORMAT_R32_SFLOAT : depth.format;
         logicalSwapchain->depthResolveExtent = {depth.extent.width, depth.extent.height, 1};
         logicalSwapchain->depthResolveSourceView = depth.imageView;
 
         // Decide the depth resolve mode (average preferred for MSAA depth).
-        // Feeds the resolve subpass and the shader variant's AVERAGE_MODE.
         VkResolveModeFlagBits chosenMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
-        if (isMsaa)
+        if (useMsaaResolve)
         {
             const int modePref = settingsManager.getDepthResolveMode();
             const bool wantsAverage =
@@ -1138,12 +1134,14 @@ namespace VKIntox
         logicalSwapchain->depthResolveRenderPass =
             createRenderPass(logicalDevice, logicalSwapchain->depthResolveFormat, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-        // Push constant size must match the GLSL DepthParams block: five int32
-        // (GLSL bool is 4 bytes, not C++ bool's 1).
+        // Set up push constant range for depth resolve shaders
+        // CRITICAL: Size must match the GLSL struct exactly!
+        // GLSL layout: int(4) + bool(4) + bool(4) = 12 bytes
+        // (GLSL bool is always int32/4 bytes, not C++ bool which is 1 byte)
         VkPushConstantRange depthPushConstantRange = {};
         depthPushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         depthPushConstantRange.offset = 0;
-        depthPushConstantRange.size = sizeof(int32_t) * 5;
+        depthPushConstantRange.size = sizeof(int32_t) * 5; // 20 bytes: depthMode + invertDepth + normalize + flipDepth + flopDepth
 
         logicalSwapchain->depthResolvePipelineLayout = createGraphicsPipelineLayout(
             logicalDevice,
@@ -1154,28 +1152,8 @@ namespace VKIntox
         VkShaderModule fragmentModule = VK_NULL_HANDLE;
         createShaderModule(logicalDevice, full_screen_triangle_vert, &vertexModule);
 
-        // Universal shader handles all depth channel modes via push constants.
-        // Multisampled depth uses the variant that fetches every sample.
-        createShaderModule(logicalDevice,
-                           isMsaa ? depth_resolve_universal_msaa_frag : depth_resolve_universal_frag,
-                           &fragmentModule);
-
-        // NUM_SAMPLES / AVERAGE_MODE specialization constants for the msaa
-        // variant (constant ids 0 and 1).
-        int32_t specConstants[2] = {static_cast<int32_t>(depth.samples),
-                                    chosenMode == VK_RESOLVE_MODE_AVERAGE_BIT ? 1 : 0};
-        VkSpecializationMapEntry specEntries[2] = {};
-        specEntries[0].constantID = 0;
-        specEntries[0].offset = 0;
-        specEntries[0].size = sizeof(int32_t);
-        specEntries[1].constantID = 1;
-        specEntries[1].offset = sizeof(int32_t);
-        specEntries[1].size = sizeof(int32_t);
-        VkSpecializationInfo specInfo = {};
-        specInfo.mapEntryCount = 2;
-        specInfo.pMapEntries = specEntries;
-        specInfo.dataSize = sizeof(specConstants);
-        specInfo.pData = specConstants;
+        // Universal shader handles all depth channel modes via push constants
+        createShaderModule(logicalDevice, depth_resolve_universal_frag, &fragmentModule);
 
         VkExtent2D resolveExtent2D = {logicalSwapchain->depthResolveExtent.width, logicalSwapchain->depthResolveExtent.height};
         logicalSwapchain->depthResolvePipeline = createGraphicsPipeline(logicalDevice,
@@ -1183,7 +1161,7 @@ namespace VKIntox
                                                                          nullptr,
                                                                          "main",
                                                                          fragmentModule,
-                                                                         isMsaa ? &specInfo : nullptr,
+                                                                         nullptr,
                                                                          "main",
                                                                          resolveExtent2D,
                                                                          logicalSwapchain->depthResolveRenderPass,
@@ -1425,11 +1403,9 @@ namespace VKIntox
         }
 
         const bool isMsaa = depth.samples != VK_SAMPLE_COUNT_1_BIT;
-        // Must mirror initializeDepthResolveLayout: transforms force the shader
-        // path for multisampled depth too, which disables the subpass resolve.
-        const bool useShaderResolve = depthTransformRequested()
-            || (!isMsaa && depth.observedLayout == VK_IMAGE_LAYOUT_GENERAL);
-        const bool wantsMsaaResolve = isMsaa && !useShaderResolve
+        const bool useShaderResolve = !isMsaa
+            && (depth.observedLayout == VK_IMAGE_LAYOUT_GENERAL || depthTransformRequested());
+        const bool wantsMsaaResolve = isMsaa
             && (logicalSwapchain->logicalDevice->supportedDepthResolveModes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT);
         const VkFormat wantedResolveFormat = useShaderResolve ? VK_FORMAT_R32_SFLOAT : depth.format;
 
