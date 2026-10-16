@@ -298,6 +298,10 @@ namespace VKIntox
         if (!logicalSwapchain)
             return VK_IMAGE_LAYOUT_UNDEFINED;
 
+        // the fused msaa pass leaves its raw intermediate in GENERAL
+        if (logicalSwapchain->depthResolveMsaaTransform)
+            return VK_IMAGE_LAYOUT_GENERAL;
+
         return logicalSwapchain->depthResolveUsesShader
             ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
             : getInternalDepthReadOnlyLayoutForDebug(logicalSwapchain->depthResolveFormat);
@@ -2212,6 +2216,8 @@ namespace VKIntox
             
             logicalSwapchain->depthResolvePerImage.resize(modifiedCreateInfo.minImageCount);
             for (auto& perImg : logicalSwapchain->depthResolvePerImage) perImg.image = VK_NULL_HANDLE;
+            logicalSwapchain->depthResolveTransformedPerImage.resize(modifiedCreateInfo.minImageCount);
+            for (auto& perImg : logicalSwapchain->depthResolveTransformedPerImage) perImg.image = VK_NULL_HANDLE;
             
             // Also clear device-level depth state when swapchain is recreated (Roblox OTA scenario)
             logicalDevice->activeDepthState = {};

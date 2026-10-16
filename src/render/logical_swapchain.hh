@@ -63,6 +63,13 @@ namespace VKIntox
         VkResolveModeFlagBits                depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
         VkRenderPass                         depthResolveMsaaRenderPass = VK_NULL_HANDLE;
         std::vector<VkFramebuffer>           depthResolveMsaaFramebuffers;
+        // msaa + transform: resolves into depthResolvePerImage, then a second
+        // subpass writes the transformed copy effects read into
+        // depthResolveTransformedPerImage — all inside one render pass.
+        bool                                 depthResolveMsaaTransform = false;
+        std::vector<DepthResolvePerImage>    depthResolveTransformedPerImage;
+        VkRenderPass                         depthResolveTransformRenderPass = VK_NULL_HANDLE;
+        std::vector<VkFramebuffer>           depthResolveTransformFramebuffers;
         VkSampler                            depthResolveSampler = VK_NULL_HANDLE;
         VkDescriptorSetLayout                depthResolveDescriptorSetLayout = VK_NULL_HANDLE;
         VkDescriptorPool                     depthResolveDescriptorPool = VK_NULL_HANDLE;

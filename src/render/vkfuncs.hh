@@ -50,6 +50,7 @@
     FORVKFUNC(CmdEndRenderPass2KHR) \
     FORVKFUNC(CmdEndRendering) \
     FORVKFUNC(CmdEndRenderingKHR) \
+    FORVKFUNC(CmdNextSubpass) \
     FORVKFUNC(CmdPipelineBarrier) \
     FORVKFUNC(CmdPushConstants) \
     FORVKFUNC(CmdSetScissor) \

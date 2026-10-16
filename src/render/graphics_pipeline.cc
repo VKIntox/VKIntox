@@ -31,7 +31,8 @@ namespace VKIntox
                                       VkExtent2D            extent,
                                       VkRenderPass          renderPass,
                                       VkPipelineLayout      pipelineLayout,
-                                      bool                  flip)
+                                      bool                  flip,
+                                      uint32_t              subpass)
     {
         VkResult result;
 
@@ -172,7 +173,7 @@ namespace VKIntox
         pipelineCreateInfo.pDynamicState       = &dynamicStateCreateInfo;
         pipelineCreateInfo.layout              = pipelineLayout;
         pipelineCreateInfo.renderPass          = renderPass;
-        pipelineCreateInfo.subpass             = 0;
+        pipelineCreateInfo.subpass             = subpass;
         pipelineCreateInfo.basePipelineHandle  = VK_NULL_HANDLE;
         pipelineCreateInfo.basePipelineIndex   = -1;
 

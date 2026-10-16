@@ -27,7 +27,8 @@ namespace VKIntox
                                       VkExtent2D            extent,
                                       VkRenderPass          renderPass,
                                       VkPipelineLayout      pipelineLayout,
-                                      bool                  flip = false);
+                                      bool                  flip = false,
+                                      uint32_t              subpass = 0);
 
 } // namespace VKIntox
 

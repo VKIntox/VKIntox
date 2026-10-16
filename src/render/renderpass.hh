@@ -26,6 +26,13 @@ namespace VKIntox
                                                   VkSampleCountFlagBits samples,
                                                   VkResolveModeFlagBits depthResolveMode,
                                                   VkImageLayout       resolveFinalLayout);
+
+    // msaa + transform: resolves into a 1-sample intermediate in subpass 0,
+    // then samples it through the transform pipeline in subpass 1.
+    VkRenderPass createDepthMsaaTransformRenderPass(LogicalDevice*         logicalDevice,
+                                                    VkFormat               depthFormat,
+                                                    VkSampleCountFlagBits  samples,
+                                                    VkResolveModeFlagBits  depthResolveMode);
 }
 
 #endif // RENDERPASS_HPP_INCLUDED
