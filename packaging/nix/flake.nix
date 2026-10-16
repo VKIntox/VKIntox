@@ -48,6 +48,7 @@
               spirv-headers
               libx11
               libxi
+              libxtst
               wayland
               wayland-protocols
               libxkbcommon

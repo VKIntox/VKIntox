@@ -50,6 +50,7 @@ jobs:
             libvulkan-dev \
             libx11-dev \
             libxi-dev \
+            libxtst-dev \
             libwayland-dev \
             libxkbcommon-dev \
             meson \
