@@ -618,6 +618,31 @@ namespace VKIntox
                                                     VkCommandBuffer commandBuffer,
                                                     const DepthState& depthState);
 
+    void armDepthTransitionHoldLocked(LogicalDevice* logicalDevice, const char* reason)
+    {
+        if (!logicalDevice)
+            return;
+
+        // Everything below belongs to the generation being replaced. Scopes
+        // recorded before this point must not promote (a stale promotion would
+        // release the hold against the dying depth) and a published-but-
+        // unsubmitted copy must not ride into the new generation: both are how
+        // the GPU ended up executing against a destroyed image, with the
+        // context switch timing out (NVRM Xid 109) and every later submit
+        // returning VK_ERROR_DEVICE_LOST.
+        logicalDevice->commandBufferDepthStates.clear();
+        logicalDevice->pendingTransferLinkedDepthScopes.clear();
+        logicalDevice->bestDepthCandidate = {};
+        logicalDevice->depthCopy.discardPending();
+
+        if (!logicalDevice->depthTransitionHold)
+        {
+            logicalDevice->depthTransitionHold = true;
+            Logger::info(std::string("depth transition hold: ") + (reason ? reason : "depth generation replaced")
+                         + ", waiting for a fresh depth observation");
+        }
+    }
+
     // A depth observation recorded from a live render scope is what a
     // transition hold waits for (see LogicalDevice::depthTransitionHold): the
     // app has re-created and re-rendered its depth for the new swapchain, so

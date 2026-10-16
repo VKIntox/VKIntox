@@ -150,6 +150,15 @@ namespace VKIntox
     void ensurePersistentDepthStorage(LogicalDevice* logicalDevice, VkFormat format, const VkExtent3D& extent);
     void ensureDepthResolveResources(LogicalSwapchain* logicalSwapchain, const DepthState& depth);
     bool depthMatchesSwapchainExtent(const DepthState& depth, const LogicalSwapchain* sc);
+    // Arms the depth transition hold (see LogicalDevice::depthTransitionHold):
+    // wipes scope tracking, the best candidate and any pending copy so nothing
+    // references a dying depth generation, and blocks the resolve/rebuild paths
+    // until a fresh observation from the new generation releases it. Used by
+    // swapchain rebuilds and by destruction of the active depth image/view —
+    // Roblox recreates its scene targets mid-generation, and both runners die
+    // on a stale reference unless the depth path re-engages from scratch.
+    // Callers must hold globalLock.
+    void armDepthTransitionHoldLocked(LogicalDevice* logicalDevice, const char* reason);
     // Extent of a live, non-passthrough swapchain for this device (the window
     // size), for UI defaults such as the manual depth pin. Callers must hold
     // globalLock.
