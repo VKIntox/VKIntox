@@ -38,6 +38,10 @@ namespace VKIntox
 #include "depth_resolve_universal_ms.frag.h"
     };
 
+    const std::vector<uint32_t> depth_resolve_universal_msaa_frag = {
+#include "depth_resolve_universal_msaa.frag.h"
+    };
+
     const std::vector<uint32_t> full_screen_triangle_vert = {
 #include "full_screen_triangle.vert.h"
     };

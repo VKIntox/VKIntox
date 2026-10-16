@@ -13,11 +13,14 @@ layout(location = 0) out float resolvedDepth;
 layout(constant_id = 0) const int NUM_SAMPLES = 1;
 layout(constant_id = 1) const int AVERAGE_MODE = 1;  // 1 = average, 0 = sample 0
 
-// Push constants for runtime-configurable depth handling
+// Push constants for runtime-configurable depth handling. Layout matches the
+// sampler variant so one c++ push serves both pipelines.
 layout(push_constant) uniform DepthParams {
     int  depthMode;      // Source channel/mode selection
     bool invertDepth;    // Invert after reading: depth = 1.0 - depth
     bool normalize;      // Normalize to [0,1] range if needed
+    bool flipDepth;      // Mirror sampling vertically (uv.y -> 1 - uv.y)
+    bool flopDepth;      // Mirror sampling horizontally (uv.x -> 1 - uv.x)
 } depthParams;
 
 float extractDepth(vec4 texel)
@@ -74,7 +77,16 @@ float extractDepth(vec4 texel)
 
 void main()
 {
+    ivec2 size = textureSize(depthTexture);
     ivec2 coords = ivec2(gl_FragCoord.xy);
+
+    // mirror the source texels before fetching, matching the sampler variant's
+    // uv mirror so toggles need no pipeline rebuild.
+    if (depthParams.flopDepth)
+        coords.x = size.x - 1 - coords.x;
+    if (depthParams.flipDepth)
+        coords.y = size.y - 1 - coords.y;
+
     float depth;
 
     if (AVERAGE_MODE == 1)
