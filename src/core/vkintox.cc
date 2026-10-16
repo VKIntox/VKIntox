@@ -2073,6 +2073,18 @@ namespace VKIntox
         deviceMap.erase(GetKey(device));
     }
 
+    // Extent of a live, non-passthrough swapchain for this device, i.e. the
+    // window size the layer is actually presenting to. Used by the overlay to
+    // default a fresh manual depth pin to the matching buffer; callers must
+    // hold globalLock.
+    VkExtent2D currentSwapchainExtentLocked(LogicalDevice* logicalDevice)
+    {
+        for (const auto& [_, sc] : swapchainMap)
+            if (sc && sc->logicalDevice == logicalDevice && !sc->passthrough && sc->imageCount > 0)
+                return sc->imageExtent;
+        return VkExtent2D{0, 0};
+    }
+
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_CreateSwapchainKHR(VkDevice                        device,
                                                                const VkSwapchainCreateInfoKHR* pCreateInfo,
                                                                const VkAllocationCallbacks*    pAllocator,

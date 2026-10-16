@@ -150,6 +150,10 @@ namespace VKIntox
     void ensurePersistentDepthStorage(LogicalDevice* logicalDevice, VkFormat format, const VkExtent3D& extent);
     void ensureDepthResolveResources(LogicalSwapchain* logicalSwapchain, const DepthState& depth);
     bool depthMatchesSwapchainExtent(const DepthState& depth, const LogicalSwapchain* sc);
+    // Extent of a live, non-passthrough swapchain for this device (the window
+    // size), for UI defaults such as the manual depth pin. Callers must hold
+    // globalLock.
+    VkExtent2D currentSwapchainExtentLocked(LogicalDevice* logicalDevice);
     void armDepthRetryLocked(LogicalDevice* logicalDevice, const LogicalSwapchain* sc, const char* reason);
     bool depthRetryDueLocked(LogicalDevice* logicalDevice);
     void scheduleDepthRetryLocked(LogicalDevice* logicalDevice, bool fastPoll = false);

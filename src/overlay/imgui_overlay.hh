@@ -73,6 +73,7 @@ namespace VKIntox
     {
         DepthCandidateInfo active;              // Currently active depth buffer (effective: pinned or auto)
         std::vector<DepthCandidateInfo> candidates; // All tracked candidates
+        VkExtent2D          swapchainExtent = {0, 0}; // Current window size, for pin defaults
         VkResolveModeFlags supportedResolveModes = 0; // HW support (for UI greying)
         bool                depthCaptureEnabled = false;
         bool                depthResolveIsMsaa = false;

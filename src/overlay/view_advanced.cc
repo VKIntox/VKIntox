@@ -34,6 +34,23 @@ namespace VKIntox
             settingsManager.save();
         }
     }
+
+    // Default a fresh manual depth pin to the window-sized buffer. Pinning the
+    // busiest candidate instead left depth effects sampling a wrong-sized
+    // image — usually bypassed entirely until the pin was corrected by hand,
+    // which reads as "pinning does not work". Falls back to the swapchain-
+    // linked candidate, then to the busiest one.
+    static VkImageView defaultPinCandidateForSwapchain(const DepthInfo& info)
+    {
+        for (const auto& c : info.candidates)
+            if (c.extent.width == info.swapchainExtent.width
+                && c.extent.height == info.swapchainExtent.height)
+                return c.imageView;
+        for (const auto& c : info.candidates)
+            if (c.hasPresentableSnapshotTarget)
+                return c.imageView;
+        return info.candidates.empty() ? VK_NULL_HANDLE : info.candidates.front().imageView;
+    }
     // Convert a VkFormat to a short human-readable string for the UI.
     static const char* depthFormatName(VkFormat format)
     {
@@ -89,6 +106,7 @@ namespace VKIntox
 
         depthInfo.supportedResolveModes = logicalDevice->supportedDepthResolveModes;
         depthInfo.depthCaptureEnabled   = settingsManager.getDepthCapture();
+        depthInfo.swapchainExtent       = currentSwapchainExtentLocked(logicalDevice);
 
         deviceInfo.gpuName      = logicalDevice->gpuName;
         deviceInfo.gpuDriverInfo = logicalDevice->gpuDriverInfo;
@@ -479,7 +497,7 @@ namespace VKIntox
             const char* modes[] = { "Auto", "Manual pin" };
             const char* hints[] = {
                 "Auto promotes the buffer with the most draws, or a swapchain-linked one.",
-                "Manual pin lets you pick a depth buffer manually."
+                "Manual pin starts from the buffer matching the window size; pick another from the list."
             };
             int mode = depthInfo.depthIsPinned ? 1 : 0;
             int hovered_segment = -1;
@@ -494,7 +512,7 @@ namespace VKIntox
                 {
                     // unbiassed: the first reported buffer, so the switch is
                     // immediate even before anything has been drawn this frame.
-                    depthPinPendingView = depthInfo.candidates.front().imageView;
+                    depthPinPendingView = defaultPinCandidateForSwapchain(depthInfo);
                 }
                 else
                 {
@@ -650,7 +668,7 @@ namespace VKIntox
             const char* modes[] = { "Auto", "Manual pin" };
             const char* hints[] = {
                 "Auto promotes the buffer with the most draws, or a swapchain-linked one.",
-                "Manual pin lets you pick a depth buffer manually."
+                "Manual pin starts from the buffer matching the window size; pick another from the list."
             };
             int mode = depthInfo.depthIsPinned ? 1 : 0;
             int hovered_segment = -1;
@@ -663,7 +681,7 @@ namespace VKIntox
                 }
                 else if (!depthInfo.candidates.empty())
                 {
-                    depthPinPendingView = depthInfo.candidates.front().imageView;
+                    depthPinPendingView = defaultPinCandidateForSwapchain(depthInfo);
                 }
             }
             if (hovered_segment >= 0)
