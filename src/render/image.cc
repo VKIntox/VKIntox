@@ -2,6 +2,7 @@
 #include "memory.hh"
 #include "buffer.hh"
 #include "format.hh"
+#include "vk_handle.hh"
 
 namespace VKIntox
 {
@@ -212,7 +213,22 @@ namespace VKIntox
         submitInfo.pCommandBuffers    = &commandBuffer;
 
         logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &submitInfo, VK_NULL_HANDLE);
-        logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
+        if (!waitQueueIdleBounded(logicalDevice, "image upload sync"))
+        {
+            // the upload may still be reading these; a later idle releases them
+            VkDevice device = logicalDevice->device;
+            VkCommandPool pool = logicalDevice->commandPool;
+            auto vkd = logicalDevice->vkd;
+            VkCommandBuffer cb = commandBuffer;
+            VkBuffer buf = stagingBuffer;
+            VkDeviceMemory mem = stagingMemory;
+            DeferredDestroyQueue::instance().push(DestroyPhase::Resource, [vkd, device, pool, cb, buf, mem] {
+                vkd.FreeCommandBuffers(device, pool, 1, &cb);
+                vkd.DestroyBuffer(device, buf, nullptr);
+                vkd.FreeMemory(device, mem, nullptr);
+            });
+            return;
+        }
 
         logicalDevice->vkd.FreeCommandBuffers(logicalDevice->device, logicalDevice->commandPool, 1, &commandBuffer);
         logicalDevice->vkd.FreeMemory(logicalDevice->device, stagingMemory, nullptr);
@@ -300,7 +316,18 @@ namespace VKIntox
         submitInfo.pCommandBuffers    = &commandBuffer;
 
         logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &submitInfo, VK_NULL_HANDLE);
-        logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
+        if (!waitQueueIdleBounded(logicalDevice, "image layout sync"))
+        {
+            // the transition may still be pending; free the buffer behind a later idle
+            VkDevice device = logicalDevice->device;
+            VkCommandPool pool = logicalDevice->commandPool;
+            auto vkd = logicalDevice->vkd;
+            VkCommandBuffer cb = commandBuffer;
+            DeferredDestroyQueue::instance().push(DestroyPhase::Resource, [vkd, device, pool, cb] {
+                vkd.FreeCommandBuffers(device, pool, 1, &cb);
+            });
+            return;
+        }
 
         logicalDevice->vkd.FreeCommandBuffers(logicalDevice->device, logicalDevice->commandPool, 1, &commandBuffer);
     }
