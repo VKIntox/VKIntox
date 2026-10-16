@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 #include <chrono>
+#include <thread>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -4140,6 +4141,37 @@ namespace VKIntox
         return result;
     }
 
+    // In-flight layer submissions can still be reading a depth handle the app
+    // is destroying; destroy-while-read is the freeze at target recreation.
+    // Give them a bounded window, then let the app's teardown proceed.
+    static void drainLayerSubmissionsForDestroyLocked(LogicalDevice* logicalDevice, uint32_t timeoutMs)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+        bool pending = true;
+        while (pending && std::chrono::steady_clock::now() < deadline)
+        {
+            pending = false;
+            for (auto& [handle, sc] : swapchainMap)
+            {
+                if (!sc || sc->logicalDevice != logicalDevice)
+                    continue;
+                for (size_t i = 0; i < sc->effectSubmitFences.size() && i < sc->effectSubmitFenceUsed.size(); i++)
+                {
+                    if (!sc->effectSubmitFenceUsed[i] || sc->effectSubmitFences[i] == VK_NULL_HANDLE)
+                        continue;
+                    if (logicalDevice->vkd.GetFenceStatus(logicalDevice->device, sc->effectSubmitFences[i]) != VK_SUCCESS)
+                        pending = true;
+                }
+            }
+            if (pending)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        if (pending)
+            Logger::warn("depth destroy sync: layer submissions were still in flight after "
+                         + std::to_string(timeoutMs) + "ms; destroying depth handles anyway");
+    }
+
     VKAPI_ATTR void VKAPI_CALL VKIntox_DestroyImageView(VkDevice device, VkImageView imageView, const VkAllocationCallbacks* pAllocator)
     {
         if (!imageView)
@@ -4160,6 +4192,10 @@ namespace VKIntox
         LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
         if (logicalDevice == nullptr)
             return;
+        // a view the layer baked into its own framebuffers may still be read by
+        // in-flight submissions; drain them before letting it die
+        const bool viewTrackedByLayer = logicalDevice->snapshotTargetViewStates.count(imageView) != 0
+            || logicalDevice->depthViewStates.count(imageView) != 0;
         logicalDevice->snapshotTargetViewStates.erase(imageView);
         logicalDevice->depthViewStates.erase(imageView);
         clearTrackedDepthScopesLocked(logicalDevice, [imageView](const DepthState& state) { return state.imageView == imageView; });
@@ -4191,6 +4227,9 @@ namespace VKIntox
             Logger::debug("DestroyImageView: clearing stale pinned depth view");
             logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
         }
+
+        if (viewTrackedByLayer)
+            drainLayerSubmissionsForDestroyLocked(logicalDevice, 2000);
 
         logicalDevice->vkd.DestroyImageView(device, imageView, pAllocator);
     }
@@ -5320,6 +5359,9 @@ namespace VKIntox
         auto it = std::find(logicalDevice->depthImages.begin(), logicalDevice->depthImages.end(), image);
         if (it != logicalDevice->depthImages.end())
         {
+            // before any of this branch's destroys: the layer's own sampled view
+            // and the app's image can both still be read by in-flight work
+            drainLayerSubmissionsForDestroyLocked(logicalDevice, 2000);
             size_t i = std::distance(logicalDevice->depthImages.begin(), it);
 
             // Remove from tracking lists
