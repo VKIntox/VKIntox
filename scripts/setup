@@ -577,6 +577,12 @@ is_font_file() {
     esac
 }
 
+# an installed face is never refetched: resolving the download urls would cost
+# a network round trip per family on every run
+font_installed() {
+    [[ -s "$APP_CONFIG/font/$1" ]] && is_font_file "$APP_CONFIG/font/$1"
+}
+
 # <installed name> <url>...  - the first url that comes back as a font wins
 seed_google_font() {
     local dest="$1"
@@ -622,13 +628,14 @@ if version_ge "$SELECTED_NUMERIC" "0.2.0" &&
 fi
 
 if [[ "$use_variable_fonts" == true ]]; then
-    seed_google_font RobotoFlex.ttf "$(repo_font_url robotoflex)" || true
-    seed_google_font GoogleSansFlex.ttf "$(repo_font_url googlesansflex)" \
+    font_installed RobotoFlex.ttf || seed_google_font RobotoFlex.ttf "$(repo_font_url robotoflex)" || true
+    font_installed GoogleSansFlex.ttf || seed_google_font GoogleSansFlex.ttf "$(repo_font_url googlesansflex)" \
         "$(google_font_url "Google+Sans+Flex")" || true
-    seed_google_font MaterialSymbolsRounded.ttf "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
-    seed_google_font MaterialSymbolsRoundedBold.ttf \
-        "$(google_font_url "Material+Symbols+Rounded" "wght@700")" \
-        "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
+    font_installed MaterialSymbolsRounded.ttf || seed_google_font MaterialSymbolsRounded.ttf "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
+    font_installed MaterialSymbolsRoundedBold.ttf ||
+        seed_google_font MaterialSymbolsRoundedBold.ttf \
+            "$(google_font_url "Material+Symbols+Rounded" "wght@700")" \
+            "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
     [[ -s "$APP_CONFIG/font/MaterialSymbolsRoundedBold.ttf" ]] ||
         cp "$APP_CONFIG/font/MaterialSymbolsRounded.ttf" "$APP_CONFIG/font/MaterialSymbolsRoundedBold.ttf" 2>/dev/null || true
     seed_google_license robotoflex LICENSE-SIL-OFL-1.1.txt
@@ -637,9 +644,9 @@ else
     # static weights: font.ttf carries the body, the named files carry the steps a
     # pre-Flex build looks for by name. these come from the css endpoint, which is
     # where Google serves the static instances of Google Sans.
-    seed_google_font GoogleSans-Medium.ttf "$(google_font_url "Google+Sans" "wght@500")" || true
-    seed_google_font GoogleSans-Regular.ttf "$(google_font_url "Google+Sans" "wght@400")" || true
-    seed_google_font GoogleSans-Bold.ttf "$(google_font_url "Google+Sans" "wght@700")" || true
+    font_installed GoogleSans-Medium.ttf || seed_google_font GoogleSans-Medium.ttf "$(google_font_url "Google+Sans" "wght@500")" || true
+    font_installed GoogleSans-Regular.ttf || seed_google_font GoogleSans-Regular.ttf "$(google_font_url "Google+Sans" "wght@400")" || true
+    font_installed GoogleSans-Bold.ttf || seed_google_font GoogleSans-Bold.ttf "$(google_font_url "Google+Sans" "wght@700")" || true
     # Google Sans ships four steps and no 800, so the extra-bold face is the bold
     # file under the name a pre-Flex build looks for.
     cp "$APP_CONFIG/font/GoogleSans-Bold.ttf" "$APP_CONFIG/font/GoogleSans-ExtraBold.ttf" 2>/dev/null || true

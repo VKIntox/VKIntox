@@ -303,6 +303,12 @@ is_font_file() {
     esac
 }
 
+# an installed face is never refetched: resolving the download urls would cost
+# a network round trip per family on every run
+font_installed() {
+    [[ -s "$FONT_DIR/$1" ]] && is_font_file "$FONT_DIR/$1"
+}
+
 # <installed name> <url>...  - the first url that comes back as a font wins
 fetch_font() {
     local dest="$1"
@@ -328,11 +334,13 @@ fetch_license() {
     return 0
 }
 
-fetch_font RobotoFlex.ttf "$(repo_font_url robotoflex)" || true
-fetch_font GoogleSansFlex.ttf "$(repo_font_url googlesansflex)" "$(google_font_url "Google+Sans+Flex")" || true
-fetch_font MaterialSymbolsRounded.ttf "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
-fetch_font MaterialSymbolsRoundedBold.ttf "$(google_font_url "Material+Symbols+Rounded" "wght@700")" \
-    "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
+font_installed RobotoFlex.ttf || fetch_font RobotoFlex.ttf "$(repo_font_url robotoflex)" || true
+font_installed GoogleSansFlex.ttf || fetch_font GoogleSansFlex.ttf "$(repo_font_url googlesansflex)" \
+    "$(google_font_url "Google+Sans+Flex")" || true
+font_installed MaterialSymbolsRounded.ttf || fetch_font MaterialSymbolsRounded.ttf "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
+font_installed MaterialSymbolsRoundedBold.ttf ||
+    fetch_font MaterialSymbolsRoundedBold.ttf "$(google_font_url "Material+Symbols+Rounded" "wght@700")" \
+        "$(google_font_url "Material+Symbols+Rounded" "wght@400")" || true
 [[ -s "$FONT_DIR/MaterialSymbolsRoundedBold.ttf" ]] ||
     cp "$FONT_DIR/MaterialSymbolsRounded.ttf" "$FONT_DIR/MaterialSymbolsRoundedBold.ttf" 2>/dev/null || true
 fetch_license robotoflex LICENSE-SIL-OFL-1.1.txt
