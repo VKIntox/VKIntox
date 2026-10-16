@@ -311,18 +311,21 @@ esac
 # Every published build lands in the one rolling flatpak-build release, with the
 # version and build date encoded in the asset name, so the version list is
 # whatever has actually been built instead of a list someone has to maintain.
-# Newest build per version wins, stable builds are listed before experimental
-# ones, and a version counts as experimental only when it ends in -experimental.
+# Newest plain build per version wins, a plain release outranks -rc/-beta labels
+# of the same version, stable builds are listed before experimental ones, and a
+# version counts as experimental only when it ends in -experimental.
 jq -r '
     def vkey: sub("^v"; "") | sub("[-+].*$"; "") | split(".") | map(tonumber? // 0);
+    # v0.2.0-rc1 and v0.2.0 share a key; the plain release has to win the tie
+    def plainrank: if (.v | sub("^v"; "") | test("^[0-9]+(\\.[0-9]+)*$")) then 1 else 0 end;
     [.assets[]
      | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$"))
      | { v: (.name | sub("^libvkintox_flatpak_"; "") | sub("_[0-9]{8}\\.so$"; "")),
          d: (.name | capture("_(?<d>[0-9]{8})\\.so$").d),
          created: .created_at,
          url: .browser_download_url }]
-    | (map(select(.v | endswith("-experimental") | not)) | sort_by([(.v | vkey), .d]) | reverse) as $stable
-    | (map(select(.v | endswith("-experimental")))       | sort_by([(.v | vkey), .d]) | reverse) as $experimental
+    | (map(select(.v | endswith("-experimental") | not)) | sort_by([(.v | vkey), plainrank, .d]) | reverse) as $stable
+    | (map(select(.v | endswith("-experimental")))       | sort_by([(.v | vkey), plainrank, .d]) | reverse) as $experimental
     | ($stable + $experimental)[]
     | "\(.v)\t\(.d)\t\(.url)"
 ' "$TMP_DIR/release.json" >"$TMP_DIR/versions.tsv"
@@ -422,13 +425,15 @@ done
 
 select_menu "pick installation method:" "fetch latest" "choose manually"
 if (( SELECTED == 0 )); then
-    # prefer the newest stable build, so an actively-built experimental branch
-    # can never become the default; only fall back to any build if none is stable
+    # highest version wins, a plain release beats its -rc/-beta builds, and an
+    # experimental branch is only the default when nothing else exists
     ASSET_URL=$(jq -er '
+        def vkey: .name | sub("^libvkintox_flatpak_"; "") | sub("_[0-9]{8}\\.so$"; "") | sub("^v"; "") | sub("[-+].*$"; "") | split(".") | map(tonumber? // 0);
+        def plainrank: if (.name | sub("^libvkintox_flatpak_"; "") | sub("_[0-9]{8}\\.so$"; "") | sub("^v"; "") | test("^[0-9]+(\\.[0-9]+)*$")) then 1 else 0 end;
         [ .assets[] | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$")) ]
         | (map(select(.name | contains("-experimental") | not))) as $stable
         | (if ($stable | length) > 0 then $stable else . end)
-        | sort_by(.created_at) | last
+        | sort_by([vkey, plainrank, .created_at]) | last
         | .browser_download_url // empty
     ' "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
     SELECTED_VERSION_NAME="$(basename "$ASSET_URL" | sed -E 's/^libvkintox_flatpak_//; s/_[0-9]{8}\.so$//')"
