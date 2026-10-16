@@ -142,11 +142,12 @@ namespace VKIntox
             && target.imageIndex < target.logicalSwapchain->imageCount;
     }
 
+    static bool extentMatchesSwapchainWindow(const DepthState& depth, const LogicalSwapchain* logicalSwapchain);
+
     static bool matchesPresentableSnapshotTargetExtent(const DepthState& depth, const DepthSnapshotTarget& target)
     {
         return hasPresentableSnapshotTarget(target)
-            && depth.extent.width == target.logicalSwapchain->imageExtent.width
-            && depth.extent.height == target.logicalSwapchain->imageExtent.height;
+            && extentMatchesSwapchainWindow(depth, target.logicalSwapchain);
     }
 
     // A depth candidate must never be one of the application's real swapchain
@@ -174,11 +175,40 @@ namespace VKIntox
         return false;
     }
 
+    // The game's window-sized depth image, allowing for window chrome: Roblox
+    // (through Rosemary) sometimes draws a titlebar and sometimes does not, so
+    // its real depth is either the exact swapchain extent or that extent minus
+    // a titlebar-sized strip. Anything that differs by more than a chrome-sized
+    // amount on either axis (shadow maps, offscreen passes, scaled render
+    // targets) is not the window depth. Exact matches always win.
+    static bool extentMatchesSwapchainWindow(const DepthState& depth, const LogicalSwapchain* logicalSwapchain)
+    {
+        if (!logicalSwapchain || !hasDepthState(depth))
+            return false;
+
+        const uint32_t windowWidth  = logicalSwapchain->imageExtent.width;
+        const uint32_t windowHeight = logicalSwapchain->imageExtent.height;
+        if (windowWidth == 0 || windowHeight == 0)
+            return false;
+
+        if (depth.extent.width == windowWidth && depth.extent.height == windowHeight)
+            return true;
+
+        // chrome tolerance, either direction: the game may render the strip
+        // under the chrome, or up to the chrome, in both axes
+        constexpr int64_t kChromeTolerancePx = 128;
+        const int64_t dw = static_cast<int64_t>(depth.extent.width)  - static_cast<int64_t>(windowWidth);
+        const int64_t dh = static_cast<int64_t>(depth.extent.height) - static_cast<int64_t>(windowHeight);
+        return dw >= -kChromeTolerancePx && dw <= kChromeTolerancePx
+            && dh >= -kChromeTolerancePx && dh <= kChromeTolerancePx;
+    }
+
     static bool matchesAnySwapchainExtent(LogicalDevice* logicalDevice, const DepthState& depth)
     {
         if (!hasDepthState(depth))
             return false;
 
+        // exact matches win over chrome-sized ones
         for (auto& [_, logicalSwapchain] : swapchainMap)
         {
             if (!logicalSwapchain || logicalSwapchain->logicalDevice != logicalDevice)
@@ -186,6 +216,15 @@ namespace VKIntox
 
             if (depth.extent.width == logicalSwapchain->imageExtent.width
                 && depth.extent.height == logicalSwapchain->imageExtent.height)
+                return true;
+        }
+
+        for (auto& [_, logicalSwapchain] : swapchainMap)
+        {
+            if (!logicalSwapchain || logicalSwapchain->logicalDevice != logicalDevice)
+                continue;
+
+            if (extentMatchesSwapchainWindow(depth, logicalSwapchain.get()))
                 return true;
         }
 
@@ -221,10 +260,9 @@ namespace VKIntox
             return false;
         }
 
-        // Exact swapchain extent is required.  Matching the window size is the
-        // only automatic qualification rule; shadow maps and other depth
-        // attachments remain candidates for bookkeeping but are never made
-        // active depth state.
+        // The window (exact or chrome-inset) extent is the only automatic
+        // qualification rule; shadow maps and other depth attachments remain
+        // candidates for bookkeeping but are never made active depth state.
         return matchesAnySwapchainExtent(logicalDevice, depth);
     }
 
@@ -241,8 +279,7 @@ namespace VKIntox
         if (!isDepthStencilAttachmentFormat(depth.format))
             return false;
 
-        if (depth.extent.width != logicalSwapchain->imageExtent.width
-            || depth.extent.height != logicalSwapchain->imageExtent.height)
+        if (!extentMatchesSwapchainWindow(depth, logicalSwapchain))
             return false;
 
         return validateDepthStateForResolve(logicalDevice, depth);
@@ -1391,10 +1428,7 @@ namespace VKIntox
 
     bool depthMatchesSwapchainExtent(const DepthState& depth, const LogicalSwapchain* sc)
     {
-        return sc != nullptr
-            && hasDepthState(depth)
-            && depth.extent.width == sc->imageExtent.width
-            && depth.extent.height == sc->imageExtent.height;
+        return sc != nullptr && extentMatchesSwapchainWindow(depth, sc);
     }
 
     void armDepthRetryLocked(LogicalDevice* logicalDevice, const LogicalSwapchain* sc, const char* reason)

@@ -3533,7 +3533,7 @@ namespace VKIntox
                         }
                         else
                         {
-                            Logger::debug("depth retry: no exact swapchain-sized depth buffer yet");
+                            Logger::debug("depth retry: no swapchain-sized depth buffer yet (exact or chrome-inset)");
                             scheduleDepthRetryLocked(logicalDevice, false);
                         }
                     }
