@@ -50,6 +50,9 @@ namespace VKIntox
         std::shared_ptr<Effect>              defaultTransfer;
         std::vector<VkDeviceMemory>          fakeImageMemories;
         std::vector<DepthResolvePerImage>       depthResolvePerImage;
+        // msaa + transform: the hardware resolve writes depthResolvePerImage,
+        // then a shader pass lands the transformed copy here for the effects.
+        std::vector<DepthResolvePerImage>    depthResolveTransformedPerImage;
         VkFormat                             depthResolveFormat = VK_FORMAT_UNDEFINED;
         VkExtent3D                           depthResolveExtent = {0, 0, 1};
         VkImageView                          depthResolveSourceView = VK_NULL_HANDLE;  // Track which view we resolved for
@@ -59,6 +62,7 @@ namespace VKIntox
         // a depth-stencil resolve subpass (VkSubpassDescriptionDepthStencilResolve)
         // before effects sample it. The resolve target is depthResolvePerImage.
         bool                                 depthResolveIsMsaa = false;
+        bool                                 depthResolveMsaaChain = false;
         VkSampleCountFlagBits                depthResolveSourceSamples = VK_SAMPLE_COUNT_1_BIT;
         VkResolveModeFlagBits                depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
         VkRenderPass                         depthResolveMsaaRenderPass = VK_NULL_HANDLE;
