@@ -2844,26 +2844,17 @@ namespace VKIntox
                           + " srcLayout=" + std::to_string(static_cast<uint32_t>(sourceLayout))
                           + (isMsaa ? " [MSAA resolve]" : " [copy]"));
 
-            // Inject copyCB into the last submit's command buffer list
-            const VkSubmitInfo& lastSubmit = pSubmits[submitCount - 1];
-            std::vector<VkCommandBuffer> combinedCmdBufs(lastSubmit.pCommandBuffers, lastSubmit.pCommandBuffers + lastSubmit.commandBufferCount);
-            combinedCmdBufs.push_back(copyCB);
-
-            VkSubmitInfo modifiedLastSubmit = lastSubmit;
-            modifiedLastSubmit.commandBufferCount = static_cast<uint32_t>(combinedCmdBufs.size());
-            modifiedLastSubmit.pCommandBuffers = combinedCmdBufs.data();
-
-            // Submit — no splitting, just replace the last submit. The slot fence
-            // is signaled on completion so the slot can be safely reused.
-            if (submitCount <= 1)
+            // app submits go through untouched, fence included. the copy rides
+            // its own submit so an app-side fence wait can never be starved,
+            // and its barriers still order it after the frame's depth writes.
+            submitResult = logicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            if (submitResult == VK_SUCCESS)
             {
-                submitResult = logicalDevice->vkd.QueueSubmit(queue, 1, &modifiedLastSubmit, slotFence);
-            }
-            else
-            {
-                submitResult = logicalDevice->vkd.QueueSubmit(queue, submitCount - 1, pSubmits, VK_NULL_HANDLE);
-                if (submitResult == VK_SUCCESS)
-                    submitResult = logicalDevice->vkd.QueueSubmit(queue, 1, &modifiedLastSubmit, slotFence);
+                VkSubmitInfo copySubmitInfo = {};
+                copySubmitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                copySubmitInfo.commandBufferCount = 1;
+                copySubmitInfo.pCommandBuffers = &copyCB;
+                submitResult = logicalDevice->vkd.QueueSubmit(queue, 1, &copySubmitInfo, slotFence);
             }
         });
 
