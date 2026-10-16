@@ -38,19 +38,33 @@ namespace VKIntox
     // Default a fresh manual depth pin to the window-sized buffer. Pinning the
     // busiest candidate instead left depth effects sampling a wrong-sized
     // image — usually bypassed entirely until the pin was corrected by hand,
-    // which reads as "pinning does not work". Falls back to the swapchain-
-    // linked candidate, then to the busiest one.
+    // which reads as "pinning does not work". The game's real depth is either
+    // the exact swapchain extent or that extent minus a client-drawn titlebar
+    // strip, so both count as window-sized. Falls back to the swapchain-linked
+    // candidate, then to the busiest one.
     static VkImageView defaultPinCandidateForSwapchain(const DepthInfo& info)
     {
+        constexpr int64_t kChromeTolerancePx = 128;
+        auto windowSized = [&](const DepthCandidateInfo& c) {
+            const int64_t dw = static_cast<int64_t>(c.extent.width)  - static_cast<int64_t>(info.swapchainExtent.width);
+            const int64_t dh = static_cast<int64_t>(c.extent.height) - static_cast<int64_t>(info.swapchainExtent.height);
+            return dw >= -kChromeTolerancePx && dw <= kChromeTolerancePx
+                && dh >= -kChromeTolerancePx && dh <= kChromeTolerancePx;
+        };
+
         for (const auto& c : info.candidates)
             if (c.extent.width == info.swapchainExtent.width
                 && c.extent.height == info.swapchainExtent.height)
+                return c.imageView;
+        for (const auto& c : info.candidates)
+            if (windowSized(c))
                 return c.imageView;
         for (const auto& c : info.candidates)
             if (c.hasPresentableSnapshotTarget)
                 return c.imageView;
         return info.candidates.empty() ? VK_NULL_HANDLE : info.candidates.front().imageView;
     }
+
     // Convert a VkFormat to a short human-readable string for the UI.
     static const char* depthFormatName(VkFormat format)
     {
