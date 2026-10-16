@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "logger.hh"
+#include "logical_device.hh"
 
 namespace VKIntox
 {
@@ -75,6 +76,51 @@ namespace VKIntox
     {
         std::lock_guard<std::mutex> lock(pendingMutex);
         pendingReleases.clear();
+    }
+
+    bool waitQueueIdleBounded(LogicalDevice* logicalDevice, const char* reason, uint32_t timeoutMs)
+    {
+        if (!logicalDevice || logicalDevice->queue == VK_NULL_HANDLE)
+            return true;
+
+        // vkQueueWaitIdle has no timeout, so it is replaced with an empty
+        // submit of our own and a fence we are allowed to walk away from.
+        VkFence fence = VK_NULL_HANDLE;
+        VkFenceCreateInfo fenceInfo = {};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        if (logicalDevice->vkd.CreateFence(logicalDevice->device, &fenceInfo, nullptr, &fence) != VK_SUCCESS
+            || fence == VK_NULL_HANDLE)
+        {
+            // nothing to time out on; behave exactly as before
+            return logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue) == VK_SUCCESS;
+        }
+
+        VkSubmitInfo emptySubmit = {};
+        emptySubmit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        VkResult result = logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &emptySubmit, fence);
+        if (result == VK_SUCCESS)
+        {
+            result = logicalDevice->vkd.WaitForFences(logicalDevice->device, 1, &fence, VK_TRUE,
+                                                      static_cast<uint64_t>(timeoutMs) * 1000000ull);
+            if (result == VK_SUCCESS)
+            {
+                logicalDevice->vkd.DestroyFence(logicalDevice->device, fence, nullptr);
+                return true;
+            }
+        }
+
+        // the submission this fence tracks is still pending, so the fence has to
+        // outlive this call; the deferred queue is the only release point that
+        // can wait for it
+        VkDevice device = logicalDevice->device;
+        auto vkd = logicalDevice->vkd;
+        DeferredDestroyQueue::instance().push(DestroyPhase::Resource,
+                                              [vkd, device, fence] { vkd.DestroyFence(device, fence, nullptr); });
+
+        Logger::warn(std::string("bounded queue idle timed out (vkWaitForFences=") + std::to_string(result) + "): "
+                     + (reason ? reason : "unspecified")
+                     + "; a submission that never completes is holding the queue");
+        return false;
     }
 
 } // namespace VKIntox

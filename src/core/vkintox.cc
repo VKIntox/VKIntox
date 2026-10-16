@@ -1453,8 +1453,10 @@ namespace VKIntox
         // a device loss.
         if (reloaded && logicalDevice)
         {
-            logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
-            DeferredDestroyQueue::instance().flush();
+            // only flush once the idle completed; a stuck queue means the
+            // releases have to wait for a later safe point, never run now
+            if (waitQueueIdleBounded(logicalDevice, "effect reload flush"))
+                DeferredDestroyQueue::instance().flush();
         }
     }
 
@@ -3411,15 +3413,26 @@ namespace VKIntox
                     // framebuffers and images through the injected resolve subpass,
                     // so freeing them mid-flight hangs the GPU (device lost). The
                     // old full-reload path idled the queue here too; fast mode is
-                    // the opt-in for skipping it.
-                    if (settingsManager.getDepthRebuildMode() == 0)
-                        logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
+                    // the opt-in for skipping it. This idle is bounded: a stuck
+                    // queue must not park the present thread under globalLock.
+                    const bool idleOk = settingsManager.getDepthRebuildMode() != 0
+                        || waitQueueIdleBounded(logicalDevice, "safe depth rebuild");
 
-                    for (const auto& [_, sc] : swapchainMap)
-                        if (sc && sc->logicalDevice == logicalDevice)
-                            sc->depthReallocPending = true;
-                    logicalDevice->depthReallocPending = false;
-                    logicalDevice->depthReallocFirstArmed = {};
+                    if (idleOk)
+                    {
+                        for (const auto& [_, sc] : swapchainMap)
+                            if (sc && sc->logicalDevice == logicalDevice)
+                                sc->depthReallocPending = true;
+                        logicalDevice->depthReallocPending = false;
+                        logicalDevice->depthReallocFirstArmed = {};
+                    }
+                    else
+                    {
+                        // everything stays armed; back the retry off so one bad
+                        // queue is not a stall every frame
+                        logicalDevice->depthReallocFirstArmed = now + std::chrono::seconds(2);
+                        bypassDepthForPresent = true;
+                    }
                 }
             }
 

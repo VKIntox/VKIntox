@@ -10,9 +10,15 @@ namespace VKIntox
     {
         if (imageCount > 0)
         {
-            // Wait for GPU to finish before destroying resources
+            // Wait for GPU to finish before destroying resources. Bounded: if
+            // the idle times out, freeing anything here is a use-after-free, so
+            // leaking this swapchain is the survivable trade.
             Logger::info("[DESTROY-TRACE] LogicalSwapchain::destroy: QueueWaitIdle");
-            logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
+            if (!waitQueueIdleBounded(logicalDevice, "swapchain destroy"))
+            {
+                Logger::warn("[DESTROY-TRACE] swapchain destroy idle timed out; leaving this swapchain's resources alone");
+                return;
+            }
 
             // destroy the pool before the effects: that frees this swapchain's
             // buffers and clears driver tracking without touching a

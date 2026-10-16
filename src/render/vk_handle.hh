@@ -123,6 +123,17 @@ namespace VKIntox
         uint64_t                     nextSequence = 0;
     };
 
+    struct LogicalDevice;
+
+    // bounded queue-idle budget: long enough for a real hitch, short enough
+    // that a stuck queue cannot look like a freeze
+    inline constexpr uint32_t kQueueIdleTimeoutMs = 4000;
+
+    // vkQueueWaitIdle cannot time out, and a single submission that never
+    // completes would park the caller forever; false means the wait ran out.
+    bool waitQueueIdleBounded(LogicalDevice* logicalDevice, const char* reason,
+                              uint32_t timeoutMs = kQueueIdleTimeoutMs);
+
 } // namespace VKIntox
 
 #endif // VK_HANDLE_HPP_INCLUDED
