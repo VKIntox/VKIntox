@@ -35,13 +35,8 @@ namespace VKIntox
         }
     }
 
-    // Default a fresh manual depth pin to the window-sized buffer. Pinning the
-    // busiest candidate instead left depth effects sampling a wrong-sized
-    // image — usually bypassed entirely until the pin was corrected by hand,
-    // which reads as "pinning does not work". The game's real depth is either
-    // the exact swapchain extent or that extent minus a client-drawn titlebar
-    // strip, so both count as window-sized. Falls back to the swapchain-linked
-    // candidate, then to the busiest one.
+    // window-sized first (exact or titlebar-inset), then the swapchain-linked
+    // candidate; the busiest buffer can be the wrong size
     static VkImageView defaultPinCandidateForSwapchain(const DepthInfo& info)
     {
         constexpr int64_t kChromeTolerancePx = 128;
@@ -259,12 +254,8 @@ namespace VKIntox
         if (depthTransformPending)
         {
             std::lock_guard<std::mutex> l(globalLock);
-            // The resolve path is the single place depth transforms apply. This
-            // rebuilds it when the transform now needs the shader (or no longer
-            // does) and re-records the command buffers so the new push constants
-            // take effect. No effect recompiles are involved — the ReShade
-            // macros no longer carry the transforms — so a toggle lands in one
-            // step and no later rebuild can flip it back.
+            // the resolve owns transforms now (macros no longer carry them),
+            // so re-recording it is all a toggle needs
             logicalDevice->depthReallocPending = true;
             depthTransformPending = false;
         }

@@ -427,14 +427,9 @@ namespace VKIntox
         if (!display)
             return;
 
-        // Drain events already delivered to our queue. The socket itself is
-        // read by the game's event loop, which dispatches normally; stealing
-        // the display's read lock and reading the socket from here raced that
-        // loop. During a compositor resize the game's runloop spun against our
-        // lock and the app froze (100% on its main thread, no swapchain calls
-        // ever reaching the layer). The Wayland contract for extra queues is
-        // that the queue owner only dispatches its own pending events — exactly
-        // one reader owns the socket, and that is the application.
+        // drain our queue only; the socket is read by the game's event loop,
+        // and taking the display read lock from here spun its runloop into a
+        // freeze during compositor resizes
         wl_display_dispatch_queue_pending(display, queue);
     }
 

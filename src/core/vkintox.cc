@@ -2222,11 +2222,8 @@ namespace VKIntox
             // and re-rendered its depth, so no deferred copy or resolve build
             // ever executes against a dying image (that was the NVRM Xid 109
             // context-switch timeout at resize).
-            // The previous generation's depth resources die with the old
-            // swapchain; see armDepthTransitionHoldLocked. Without this, a
-            // resize left our deferred copies executing against the dying
-            // depth image: the GPU context switch timed out (NVRM Xid 109) and
-            // every later submit returned VK_ERROR_DEVICE_LOST.
+            // the old generation's depth resources die with the swapchain;
+            // without the hold the GPU executed against a freed image
             armDepthTransitionHoldLocked(logicalDevice, "swapchain rebuilt");
             depthRetryStates.erase(logicalDevice);
             Logger::debug("CreateSwapchainKHR: cleared device depth state for fresh detection");
@@ -3365,11 +3362,8 @@ namespace VKIntox
 
         if (presentHasPassthrough)
         {
-            // At least one presented swapchain is not faked by the layer (zero
-            // extent, layered, or uninitializable). The only safe present is
-            // the application's own: submitting buffers recorded for images
-            // that were never served would fault, and returning an error would
-            // make the game recover from something that is not its fault.
+            // this swapchain was never faked, so submit no layer buffers for
+            // it; the app's own present is the only safe one
             VkResult passthroughResult = logicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
             reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueuePresentKHR(passthrough swapchain)", passthroughResult);
             if (passthroughResult == VK_ERROR_DEVICE_LOST)
@@ -3711,8 +3705,10 @@ namespace VKIntox
                     sc->rebuildEffectsOnNextPresent = true;
                 }
             }
-            // Don't return error - let app handle the resize/recreate naturally
-            return VK_SUCCESS;
+            // returning SUCCESS here hid OUT_OF_DATE from the application,
+            // which is the standard recreate-now signal; its present path then
+            // waited forever on frames the compositor would never take
+            return presentResult;
         }
         
         return presentResult;
@@ -4172,11 +4168,8 @@ namespace VKIntox
             // Clear stale pin: the pinned view was just destroyed, so
             // getDepthState() would fall back to the (now-empty) active state.
             logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
-            // The depth path's current generation dies with this view. Roblox
-            // recreates its scene targets mid-generation (SceneManager resizes
-            // its main targets without touching the swapchain); the resolve
-            // targets and any pending copies still reference the old image, so
-            // hold the depth path off until the app renders into a replacement.
+            // roblox re-creates its scene targets mid-generation; nothing ours
+            // may keep referencing the old image
             armDepthTransitionHoldLocked(logicalDevice, "active depth view destroyed");
             DepthState depth = getDepthState(logicalDevice);
             updateDeviceDepthStateLocked(logicalDevice, depth, "DestroyImageView");
@@ -4551,9 +4544,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    // Never publish a copy while the depth path is held off for
-                    // a swapchain rebuild: the promoted depth may be from the
-                    // generation the app is tearing down.
+                    // the promoted depth may belong to the generation being torn down
                     if (!logicalDevice->depthTransitionHold)
                         logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
@@ -4608,9 +4599,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    // Never publish a copy while the depth path is held off for
-                    // a swapchain rebuild: the promoted depth may be from the
-                    // generation the app is tearing down.
+                    // the promoted depth may belong to the generation being torn down
                     if (!logicalDevice->depthTransitionHold)
                         logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
@@ -4664,9 +4653,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    // Never publish a copy while the depth path is held off for
-                    // a swapchain rebuild: the promoted depth may be from the
-                    // generation the app is tearing down.
+                    // the promoted depth may belong to the generation being torn down
                     if (!logicalDevice->depthTransitionHold)
                         logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
@@ -4720,9 +4707,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    // Never publish a copy while the depth path is held off for
-                    // a swapchain rebuild: the promoted depth may be from the
-                    // generation the app is tearing down.
+                    // the promoted depth may belong to the generation being torn down
                     if (!logicalDevice->depthTransitionHold)
                         logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
@@ -4776,9 +4761,7 @@ namespace VKIntox
                 {
                     VkImageLayout sourceLayout = (depthFinalLayout != VK_IMAGE_LAYOUT_UNDEFINED)
                         ? depthFinalLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    // Never publish a copy while the depth path is held off for
-                    // a swapchain rebuild: the promoted depth may be from the
-                    // generation the app is tearing down.
+                    // the promoted depth may belong to the generation being torn down
                     if (!logicalDevice->depthTransitionHold)
                         logicalDevice->depthCopy.publish(promoted, sourceLayout);
                 }
@@ -5369,9 +5352,8 @@ namespace VKIntox
                     if (pinIt == logicalDevice->depthViewStates.end() || pinIt->second.image == image)
                         logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
                 }
-                // Same generational hazard as DestroyImageView: the active
-                // depth image being recreated mid-generation means every
-                // resolve target and pending copy referencing it is stale.
+                // same as the view path: resolve targets and copies still
+                // reference the image being recreated
                 armDepthTransitionHoldLocked(logicalDevice, "active depth image destroyed");
                 DepthState depth = getDepthState(logicalDevice);
                 updateDeviceDepthStateLocked(logicalDevice, depth, "DestroyImage");

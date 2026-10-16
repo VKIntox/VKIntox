@@ -14,12 +14,9 @@ namespace VKIntox
             Logger::info("[DESTROY-TRACE] LogicalSwapchain::destroy: QueueWaitIdle");
             logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
 
-            // Destroy this swapchain's own command pool BEFORE the effects go.
-            // Destroying the pool frees every command buffer allocated from it
-            // and clears the driver's tracking records in one step — the same
-            // guarantee the old device-pool reset bought, but scoped to this
-            // swapchain. A replacement swapchain created before this one was
-            // destroyed therefore keeps every buffer it allocated.
+            // destroy the pool before the effects: that frees this swapchain's
+            // buffers and clears driver tracking without touching a
+            // replacement swapchain's pool
             if (commandPool != VK_NULL_HANDLE)
             {
                 Logger::info("[DESTROY-TRACE] DestroyCommandPool");

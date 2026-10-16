@@ -175,12 +175,8 @@ namespace VKIntox
         return false;
     }
 
-    // The game's window-sized depth image, allowing for window chrome: Roblox
-    // (through Rosemary) sometimes draws a titlebar and sometimes does not, so
-    // its real depth is either the exact swapchain extent or that extent minus
-    // a titlebar-sized strip. Anything that differs by more than a chrome-sized
-    // amount on either axis (shadow maps, offscreen passes, scaled render
-    // targets) is not the window depth. Exact matches always win.
+    // the window depth, allowing for roblox's client-drawn titlebar: exact
+    // extent, or both axes within chrome-sized pixels of it
     static bool extentMatchesSwapchainWindow(const DepthState& depth, const LogicalSwapchain* logicalSwapchain)
     {
         if (!logicalSwapchain || !hasDepthState(depth))
@@ -194,8 +190,7 @@ namespace VKIntox
         if (depth.extent.width == windowWidth && depth.extent.height == windowHeight)
             return true;
 
-        // chrome tolerance, either direction: the game may render the strip
-        // under the chrome, or up to the chrome, in both axes
+        // either direction: the game may render under the chrome or up to it
         constexpr int64_t kChromeTolerancePx = 128;
         const int64_t dw = static_cast<int64_t>(depth.extent.width)  - static_cast<int64_t>(windowWidth);
         const int64_t dh = static_cast<int64_t>(depth.extent.height) - static_cast<int64_t>(windowHeight);
@@ -260,9 +255,8 @@ namespace VKIntox
             return false;
         }
 
-        // The window (exact or chrome-inset) extent is the only automatic
-        // qualification rule; shadow maps and other depth attachments remain
-        // candidates for bookkeeping but are never made active depth state.
+        // only the window extent (exact or chrome-inset) qualifies; shadow
+        // maps stay bookkeeping candidates
         return matchesAnySwapchainExtent(logicalDevice, depth);
     }
 
@@ -623,13 +617,8 @@ namespace VKIntox
         if (!logicalDevice)
             return;
 
-        // Everything below belongs to the generation being replaced. Scopes
-        // recorded before this point must not promote (a stale promotion would
-        // release the hold against the dying depth) and a published-but-
-        // unsubmitted copy must not ride into the new generation: both are how
-        // the GPU ended up executing against a destroyed image, with the
-        // context switch timing out (NVRM Xid 109) and every later submit
-        // returning VK_ERROR_DEVICE_LOST.
+        // scopes and copies from the old generation must not survive into the
+        // new one; a stale promotion would lift the hold on a dying image
         logicalDevice->commandBufferDepthStates.clear();
         logicalDevice->pendingTransferLinkedDepthScopes.clear();
         logicalDevice->bestDepthCandidate = {};
@@ -643,11 +632,8 @@ namespace VKIntox
         }
     }
 
-    // A depth observation recorded from a live render scope is what a
-    // transition hold waits for (see LogicalDevice::depthTransitionHold): the
-    // app has re-created and re-rendered its depth for the new swapchain, so
-    // the depth path can safely re-engage. Destroy-path updates deliberately
-    // do not release the hold.
+    // only a promotion from a live render scope releases the hold; destroy
+    // paths must not, or it lifts on the generation being torn down
     static void releaseDepthTransitionHoldLocked(LogicalDevice* logicalDevice, const char* reason)
     {
         if (logicalDevice && logicalDevice->depthTransitionHold)
@@ -1556,10 +1542,8 @@ namespace VKIntox
     // Get depth state from logical device (returns null handles if no depth images)
     DepthState getDepthState(LogicalDevice* logicalDevice)
     {
-        // A swapchain rebuild starts a new frame generation: the previous
-        // generation's depth image may be destroyed at any moment, so report
-        // no depth at all until a candidate from the new generation has been
-        // observed and promoted.
+        // a rebuilt swapchain starts a new depth generation; report nothing
+        // until a candidate from it has been observed
         if (logicalDevice->depthTransitionHold)
             return {};
 
