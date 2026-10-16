@@ -2694,8 +2694,11 @@ namespace VKIntox
                     initializeDispatchTable(cb, logicalDevice->device);
 
                 std::vector<VkFence> fences(DepthCopyState::RING_SIZE, VK_NULL_HANDLE);
+                // fresh slots must not look in flight, or the first capture of
+                // each slot skips and the ring never submits anything
                 VkFenceCreateInfo fci = {};
                 fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+                fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
                 bool fencesOk = true;
                 for (uint32_t i = 0; i < DepthCopyState::RING_SIZE; ++i)
                 {
