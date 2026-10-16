@@ -142,19 +142,6 @@ namespace VKIntox
         PersistentDepthStorage depthCaptureStorage;
         bool persistentStorageTracked = false;
 
-        // capture-side msaa resolve: vkCmdResolveImage can't take a depth
-        // aspect, so the capture fills the storage through a depth-stencil
-        // resolve subpass over [source msaa view, storage view]. cached until
-        // one of the inputs changes; old objects retire through the queue.
-        VkRenderPass          depthCaptureResolveRenderPass = VK_NULL_HANDLE;
-        VkFramebuffer         depthCaptureResolveFramebuffer = VK_NULL_HANDLE;
-        VkFormat              depthCaptureResolveFormat = VK_FORMAT_UNDEFINED;
-        VkSampleCountFlagBits depthCaptureResolveSamples = VK_SAMPLE_COUNT_1_BIT;
-        VkResolveModeFlagBits depthCaptureResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
-        VkImageView           depthCaptureResolveSourceView = VK_NULL_HANDLE;
-        VkImageView           depthCaptureResolveStorageView = VK_NULL_HANDLE;
-        VkExtent3D            depthCaptureResolveExtent = {0, 0, 1};
-
         // v3 deferred copy: depth that needs blitting at QueueSubmit time.
         // Owns its own mutex; see DepthCopyState for the lock-order contract.
         DepthCopyState depthCopy;

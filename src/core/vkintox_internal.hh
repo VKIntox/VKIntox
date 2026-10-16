@@ -148,12 +148,6 @@ namespace VKIntox
     bool validateDepthStateForResolve(LogicalDevice* logicalDevice, const DepthState& depth);
     void destroyPersistentDepthStorage(LogicalDevice* logicalDevice);
     void ensurePersistentDepthStorage(LogicalDevice* logicalDevice, VkFormat format, const VkExtent3D& extent);
-    void ensureDepthCaptureResolveResources(LogicalDevice* logicalDevice,
-                                            const DepthState& depth,
-                                            VkImageView sourceView,
-                                            VkImageView storageView,
-                                            VkRenderPass* outRenderPass,
-                                            VkFramebuffer* outFramebuffer);
     void ensureDepthResolveResources(LogicalSwapchain* logicalSwapchain, const DepthState& depth);
     bool depthMatchesSwapchainExtent(const DepthState& depth, const LogicalSwapchain* sc);
     // wipes scope tracking, the best candidate and any pending copy; the hold

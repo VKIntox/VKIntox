@@ -2616,18 +2616,13 @@ namespace VKIntox
 
         // Prepare the storage under globalLock and snapshot what the recording
         // needs into locals, so the ring section below holds only depthCopy.
-        // msaa sources resolve through a subpass, which needs a depth-format
-        // storage on both attachments; only 1-sample GENERAL sources get r32.
-        const bool isMsaa = captureDepth.samples != VK_SAMPLE_COUNT_1_BIT;
-        const VkFormat storageFormat = (!isMsaa && sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
+        const VkFormat storageFormat = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
             ? VK_FORMAT_R32_SFLOAT
             : captureDepth.format;
 
         VkImage storageImage = VK_NULL_HANDLE;
         VkImageView storageImageView = VK_NULL_HANDLE;
         bool storageWasValid = false;
-        VkRenderPass captureResolvePass = VK_NULL_HANDLE;
-        VkFramebuffer captureResolveFramebuffer = VK_NULL_HANDLE;
         {
             scoped_lock l(globalLock);
             ensurePersistentDepthStorage(logicalDevice, storageFormat, captureDepth.extent);
@@ -2635,14 +2630,7 @@ namespace VKIntox
             storageImage = storage.image;
             storageImageView = storage.view;
             storageWasValid = storage.valid;
-            if (isMsaa && storageImage != VK_NULL_HANDLE && storageImageView != VK_NULL_HANDLE)
-            {
-                ensureDepthCaptureResolveResources(logicalDevice, captureDepth, captureDepth.imageView, storageImageView,
-                                                   &captureResolvePass, &captureResolveFramebuffer);
-            }
         }
-        const bool useCaptureResolvePass = isMsaa
-            && captureResolvePass != VK_NULL_HANDLE && captureResolveFramebuffer != VK_NULL_HANDLE;
 
         if (storageImage == VK_NULL_HANDLE)
         {
@@ -2694,11 +2682,8 @@ namespace VKIntox
                     initializeDispatchTable(cb, logicalDevice->device);
 
                 std::vector<VkFence> fences(DepthCopyState::RING_SIZE, VK_NULL_HANDLE);
-                // fresh slots must not look in flight, or the first capture of
-                // each slot skips and the ring never submits anything
                 VkFenceCreateInfo fci = {};
                 fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-                fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
                 bool fencesOk = true;
                 for (uint32_t i = 0; i < DepthCopyState::RING_SIZE; ++i)
                 {
@@ -2722,15 +2707,6 @@ namespace VKIntox
 
                 ring.install(pool, std::move(buffers), std::move(fences));
                 Logger::debug("depth copy ring buffer initialized: " + std::to_string(DepthCopyState::RING_SIZE) + " CBs + fences");
-            }
-
-            // an msaa capture without its resolve pass must not fall back to
-            // the invalid depth-aspect vkCmdResolveImage; skip the copy.
-            if (isMsaa && !useCaptureResolvePass)
-            {
-                Logger::debug("QueueSubmit v3: msaa capture resolve resources unavailable; skipping optional depth copy");
-                ringBusy = true;
-                return;
             }
 
             const uint32_t slotIndex = ring.reserveSlot();
@@ -2762,6 +2738,7 @@ namespace VKIntox
 
             logicalDevice->vkd.ResetCommandBuffer(copyCB, 0);
 
+            const bool isMsaa = captureDepth.samples != VK_SAMPLE_COUNT_1_BIT;
             const VkImageAspectFlags depthAspect = isStencilFormat(captureDepth.format)
                 ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
                 : VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -2772,146 +2749,91 @@ namespace VKIntox
             cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             logicalDevice->vkd.BeginCommandBuffer(copyCB, &cbbi);
 
-            if (useCaptureResolvePass)
+            // Barrier: source from KNOWN sourceLayout → TRANSFER_SRC
+            VkImageMemoryBarrier barriers[2] = {};
+            barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[0].image = captureDepth.image;
+            barriers[0].oldLayout = (sourceLayout != VK_IMAGE_LAYOUT_UNDEFINED) ? sourceLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barriers[0].srcAccessMask = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
+                ? (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
+                : (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[0].subresourceRange = {depthAspect, 0, 1, 0, 1};
+
+            // Barrier: storage → TRANSFER_DST
+            barriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[1].image = storageImage;
+            barriers[1].oldLayout = storageWasValid ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+            barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barriers[1].srcAccessMask = storageWasValid ? VK_ACCESS_SHADER_READ_BIT : 0;
+            barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[1].subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+
+            VkPipelineStageFlags srcStages = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
+                ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+                : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
+
+            logicalDevice->vkd.CmdPipelineBarrier(copyCB, srcStages, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
+
+            if (isMsaa)
             {
-                // the depth-stencil resolve subpass fills the storage. it takes
-                // the source from attachment layout and leaves the storage in
-                // the read-only layout, so only the source needs barriers.
-                const VkImageLayout sourceEffectiveLayout = (sourceLayout != VK_IMAGE_LAYOUT_UNDEFINED)
-                    ? sourceLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                if (sourceEffectiveLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                {
-                    VkImageMemoryBarrier toAttachment = {};
-                    toAttachment.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    toAttachment.image = captureDepth.image;
-                    toAttachment.oldLayout = sourceEffectiveLayout;
-                    toAttachment.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    toAttachment.srcAccessMask = (sourceEffectiveLayout == VK_IMAGE_LAYOUT_GENERAL)
-                        ? (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
-                        : (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-                    toAttachment.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-                    toAttachment.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    toAttachment.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    toAttachment.subresourceRange = {depthAspect, 0, 1, 0, 1};
-                    const VkPipelineStageFlags sourceStages = (sourceEffectiveLayout == VK_IMAGE_LAYOUT_GENERAL)
-                        ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
-                        : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
-                    logicalDevice->vkd.CmdPipelineBarrier(copyCB, sourceStages,
-                                                          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                                          0, 0, nullptr, 0, nullptr, 1, &toAttachment);
-                }
-
-                VkRenderPassBeginInfo capturePassBegin = {};
-                capturePassBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                capturePassBegin.renderPass = captureResolvePass;
-                capturePassBegin.framebuffer = captureResolveFramebuffer;
-                capturePassBegin.renderArea.offset = {0, 0};
-                capturePassBegin.renderArea.extent = {captureDepth.extent.width, captureDepth.extent.height};
-                capturePassBegin.clearValueCount = 0;
-                capturePassBegin.pClearValues = nullptr;
-                logicalDevice->vkd.CmdBeginRenderPass(copyCB, &capturePassBegin, VK_SUBPASS_CONTENTS_INLINE);
-                logicalDevice->vkd.CmdEndRenderPass(copyCB);
-
-                if (sourceEffectiveLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                {
-                    VkImageMemoryBarrier fromAttachment = {};
-                    fromAttachment.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    fromAttachment.image = captureDepth.image;
-                    fromAttachment.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    fromAttachment.newLayout = sourceEffectiveLayout;
-                    fromAttachment.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-                    fromAttachment.dstAccessMask = (sourceEffectiveLayout == VK_IMAGE_LAYOUT_GENERAL)
-                        ? (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
-                        : (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-                    fromAttachment.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    fromAttachment.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    fromAttachment.subresourceRange = {depthAspect, 0, 1, 0, 1};
-                    const VkPipelineStageFlags restoreStages = (sourceEffectiveLayout == VK_IMAGE_LAYOUT_GENERAL)
-                        ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
-                        : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
-                    logicalDevice->vkd.CmdPipelineBarrier(copyCB,
-                                                          VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                                                          restoreStages,
-                                                          0, 0, nullptr, 0, nullptr, 1, &fromAttachment);
-                }
+                VkImageResolve resolveRegion = {};
+                resolveRegion.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+                resolveRegion.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+                resolveRegion.extent = {captureDepth.extent.width, captureDepth.extent.height, 1};
+                logicalDevice->vkd.CmdResolveImage(copyCB, captureDepth.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, storageImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolveRegion);
             }
             else
             {
-                // Barrier: source from KNOWN sourceLayout → TRANSFER_SRC
-                VkImageMemoryBarrier barriers[2] = {};
-                barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                barriers[0].image = captureDepth.image;
-                barriers[0].oldLayout = (sourceLayout != VK_IMAGE_LAYOUT_UNDEFINED) ? sourceLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                barriers[0].srcAccessMask = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
-                    ? (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
-                    : (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-                barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-                barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barriers[0].subresourceRange = {depthAspect, 0, 1, 0, 1};
-
-                // Barrier: storage → TRANSFER_DST
-                barriers[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                barriers[1].image = storageImage;
-                barriers[1].oldLayout = storageWasValid ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
-                barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                barriers[1].srcAccessMask = storageWasValid ? VK_ACCESS_SHADER_READ_BIT : 0;
-                barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                barriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barriers[1].subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-
-                VkPipelineStageFlags srcStages = (sourceLayout == VK_IMAGE_LAYOUT_GENERAL)
-                    ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
-                    : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
-
-                logicalDevice->vkd.CmdPipelineBarrier(copyCB, srcStages, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
-
                 VkImageCopy copyRegion = {};
                 copyRegion.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
                 copyRegion.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
                 copyRegion.extent = {captureDepth.extent.width, captureDepth.extent.height, 1};
                 logicalDevice->vkd.CmdCopyImage(copyCB, captureDepth.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, storageImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+            }
 
-                // Barrier: storage → SHADER_READ_ONLY
-                VkImageMemoryBarrier readOnlyBarrier = {};
-                readOnlyBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                readOnlyBarrier.image = storageImage;
-                readOnlyBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                readOnlyBarrier.newLayout = isStencilFormat(storageFormat) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
-                readOnlyBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                readOnlyBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                readOnlyBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                readOnlyBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                readOnlyBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-                logicalDevice->vkd.CmdPipelineBarrier(copyCB, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &readOnlyBarrier);
+            // Barrier: storage → SHADER_READ_ONLY
+            VkImageMemoryBarrier readOnlyBarrier = {};
+            readOnlyBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            readOnlyBarrier.image = storageImage;
+            readOnlyBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            readOnlyBarrier.newLayout = isStencilFormat(storageFormat) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+            readOnlyBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            readOnlyBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            readOnlyBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            readOnlyBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            readOnlyBarrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+            logicalDevice->vkd.CmdPipelineBarrier(copyCB, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &readOnlyBarrier);
 
-                // Restore the source to the layout the layer observed: the shader
-                // resolve barriers from that layout, so leaving it in TRANSFER_SRC
-                // here makes the two disagree and faults the GPU.
-                if (captureDepth.image != storageImage)
-                {
-                    const VkImageLayout restoreLayout = (sourceLayout != VK_IMAGE_LAYOUT_UNDEFINED)
-                        ? sourceLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    VkImageMemoryBarrier restoreBarrier = {};
-                    restoreBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    restoreBarrier.image = captureDepth.image;
-                    restoreBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                    restoreBarrier.newLayout = restoreLayout;
-                    restoreBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-                    restoreBarrier.dstAccessMask = (restoreLayout == VK_IMAGE_LAYOUT_GENERAL)
-                        ? (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
-                        : (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-                    restoreBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    restoreBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    restoreBarrier.subresourceRange = {depthAspect, 0, 1, 0, 1};
-                    const VkPipelineStageFlags restoreDstStages = (restoreLayout == VK_IMAGE_LAYOUT_GENERAL)
-                        ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
-                        : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
-                    logicalDevice->vkd.CmdPipelineBarrier(copyCB, VK_PIPELINE_STAGE_TRANSFER_BIT, restoreDstStages,
-                                                          0, 0, nullptr, 0, nullptr, 1, &restoreBarrier);
-                }
+            // Restore the source to the layout the layer observed: the shader
+            // resolve barriers from that layout, so leaving it in TRANSFER_SRC
+            // here makes the two disagree and faults the GPU.
+            if (captureDepth.image != storageImage)
+            {
+                const VkImageLayout restoreLayout = (sourceLayout != VK_IMAGE_LAYOUT_UNDEFINED)
+                    ? sourceLayout : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                VkImageMemoryBarrier restoreBarrier = {};
+                restoreBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                restoreBarrier.image = captureDepth.image;
+                restoreBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                restoreBarrier.newLayout = restoreLayout;
+                restoreBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                restoreBarrier.dstAccessMask = (restoreLayout == VK_IMAGE_LAYOUT_GENERAL)
+                    ? (VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT)
+                    : (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+                restoreBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                restoreBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                restoreBarrier.subresourceRange = {depthAspect, 0, 1, 0, 1};
+                const VkPipelineStageFlags restoreDstStages = (restoreLayout == VK_IMAGE_LAYOUT_GENERAL)
+                    ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+                    : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
+                logicalDevice->vkd.CmdPipelineBarrier(copyCB, VK_PIPELINE_STAGE_TRANSFER_BIT, restoreDstStages,
+                                                      0, 0, nullptr, 0, nullptr, 1, &restoreBarrier);
             }
 
             logicalDevice->vkd.EndCommandBuffer(copyCB);

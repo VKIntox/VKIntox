@@ -1010,39 +1010,6 @@ namespace VKIntox
             || settingsManager.getDepthSourceChannel() != 0;
     }
 
-    // an msaa source can't ride the hardware resolve while a transform is
-    // requested, so swap it for the capture storage: layer-owned, 1-sample,
-    // and the plain shader resolve transforms it. anything unusable falls back.
-    static DepthState preferTransformSafeDepth(LogicalDevice* logicalDevice, const DepthState& depth)
-    {
-        const auto& storage = logicalDevice->depthCaptureStorage;
-        const bool incomingNeedsHelp = !hasDepthState(depth) || depth.samples != VK_SAMPLE_COUNT_1_BIT;
-        if (!incomingNeedsHelp
-            || !depthTransformRequested()
-            || settingsManager.getDepthCaptureMethod() < 1
-            || !settingsManager.getDepthCapture()
-            || !logicalDevice->persistentStorageTracked
-            || !storage.valid
-            || storage.image == VK_NULL_HANDLE
-            || storage.view == VK_NULL_HANDLE
-            || !isDepthStencilAttachmentFormat(storage.format)
-            || storage.extent.width == 0
-            || storage.extent.height == 0)
-        {
-            return depth;
-        }
-
-        DepthState preferred = {};
-        preferred.image = storage.image;
-        preferred.imageView = storage.view;
-        preferred.format = storage.format;
-        preferred.extent = storage.extent;
-        preferred.samples = VK_SAMPLE_COUNT_1_BIT;
-        preferred.observedLayout = isStencilFormat(storage.format) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-                                                                   : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
-        return preferred;
-    }
-
     void initializeDepthResolveLayout(LogicalSwapchain* logicalSwapchain, const DepthState& depth)
     {
         LogicalDevice* logicalDevice = logicalSwapchain->logicalDevice;
@@ -1293,19 +1260,6 @@ namespace VKIntox
     void destroyPersistentDepthStorage(LogicalDevice* logicalDevice)
     {
         auto& s = logicalDevice->depthCaptureStorage;
-
-        // the cached capture framebuffer is keyed to the storage view
-        if (logicalDevice->depthCaptureResolveFramebuffer != VK_NULL_HANDLE)
-        {
-            VkDevice          device = logicalDevice->device;
-            auto              vkd    = logicalDevice->vkd;
-            const VkFramebuffer fb   = logicalDevice->depthCaptureResolveFramebuffer;
-            DeferredDestroyQueue::instance().push(DestroyPhase::Resource, [vkd, device, fb] { vkd.DestroyFramebuffer(device, fb, nullptr); });
-            logicalDevice->depthCaptureResolveFramebuffer = VK_NULL_HANDLE;
-            logicalDevice->depthCaptureResolveSourceView = VK_NULL_HANDLE;
-            logicalDevice->depthCaptureResolveStorageView = VK_NULL_HANDLE;
-        }
-
         if (s.view != VK_NULL_HANDLE)
         {
             logicalDevice->vkd.DestroyImageView(logicalDevice->device, s.view, nullptr);
@@ -1315,7 +1269,6 @@ namespace VKIntox
         {
             logicalDevice->vkd.DestroyImage(logicalDevice->device, s.image, nullptr);
             logicalDevice->depthImageMetadata.erase(s.image);
-            logicalDevice->depthImageExtents.erase(s.image);
             s.image = VK_NULL_HANDLE;
         }
         if (s.memory != VK_NULL_HANDLE)
@@ -1433,102 +1386,10 @@ namespace VKIntox
         meta.samples = VK_SAMPLE_COUNT_1_BIT;
         meta.tiling = VK_IMAGE_TILING_OPTIMAL;
         logicalDevice->depthImageMetadata[s.image] = meta;
-        logicalDevice->depthImageExtents[s.image] = extent;
         logicalDevice->persistentStorageTracked = true;
 
         Logger::info("persistent depth storage created: " + std::to_string(extent.width) + "x"
                      + std::to_string(extent.height) + " format=" + std::to_string(format));
-    }
-
-    // the capture can't fill the storage with vkCmdResolveImage (a depth
-    // aspect needs maintenance10), so msaa sources resolve through the same
-    // depth-stencil subpass the main resolve uses. cached until an input
-    // changes; the old pair retires through the deferred queue.
-    void ensureDepthCaptureResolveResources(LogicalDevice* logicalDevice,
-                                            const DepthState& depth,
-                                            VkImageView sourceView,
-                                            VkImageView storageView,
-                                            VkRenderPass* outRenderPass,
-                                            VkFramebuffer* outFramebuffer)
-    {
-        if (outRenderPass)
-            *outRenderPass = VK_NULL_HANDLE;
-        if (outFramebuffer)
-            *outFramebuffer = VK_NULL_HANDLE;
-        if (!logicalDevice || depth.samples == VK_SAMPLE_COUNT_1_BIT
-            || sourceView == VK_NULL_HANDLE || storageView == VK_NULL_HANDLE
-            || depth.extent.width == 0 || depth.extent.height == 0)
-            return;
-
-        VkResolveModeFlagBits mode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
-        const int modePref = settingsManager.getDepthResolveMode();
-        if ((modePref == 0 || modePref == 2)
-            && (logicalDevice->supportedDepthResolveModes & VK_RESOLVE_MODE_AVERAGE_BIT))
-            mode = VK_RESOLVE_MODE_AVERAGE_BIT;
-
-        const VkImageLayout resolveFinalLayout = isStencilFormat(depth.format)
-            ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-            : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
-
-        if (logicalDevice->depthCaptureResolveRenderPass == VK_NULL_HANDLE
-            || logicalDevice->depthCaptureResolveFormat != depth.format
-            || logicalDevice->depthCaptureResolveSamples != depth.samples
-            || logicalDevice->depthCaptureResolveMode != mode)
-        {
-            VkDevice          device  = logicalDevice->device;
-            auto              vkd     = logicalDevice->vkd;
-            const VkFramebuffer oldFb = logicalDevice->depthCaptureResolveFramebuffer;
-            const VkRenderPass oldPass = logicalDevice->depthCaptureResolveRenderPass;
-            if (oldPass != VK_NULL_HANDLE)
-                DeferredDestroyQueue::instance().push(DestroyPhase::Resource, [vkd, device, oldPass] { vkd.DestroyRenderPass(device, oldPass, nullptr); });
-            if (oldFb != VK_NULL_HANDLE)
-                DeferredDestroyQueue::instance().push(DestroyPhase::Resource, [vkd, device, oldFb] { vkd.DestroyFramebuffer(device, oldFb, nullptr); });
-
-            logicalDevice->depthCaptureResolveRenderPass = VK_NULL_HANDLE;
-            logicalDevice->depthCaptureResolveFramebuffer = VK_NULL_HANDLE;
-            logicalDevice->depthCaptureResolveSourceView = VK_NULL_HANDLE;
-            logicalDevice->depthCaptureResolveStorageView = VK_NULL_HANDLE;
-            logicalDevice->depthCaptureResolveFormat = depth.format;
-            logicalDevice->depthCaptureResolveSamples = depth.samples;
-            logicalDevice->depthCaptureResolveMode = mode;
-        }
-
-        if (logicalDevice->depthCaptureResolveRenderPass == VK_NULL_HANDLE)
-            logicalDevice->depthCaptureResolveRenderPass = createDepthMsaaResolveRenderPass(
-                logicalDevice, depth.format, depth.samples, mode, resolveFinalLayout);
-        if (logicalDevice->depthCaptureResolveRenderPass == VK_NULL_HANDLE)
-            return;
-
-        if (logicalDevice->depthCaptureResolveFramebuffer == VK_NULL_HANDLE
-            || logicalDevice->depthCaptureResolveSourceView != sourceView
-            || logicalDevice->depthCaptureResolveStorageView != storageView
-            || logicalDevice->depthCaptureResolveExtent.width != depth.extent.width
-            || logicalDevice->depthCaptureResolveExtent.height != depth.extent.height)
-        {
-            if (logicalDevice->depthCaptureResolveFramebuffer != VK_NULL_HANDLE)
-            {
-                VkDevice          device = logicalDevice->device;
-                auto              vkd    = logicalDevice->vkd;
-                const VkFramebuffer oldFb = logicalDevice->depthCaptureResolveFramebuffer;
-                DeferredDestroyQueue::instance().push(DestroyPhase::Resource, [vkd, device, oldFb] { vkd.DestroyFramebuffer(device, oldFb, nullptr); });
-                logicalDevice->depthCaptureResolveFramebuffer = VK_NULL_HANDLE;
-            }
-
-            VkExtent2D extent2D = {depth.extent.width, depth.extent.height};
-            std::vector<VkImageView> sourceViews(1, sourceView);
-            std::vector<VkImageView> storageViews(1, storageView);
-            auto framebuffers = createFramebuffers(
-                logicalDevice, logicalDevice->depthCaptureResolveRenderPass, extent2D, {sourceViews, storageViews});
-            logicalDevice->depthCaptureResolveFramebuffer = framebuffers.empty() ? VK_NULL_HANDLE : framebuffers[0];
-            logicalDevice->depthCaptureResolveSourceView = sourceView;
-            logicalDevice->depthCaptureResolveStorageView = storageView;
-            logicalDevice->depthCaptureResolveExtent = depth.extent;
-        }
-
-        if (outRenderPass)
-            *outRenderPass = logicalDevice->depthCaptureResolveRenderPass;
-        if (outFramebuffer)
-            *outFramebuffer = logicalDevice->depthCaptureResolveFramebuffer;
     }
     void ensureDepthResolveResources(LogicalSwapchain* logicalSwapchain, const DepthState& depth)
     {
@@ -1682,10 +1543,9 @@ namespace VKIntox
     DepthState getDepthState(LogicalDevice* logicalDevice)
     {
         // a rebuilt swapchain starts a new depth generation; report nothing
-        // until a candidate from it has been observed. the storage survives
-        // generations, so it may stand in for a missing msaa source.
+        // until a candidate from it has been observed
         if (logicalDevice->depthTransitionHold)
-            return preferTransformSafeDepth(logicalDevice, {});
+            return {};
 
         if (logicalDevice->pinnedDepthImageView != VK_NULL_HANDLE)
         {
@@ -1711,7 +1571,7 @@ namespace VKIntox
             logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
             return {};
         }
-        return preferTransformSafeDepth(logicalDevice, logicalDevice->activeDepthState);
+        return logicalDevice->activeDepthState;
     }
 
     // Perform the actual command buffer reallocation for all swapchains on a device.
@@ -1769,26 +1629,23 @@ namespace VKIntox
 
     void updateDeviceDepthStateLocked(LogicalDevice* logicalDevice, const DepthState& depth, const char* reason)
     {
-        // keep the stored state stable while the storage stands in for an msaa
-        // source, or every promotion would arm a pointless rebuild
-        const DepthState effective = preferTransformSafeDepth(logicalDevice, depth);
-        if (sameDepthState(logicalDevice->activeDepthState, effective))
+        if (sameDepthState(logicalDevice->activeDepthState, depth))
             return;
 
-        logicalDevice->activeDepthState = effective;
+        logicalDevice->activeDepthState = depth;
         VKINTOX_LOG_DEBUG([&](std::string& s) {
-            s = std::string("active depth state updated from ") + reason + ": image=" + convertToString(effective.image)
-                + " view=" + convertToString(effective.imageView) + " format=" + convertToString(effective.format)
-                + " extent=" + std::to_string(effective.extent.width) + "x" + std::to_string(effective.extent.height)
-                + " observedLayout=" + convertToString(effective.observedLayout);
+            s = std::string("active depth state updated from ") + reason + ": image=" + convertToString(depth.image)
+                + " view=" + convertToString(depth.imageView) + " format=" + convertToString(depth.format)
+                + " extent=" + std::to_string(depth.extent.width) + "x" + std::to_string(depth.extent.height)
+                + " observedLayout=" + convertToString(depth.observedLayout);
         });
 
-        auto metadataIt = logicalDevice->depthImageMetadata.find(effective.image);
+        auto metadataIt = logicalDevice->depthImageMetadata.find(depth.image);
         if (metadataIt != logicalDevice->depthImageMetadata.end())
         {
             VKINTOX_LOG_DEBUG([&](std::string& s) {
                 s = std::string("active depth state metadata from ") + reason
-                    + ": image=" + convertToString(effective.image)
+                    + ": image=" + convertToString(depth.image)
                     + " usage=0x" + formatHexU64(static_cast<uint64_t>(metadataIt->second.usage))
                     + " samples=" + convertToString(metadataIt->second.samples)
                     + " tiling=" + convertToString(metadataIt->second.tiling)
