@@ -33,6 +33,7 @@
 #include "wayland_input_common.hh"
 #include "input_blocker.hh"
 #include "wayland_display.hh"
+#include "wayland_interpose_patch.hh"
 
 #include "logical_device.hh"
 #include "vk_handle.hh"
@@ -1556,6 +1557,9 @@ namespace VKIntox
         }
 
         Logger::trace("vkCreateInstance");
+
+        // reach the app's wayland marshalling before any window commit can race
+        installWaylandInterposeHooks();
 
         if (layerCreateInfo == nullptr)
         {

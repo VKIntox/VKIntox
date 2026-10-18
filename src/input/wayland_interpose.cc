@@ -18,6 +18,7 @@
 #include "input_blocker.hh"
 #include "wayland_display.hh"
 #include "wayland_syncobj_gate.hh"
+#include "wayland_interpose_patch.hh"
 #include "logger.hh"
 
 // Forward-declare to avoid pulling in mouse_input_wayland.hh (which
@@ -460,9 +461,30 @@ static AddDispatcherFn getRealAddDispatcher()
     return fn;
 }
 
-static MarshalArrayFlagsFn getRealMarshalArrayFlags()
+static MarshalArrayFlagsFn getRealMarshalArrayFlags(void* caller)
 {
-    static MarshalArrayFlagsFn fn = resolveWaylandSymbol<MarshalArrayFlagsFn>("wl_proxy_marshal_array_flags");
+    // the installer records the real entry of every gated libwayland copy;
+    // pick the copy the caller lives in
+    if (void* gated = VKIntox::waylandMarshalArrayFlagsForCaller(caller))
+        return reinterpret_cast<MarshalArrayFlagsFn>(gated);
+
+    // not gated (e.g. reached through symbol interposition): fall back to a
+    // handle-scoped lookup, which can never recurse into this wrapper
+    static std::atomic<MarshalArrayFlagsFn> fallback{nullptr};
+    MarshalArrayFlagsFn fn = fallback.load(std::memory_order_acquire);
+    if (fn)
+        return fn;
+
+    static void* waylandHandle = nullptr;
+    if (!waylandHandle)
+        waylandHandle = dlopen("libwayland-client.so.0", RTLD_NOLOAD | RTLD_NOW);
+    if (!waylandHandle)
+        waylandHandle = dlopen("libwayland-client.so.0", RTLD_NOW | RTLD_LOCAL);
+    if (DlsymFn real = getRealDlsym(); waylandHandle && real)
+        fn = reinterpret_cast<MarshalArrayFlagsFn>(real(waylandHandle, "wl_proxy_marshal_array_flags"));
+
+    if (fn)
+        fallback.store(fn, std::memory_order_release);
     return fn;
 }
 
@@ -534,55 +556,18 @@ wl_proxy* wl_proxy_marshal_array_flags(struct wl_proxy* proxy,
                                        uint32_t flags,
                                        union wl_argument* args)
 {
-    MarshalArrayFlagsFn real = getRealMarshalArrayFlags();
+    MarshalArrayFlagsFn real = getRealMarshalArrayFlags(__builtin_return_address(0));
     if (!real)
         return nullptr;
 
-    // Block compositor window move/resize requests while overlay input is blocked.
-    // xdg_toplevel requests:
-    //   4: show_window_menu
-    //   5: move
-    //   6: resize
-    const char* cls = wl_proxy_get_class(proxy);
-    if (pointerBlocked() && cls && std::strcmp(cls, "xdg_toplevel") == 0 &&
-        (opcode == 4 || opcode == 5 || opcode == 6))
+    // hold window commits while Mesa's present may have explicit-sync points
+    // in flight on this surface (see wayland_syncobj_gate.hh); outside a
+    // present the gate is closed and this whole block is one atomic load
+    if (opcode == 6 && VKIntox::WaylandSyncobjGate::anyPresentOpen())
     {
-        return nullptr;
-    }
-
-    if (cls)
-    {
-        // feed the explicit-sync gate: pairings, point sets and every commit,
-        // so it can hold foreign commits out of an open present sequence
-        if (std::strcmp(cls, "wl_surface") == 0)
-        {
-            if (opcode == 6) // commit
-            {
-                const uint32_t id = wl_proxy_get_id(proxy);
-                VKIntox::WaylandSyncobjGate::beginCommit(id);
-                struct wl_proxy* result = real(proxy, opcode, iface, version, flags, args);
-                VKIntox::WaylandSyncobjGate::endCommit(id);
-                return result;
-            }
-        }
-        else if (std::strcmp(cls, "wp_linux_drm_syncobj_surface_v1") == 0)
-        {
-            const uint32_t id = wl_proxy_get_id(proxy);
-            if (opcode == 0) // destroy
-                VKIntox::WaylandSyncobjGate::noteSyncobjDestroyed(id);
-            else if (opcode == 1 || opcode == 2) // set_acquire_point / set_release_point
-                VKIntox::WaylandSyncobjGate::notePointSetForSyncobj(id);
-        }
-        else if (std::strcmp(cls, "wp_linux_drm_syncobj_manager_v1") == 0 && opcode == 1) // get_surface
-        {
-            // args[0] is the new_id slot, args[1] the surface it describes
-            struct wl_proxy* created = real(proxy, opcode, iface, version, flags, args);
-            if (created && args)
-                VKIntox::WaylandSyncobjGate::noteSyncobjSurface(
-                    wl_proxy_get_id(created),
-                    wl_proxy_get_id(reinterpret_cast<struct wl_proxy*>(args[1].o)));
-            return created;
-        }
+        const char* cls = wl_proxy_get_class(proxy);
+        if (cls && std::strcmp(cls, "wl_surface") == 0)
+            VKIntox::WaylandSyncobjGate::beginCommit(wl_proxy_get_id(proxy));
     }
 
     return real(proxy, opcode, iface, version, flags, args);
@@ -730,3 +715,16 @@ namespace VKIntox
                           + std::to_string(changed) + " held game key(s)");
     }
 } // namespace VKIntox
+
+namespace VKIntox::WaylandSyncobjGate
+{
+    uint32_t waylandSurfaceId()
+    {
+        if (!VKIntox::isWayland())
+            return 0;
+
+        wl_surface* surface = VKIntox::getWaylandSurface();
+        return surface ? wl_proxy_get_id(reinterpret_cast<struct wl_proxy*>(surface)) : 0;
+    }
+} // namespace VKIntox::WaylandSyncobjGate
+

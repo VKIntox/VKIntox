@@ -4,32 +4,35 @@
 
 namespace VKIntox
 {
-    // Holds foreign window commits out of an open linux-drm-syncobj point
-    // sequence: a commit landing between set_acquire_point and the presenter's
-    // own commit is a protocol error, and hyprland kills the connection for it.
-    // Only surfaces that carry a syncobj ever arm; everything else is a no-op.
+    // Keeps a foreign window commit out of an in-flight present. Mesa's WSI
+    // sets linux-drm-syncobj points inside its present call, and a commit from
+    // another thread landing between a point and the attach is a protocol
+    // error hyprland answers by killing the connection. Mesa does not route
+    // through any marshalling we can see, so the presenter's side is bracketed
+    // around the driver present call instead, and window commits are held for
+    // its duration.
     namespace WaylandSyncobjGate
     {
-        // wp_linux_drm_syncobj_manager_v1.get_surface: remember the pairing.
-        void noteSyncobjSurface(uint32_t syncobjId, uint32_t surfaceId);
+        // surface id of the captured wayland window, 0 when not on wayland
+        uint32_t waylandSurfaceId();
 
-        // destroy: the pairing and any open sequence on it are gone.
-        void noteSyncobjDestroyed(uint32_t syncobjId);
+        // bracket around the driver's present call
+        void beginPresent(uint32_t surfaceId);
+        void endPresent(uint32_t surfaceId);
 
-        // set_acquire_point / set_release_point: opens the sequence for the
-        // mapped surface, owned by the calling thread.
-        void notePointSetForSyncobj(uint32_t syncobjId);
+        // true while any present bracket is open; lets the marshal wrapper
+        // skip all work outside presents
+        bool anyPresentOpen();
 
-        // wl_surface.commit. Blocks while another thread's sequence is open.
-        // endCommit must follow the actual marshal so a released waiter cannot
-        // overtake the presenter's commit on the wire.
+        // before marshalling wl_surface.commit: waits out another thread's
+        // present on this surface, bounded by a budget so a wedged presenter
+        // cannot park the ui thread forever
         void beginCommit(uint32_t surfaceId);
-        void endCommit(uint32_t surfaceId);
 
-        // Diagnostics: commits that were actually made to wait.
+        // diagnostics: commits that were actually made to wait
         uint64_t heldCount();
 
-        // Test hooks.
+        // test hooks
         void setWaitBudgetForTests(uint64_t microseconds);
         void resetForTests();
     }

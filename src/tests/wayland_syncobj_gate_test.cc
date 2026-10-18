@@ -1,6 +1,5 @@
-// A missing hold in the explicit-sync gate ends as a compositor-killed wayland
-// connection at runtime, so the hold-and-release ordering is driven directly
-// with threads here.
+// A missing hold here ends as a compositor-killed wayland connection at
+// runtime, so the present/commit ordering is driven directly with threads.
 #include "wayland_syncobj_gate.hh"
 
 #include <atomic>
@@ -35,132 +34,128 @@ namespace
 int main()
 {
     constexpr uint32_t SURFACE = 43;
-    constexpr uint32_t SYNCOBJ = 76;
 
-    // commits on untracked surfaces never make the gate do anything
+    // no present open: commits pass straight through
     {
         resetForTests();
         auto start = Clock::now();
         beginCommit(SURFACE);
-        endCommit(SURFACE);
         CHECK(microsSince(start) < 5000);
         CHECK(heldCount() == 0);
     }
 
-    // the presenter's own sequence passes straight through and closes
+    // the presenter's own commit inside its present is never held
     {
         resetForTests();
-        noteSyncobjSurface(SYNCOBJ, SURFACE);
-        notePointSetForSyncobj(SYNCOBJ);
+        beginPresent(SURFACE);
         auto start = Clock::now();
         beginCommit(SURFACE);
-        endCommit(SURFACE);
         CHECK(microsSince(start) < 5000);
         CHECK(heldCount() == 0);
-
-        std::atomic<uint64_t> later{0};
-        std::thread foreign([&] {
-            auto t = Clock::now();
-            beginCommit(SURFACE);
-            later.store(microsSince(t));
-            endCommit(SURFACE);
-        });
-        foreign.join();
-        CHECK(later.load() < 5000);
-        CHECK(heldCount() == 0);
+        endPresent(SURFACE);
     }
 
-    // a foreign commit waits until the presenter's endCommit, not its
-    // beginCommit: the marshal sits between the two
+    // a foreign commit waits until the presenter closes the bracket
     {
         resetForTests();
-        noteSyncobjSurface(SYNCOBJ, SURFACE);
-        std::atomic<bool> presenterMarshaled{false};
+        std::atomic<bool> presentOpen{false};
+        std::atomic<bool> presentFinished{false};
         std::atomic<uint64_t> foreignWait{0};
 
         std::thread presenter([&] {
-            notePointSetForSyncobj(SYNCOBJ);
-            std::this_thread::sleep_for(std::chrono::milliseconds(30));
-            beginCommit(SURFACE);
-            std::this_thread::sleep_for(std::chrono::milliseconds(10)); // marshal window
-            presenterMarshaled.store(true);
-            endCommit(SURFACE);
+            beginPresent(SURFACE);
+            presentOpen.store(true);
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            presentFinished.store(true);
+            endPresent(SURFACE);
         });
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        while (!presentOpen.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
         std::thread foreign([&] {
-            auto t = Clock::now();
+            auto start = Clock::now();
             beginCommit(SURFACE);
-            foreignWait.store(microsSince(t));
-            endCommit(SURFACE);
+            foreignWait.store(microsSince(start));
+            CHECK(presentFinished.load()); // released only after the bracket closed
         });
 
         presenter.join();
         foreign.join();
 
-        CHECK(foreignWait.load() >= 25000); // held across the whole sequence
-        CHECK(presenterMarshaled.load());   // and until the marshal finished
+        CHECK(foreignWait.load() >= 25000);
         CHECK(heldCount() == 1);
+
+        // and once closed, commits pass instantly
+        auto start = Clock::now();
+        beginCommit(SURFACE);
+        CHECK(microsSince(start) < 5000);
     }
 
-    // a presenter that never commits must not park later commits forever
+    // endPresent from another thread must not close the bracket
     {
         resetForTests();
         setWaitBudgetForTests(20000);
-        noteSyncobjSurface(SYNCOBJ, SURFACE);
-        notePointSetForSyncobj(SYNCOBJ);
-
         std::atomic<uint64_t> waited{0};
+        std::atomic<bool> presentOpen{false};
+        std::atomic<bool> finish{false};
+
+        std::thread presenter([&] {
+            beginPresent(SURFACE);
+            presentOpen.store(true);
+            while (!finish.load())
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            endPresent(SURFACE);
+        });
+
+        while (!presentOpen.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        endPresent(SURFACE); // different thread: ignored
+
         std::thread foreign([&] {
-            auto t = Clock::now();
+            auto start = Clock::now();
             beginCommit(SURFACE);
-            waited.store(microsSince(t));
-            endCommit(SURFACE);
+            waited.store(microsSince(start));
         });
         foreign.join();
-
         CHECK(waited.load() >= 18000);
-        CHECK(waited.load() < 500000);
-        CHECK(heldCount() == 1);
 
-        // the stuck sequence was dropped: the next commit passes instantly
-        std::atomic<uint64_t> second{0};
-        std::thread again([&] {
-            auto t = Clock::now();
-            beginCommit(SURFACE);
-            second.store(microsSince(t));
-            endCommit(SURFACE);
-        });
-        again.join();
-        CHECK(second.load() < 5000);
+        finish.store(true);
+        presenter.join();
+        resetForTests();
     }
 
-    // destroying the syncobj drops the pairing and any open sequence
+    // bound: a present that never closes cannot park commits forever
     {
         resetForTests();
-        noteSyncobjSurface(SYNCOBJ, SURFACE);
-        notePointSetForSyncobj(SYNCOBJ);
-        noteSyncobjDestroyed(SYNCOBJ);
+        setWaitBudgetForTests(20000);
+        beginPresent(SURFACE); // opened by this thread, never ended
 
-        std::atomic<uint64_t> waited{0};
-        std::thread foreign([&] {
-            auto t = Clock::now();
-            beginCommit(SURFACE);
-            waited.store(microsSince(t));
-            endCommit(SURFACE);
-        });
-        foreign.join();
-        CHECK(waited.load() < 5000);
-        CHECK(heldCount() == 0);
+        std::atomic<uint64_t> first{0};
+        std::atomic<uint64_t> second{0};
 
-        // point sets on the dead pairing no longer arm anything
-        notePointSetForSyncobj(SYNCOBJ);
-        std::thread stale([&] {
+        std::thread a([&] {
+            auto start = Clock::now();
             beginCommit(SURFACE);
-            endCommit(SURFACE);
+            first.store(microsSince(start));
         });
-        stale.join();
-        CHECK(heldCount() == 0);
+        a.join();
+
+        std::thread b([&] {
+            auto start = Clock::now();
+            beginCommit(SURFACE);
+            second.store(microsSince(start));
+        });
+        b.join();
+
+        CHECK(first.load() >= 18000);
+        CHECK(first.load() < 500000);
+        CHECK(second.load() >= 18000);
+        CHECK(second.load() < 500000);
+        CHECK(heldCount() == 2);
+
+        resetForTests();
     }
 
     if (failures)
