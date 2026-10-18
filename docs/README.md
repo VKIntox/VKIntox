@@ -6,7 +6,7 @@
 
 vulkan post-processing layer with advanced depth buffer resolve for linux.
 
-[![version](https://img.shields.io/badge/version-0.2.0--rc1-blueviolet?style=flat-square)](#)
+[![version](https://img.shields.io/badge/version-0.2.0-blueviolet?style=flat-square)](#)
 [![license](https://img.shields.io/badge/license-zlib-2e8b57?style=flat-square)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-linux-555555?style=flat-square)](#)
 [![CI](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/buwryme/VKIntox/actions/workflows/ci.yml)
@@ -14,9 +14,6 @@ vulkan post-processing layer with advanced depth buffer resolve for linux.
 </div>
 
 ---
-
-> [!WARNING]
-> this is `v0.2.0-rc1`: a release candidate. the 0.2.0 line is feature-complete but still soaking, so expect rough edges before the final tag.
 
 ## showcase
 
@@ -126,10 +123,8 @@ vkintox intercepts vulkan swapchain calls as a layer between the game and the dr
 
 ### known issues
 
--   **catalog stability:** extremely poor in sober. avoid opening it.
--   **settings:** changing in-game graphics quality often causes crashes.
--   **wine:** games using dxvk/vkd3d might break, and anti-cheat could get you moderated.
--   **flatpak layer updates:** a reboot can be needed after re-installing or updating the layer for flatpak targets (remote and local builds alike). it may also apply to native system installs.
+-   **wine:** games using dxvk/vkd3d might break (depends on the game itself), and anti-cheat *could* get you moderated.
+-   **flatpak layer updates:** a reboot can be needed after re-installing or updating the layer for flatpak targets (remote and local builds alike). doesn't apply to native installs.
 
 ### troubleshooting
 
@@ -175,7 +170,8 @@ thanks to **slobodaapl** (vkshade), **dadschoorse** (vkbasalt), **daaboulex** (w
 
 ---
 
-> beta-stage software; not fully stable, use carefully.
+> [!IMPORTANT]
+> beta-stage software.
 
 <div align="center">
 
