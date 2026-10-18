@@ -82,6 +82,7 @@ namespace
         void* replacement;
         bool probeOnly;
         bool stopped;
+        bool sawObject;
         void** foundSlot;
         void** foundReal;
     };
@@ -178,12 +179,19 @@ namespace
             auto* slot = reinterpret_cast<void**>(slotAddr);
             void* current = *slot;
 
-            // the slot must already point into this same object: an unresolved
-            // lazy stub would re-resolve and drop the patch
-            Dl_info resolved{};
-            if (dladdr(current, &resolved) == 0 ||
-                reinterpret_cast<uintptr_t>(resolved.dli_fbase) != base)
+            // the slot must already hold this object's own resolved entry: an
+            // unresolved lazy stub would re-resolve and drop the patch, and a
+            // slot bound to another object would call back into our wrapper
+            if (sym->st_shndx == SHN_UNDEF || sym->st_value == 0)
                 continue;
+            const uintptr_t ownEntry = base + static_cast<uintptr_t>(sym->st_value);
+            if (reinterpret_cast<uintptr_t>(current) != ownEntry)
+            {
+                if (!scan.probeOnly)
+                    VKIntox::Logger::trace("Wayland interpose: marshal jump slot in " + std::string(info->dlpi_name)
+                                           + " is not resolved yet, skipping");
+                continue;
+            }
 
             if (scan.probeOnly)
             {
@@ -221,7 +229,10 @@ namespace
     {
         auto* scan = static_cast<Scan*>(data);
         if (nameMatches(info->dlpi_name, "libwayland-client.so"))
+        {
+            scan->sawObject = true;
             tryPatchObject(info, *scan);
+        }
         return scan->stopped ? 1 : 0;
     }
 } // namespace
@@ -257,14 +268,23 @@ namespace VKIntox
         std::lock_guard<std::mutex> lock(g_installMutex);
         Scan scan{"wl_proxy_marshal_array_flags",
                   reinterpret_cast<void*>(&wl_proxy_marshal_array_flags),
-                  false, false, nullptr, nullptr};
+                  false, false, false, nullptr, nullptr};
         dl_iterate_phdr(scanCallback, &scan);
+
+        // a wayland built with its internal calls bound directly has nothing
+        // to redirect; say so once instead of looking armed while inert
+        if (scan.sawObject && g_copyCount.load(std::memory_order_acquire) == 0)
+        {
+            static std::atomic<bool> warned{false};
+            if (!warned.exchange(true))
+                Logger::warn("Wayland interpose: loaded libwayland exposes no patchable marshal entry, commits stay ungated");
+        }
     }
 
     bool waylandMarshalSlotForTests(void** slotOut, void** realOut)
     {
         std::lock_guard<std::mutex> lock(g_installMutex);
-        Scan scan{"wl_proxy_marshal_array_flags", nullptr, true, false, slotOut, realOut};
+        Scan scan{"wl_proxy_marshal_array_flags", nullptr, true, false, false, slotOut, realOut};
         dl_iterate_phdr(scanCallback, &scan);
         return scan.stopped;
     }

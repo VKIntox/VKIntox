@@ -1,14 +1,20 @@
-// glibc rewrites the dynamic section's pointer entries (DT_SYMTAB, DT_STRTAB,
-// DT_JMPREL) to absolute addresses in place at load time. A patcher that adds
-// the load base again dereferences a non-canonical pointer and takes the whole
-// client down. This drives the real scan against a real libwayland and
-// requires the jump slot's current value to match dlsym.
+// The marshal patcher parses live ELF state: it must accept glibc's in-place
+// absolute dynamic-section pointers, validate every address before reading
+// it, and only redirect a jump slot that already holds the object's own
+// resolved entry. This drives the real scan against a fixture carrying
+// exactly that shape, so the test does not depend on how a distro built its
+// wayland (Ubuntu binds the call directly and has no slot to hook).
 #include "wayland_interpose_patch.hh"
 
 #include <dlfcn.h>
 
 #include <cstdio>
 #include <cstdlib>
+
+// satisfies the patcher's replacement reference; the probe never installs it
+extern "C" void wl_proxy_marshal_array_flags()
+{
+}
 
 namespace
 {
@@ -22,14 +28,21 @@ namespace
     }
 }
 
-int main()
+int main(int argc, char** argv)
 {
-    const char* override = std::getenv("VKINTOX_TEST_WAYLAND_LIB");
-    void* handle = override ? dlopen(override, RTLD_NOW | RTLD_LOCAL)
-                            : dlopen("libwayland-client.so.0", RTLD_NOW | RTLD_LOCAL);
+    const char* path = std::getenv("VKINTOX_TEST_WAYLAND_LIB");
+    if (!path && argc > 1)
+        path = argv[1];
+    if (!path)
+    {
+        std::printf("SKIP no fixture path given\n");
+        return 77;
+    }
+
+    void* handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle)
     {
-        std::printf("SKIP no libwayland available to scan\n");
+        std::printf("SKIP could not load %s\n", path);
         return 77;
     }
 
@@ -38,7 +51,7 @@ int main()
     check(VKIntox::waylandMarshalSlotForTests(&slot, &real), "jump slot located without faulting");
     if (!slot)
     {
-        std::printf("%d failure(s)\n", failures ? failures : 1);
+        std::printf("%d failure(s)\n", failures);
         return 1;
     }
 

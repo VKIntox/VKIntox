@@ -327,14 +327,23 @@ wayland_syncobj_gate_tests = executable('vkintox-wayland-syncobj-gate-tests',
 test('wayland syncobj gate', wayland_syncobj_gate_tests)
 
 # The marshal patcher parses live ELF state; reading one dynamic-section
-# pointer with the wrong convention took the whole client down once.
+# pointer with the wrong convention took the whole client down once. The
+# fixture carries the shape the patcher hooks (an exported marshal entry
+# called through a jump slot), so the test does not depend on how a distro
+# built its wayland.
+wayland_patch_fixture = shared_library('vkintox-wayland-patch-fixture',
+    'tests/wayland_patch_fixture.cc',
+    name_prefix: 'libwayland-client.so.',
+    name_suffix: 'patch-test',
+    cpp_args: ['-fsemantic-interposition'],
+    link_args: ['-Wl,-z,now'])
 wayland_interpose_patch_tests = executable('vkintox-wayland-interpose-patch-tests',
     'tests/wayland_interpose_patch_test.cc',
     'input/wayland_interpose_patch.cc',
     'core/logger.cc',
-    dependencies : [threads_dep, wayland_client_dep],
+    dependencies : [threads_dep, wayland_client_dep.partial_dependency(compile_args: true, includes: true)],
     include_directories : [core_inc, input_inc, source_inc])
-test('wayland interpose patch', wayland_interpose_patch_tests)
+test('wayland interpose patch', wayland_interpose_patch_tests, args: [wayland_patch_fixture])
 
 compile_cache_tests = executable('vkintox-compile-cache-tests',
     'effects/compile_cache_test.cc',
