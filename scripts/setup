@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-REPO="buwryme/VKIntox"
+REPO="VKIntox/VKIntox"
 WORKFLOW="flatpak-build.yml"
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
 # the M3 font set, the curated EffectPackages.ini and the built-in shaders all

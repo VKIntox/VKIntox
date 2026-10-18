@@ -123,7 +123,7 @@ namespace VKIntox
         ImGui::TextDisabled("VKIntox by buwryme  \xC2\xB7  version %s", runtimeVersion());
         ImGui::TextDisabled("Report issues:");
         ImGui::SameLine();
-        ImGui::TextLinkOpenURL("github.com/buwryme/VKIntox/issues", "https://github.com/buwryme/VKIntox/issues");
+        ImGui::TextLinkOpenURL("github.com/VKIntox/VKIntox/issues", "https://github.com/VKIntox/VKIntox/issues");
         UI::PopSupport();
     }
 
