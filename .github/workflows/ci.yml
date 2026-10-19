@@ -70,6 +70,9 @@ jobs:
       - name: Compile ReShade EffectPackages shaders
         run: python3 src/tests/test_reshade_shaders.py --shader-check build/src/vkintox-shader-check
 
+      - name: Compile built-in shaders
+        run: python3 src/tests/test_reshade_shaders.py --shader-check build/src/vkintox-shader-check --shader-dir assets/builtInShaders --include src/tests/fixtures
+
       - name: Install smoke test dependencies
         run: |
           # xauth is named explicitly because it is only a Recommends of xvfb, and

@@ -10,6 +10,10 @@ LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
 # the M3 font set, the curated EffectPackages.ini and the built-in shaders all
 # live on main with the rest of the release.
 ASSET_REF="main"
+# the effects that ship with the layer have their own repo, fetched at the
+# same cadence as the packages below
+EFFECTS_REPO="VKIntox/VKIntoxEffects"
+EFFECTS_REF="main"
 EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/$ASSET_REF/assets/EffectPackages.ini}"
 
 if [[ -t 1 ]]; then
@@ -765,14 +769,14 @@ else
     ok "effects up to date"
 fi
 
-# the shader that ships with VKIntox itself, in its own VKIntox package dir
-# beside the downloaded packages; refreshed every run so a fix lands without a
-# package hash change
+# the shaders that ship with VKIntox itself, into their own VKIntox package
+# dir beside the downloaded packages; refreshed every run so a fix lands
+# without a package hash change
 mkdir -p "$SHADERS_DIR/VKIntox"
 for shader in MSAA.fx ExponentialFog.fx; do
-    curl -fsSL "https://raw.githubusercontent.com/$REPO/$ASSET_REF/assets/builtInShaders/$shader" \
+    curl -fsSL "https://raw.githubusercontent.com/$EFFECTS_REPO/$EFFECTS_REF/$shader" \
         -o "$SHADERS_DIR/VKIntox/$shader" ||
-        warn "couldn't fetch builtInShaders/$shader"
+        warn "couldn't fetch $EFFECTS_REPO/$shader"
 done
 
 section "enable layer"

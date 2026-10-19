@@ -88,13 +88,15 @@ def install_manifest_packages(manifest: Path, work_dir: Path, shader_dir: Path) 
         raise RuntimeError("EffectPackages.ini did not provide any shader packages")
 
 
-def compile_shaders(shader_check: Path, shader_dir: Path) -> int:
+def compile_shaders(shader_check: Path, shader_dir: Path, extra_includes: list[Path]) -> int:
     shaders = sorted(shader_dir.rglob("*.fx"))
     if not shaders:
         print(f"No .fx shaders found under {shader_dir}", file=sys.stderr)
         return 1
 
-    include_dirs = sorted({shader_dir, *(path.parent for path in shader_dir.rglob("*.fxh"))})
+    include_dirs = sorted(
+        {shader_dir, *(path.parent for path in shader_dir.rglob("*.fxh")), *extra_includes}
+    )
     command_prefix = [str(shader_check)]
     for include_dir in include_dirs:
         command_prefix.extend(["--include", str(include_dir)])
@@ -129,6 +131,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shader-check", required=True, type=Path, help="vkintox-shader-check executable")
     parser.add_argument("--shader-dir", type=Path, help="use an existing installed shader tree")
+    parser.add_argument(
+        "--include",
+        dest="includes",
+        action="append",
+        default=[],
+        type=Path,
+        help="extra include directory for header resolution (repeatable)",
+    )
     parser.add_argument("--manifest-url", default=os.environ.get("VKINTOX_EFFECT_PACKAGES_URL", DEFAULT_MANIFEST_URL))
     args = parser.parse_args()
 
@@ -139,15 +149,15 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="vkintox-shader-tests-") as temporary:
         work_dir = Path(temporary)
-        manifest = work_dir / "EffectPackages.ini"
-        try:
-            fetch_manifest(args.manifest_url, manifest)
-        except Exception as error:
-            print(f"Could not fetch EffectPackages.ini: {error}", file=sys.stderr)
-            return 1
-
         shader_dir = args.shader_dir
         if shader_dir is None:
+            manifest = work_dir / "EffectPackages.ini"
+            try:
+                fetch_manifest(args.manifest_url, manifest)
+            except Exception as error:
+                print(f"Could not fetch EffectPackages.ini: {error}", file=sys.stderr)
+                return 1
+
             shader_dir = work_dir / "Shaders"
             try:
                 install_manifest_packages(manifest, work_dir, shader_dir)
@@ -155,7 +165,11 @@ def main() -> int:
                 print(error, file=sys.stderr)
                 return 1
 
-        return compile_shaders(args.shader_check.resolve(), shader_dir.resolve())
+        return compile_shaders(
+            args.shader_check.resolve(),
+            shader_dir.resolve(),
+            [path.resolve() for path in args.includes],
+        )
 
 
 if __name__ == "__main__":

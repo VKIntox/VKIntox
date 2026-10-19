@@ -104,7 +104,7 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 **setup**
 
 -   **one installer** for sober, flatpak and native targets, with an interactive version picker and an uninstall that leaves your config alone.
--   **assets:** seeds the full google sans + material symbols set and their licences, installs effect packages under `reshade/` grouped by package, and drops the built-in vkintox shaders beside them.
+-   **assets:** seeds the full google sans + material symbols set and their licences, installs effect packages under `reshade/` grouped by package, and drops the built-in vkintox shaders beside them — those live in their own repo, [VKIntoxEffects](https://github.com/VKIntox/VKIntoxEffects), and are fetched on every setup run.
 
 **under the hood**
 

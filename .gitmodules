@@ -4,3 +4,6 @@
 [submodule "src/vendor/reshade"]
 	path = src/vendor/reshade
 	url = https://github.com/VKIntox/reshade-vkintox.git
+[submodule "assets/builtInShaders"]
+	path = assets/builtInShaders
+	url = https://github.com/VKIntox/VKIntoxEffects.git
