@@ -100,25 +100,25 @@ namespace VKIntox
         };
         std::vector<PassRuntime> passRuntimes;
 
-        VkDescriptorSetLayout                 uniformDescriptorSetLayout;
-        VkDescriptorSetLayout                 imageSamplerDescriptorSetLayout;
-        VkShaderModule                        shaderModule;
-        VkDescriptorPool                      descriptorPool;
-        VkPipelineLayout                      pipelineLayout;
-        VkExtent2D                            imageExtent;
+        VkDescriptorSetLayout                 uniformDescriptorSetLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout                 imageSamplerDescriptorSetLayout = VK_NULL_HANDLE;
+        VkShaderModule                        shaderModule = VK_NULL_HANDLE;
+        VkDescriptorPool                      descriptorPool = VK_NULL_HANDLE;
+        VkPipelineLayout                      pipelineLayout = VK_NULL_HANDLE;
+        VkExtent2D                            imageExtent = {};
         std::vector<VkSampler>                samplers;
-        EffectRegistry*                       effectRegistry;
+        EffectRegistry*                       effectRegistry = nullptr;
         std::string                           effectName;
         std::string                           effectPath;  // Path to .fx file (may differ from effectName)
         std::vector<PreprocessorDefinition>   customPreprocessorDefs;  // User-defined macros
         reshadefx::module                     module;
         std::vector<VkDeviceMemory>           textureMemory;
 
-        VkFormat    inputOutputFormatUNORM;
-        VkFormat    inputOutputFormatSRGB;
-        VkFormat    stencilFormat;
-        VkImage     stencilImage;
-        VkImageView stencilImageView;
+        VkFormat    inputOutputFormatUNORM = VK_FORMAT_UNDEFINED;
+        VkFormat    inputOutputFormatSRGB = VK_FORMAT_UNDEFINED;
+        VkFormat    stencilFormat = VK_FORMAT_UNDEFINED;
+        VkImage     stencilImage = VK_NULL_HANDLE;
+        VkImageView stencilImageView = VK_NULL_HANDLE;
         // how often the shader writes to the reshade back buffer
         // we need to flip the "backbuffer" after each write if there is a next one
         int                      outputWrites = 0;
@@ -126,11 +126,11 @@ namespace VKIntox
         std::vector<bool>        outputImageInitialized;
         std::vector<VkImageView> backBufferImageViewsUNORM;
         std::vector<VkImageView> backBufferImageViewsSRGB;
-        VkBuffer                 stagingBuffer;
-        VkDeviceMemory           stagingBufferMemory;
-        uint32_t                 bufferSize;
+        VkBuffer                 stagingBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory           stagingBufferMemory = VK_NULL_HANDLE;
+        uint32_t                 bufferSize = 0;
         void*                    stagingBufferMapped = nullptr;  // Persistent map (HOST_COHERENT)
-        VkDescriptorSet          bufferDescriptorSet;
+        VkDescriptorSet          bufferDescriptorSet = VK_NULL_HANDLE;
         bool                     disableComputePipelineOptimization = false;
 
         std::vector<std::shared_ptr<ReshadeUniform>> uniforms;

@@ -1786,15 +1786,42 @@ namespace VKIntox
         modifiedCreateInfo.enabledExtensionCount   = enabledExtensionNames.size();
 
         // Active needed Features
+        //
+        // These are requested on top of whatever the application asked for, but
+        // only when the physical device actually supports them. Intel's Gen9
+        // iGPUs (UHD 620/630, Comet Lake GT2) report
+        // shaderStorageImageReadWithoutFormat as false, and forcing it on made
+        // vkCreateDevice fail with VK_ERROR_FEATURE_NOT_PRESENT. The application
+        // then carried on with an invalid device handle and crashed inside
+        // vkGetDeviceQueue.
+        VkPhysicalDeviceFeatures supportedFeatures = {};
+        if (instanceDispatchMap[GetKey(physicalDevice)].GetPhysicalDeviceFeatures2)
+        {
+            VkPhysicalDeviceFeatures2 features2 = {};
+            features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            instanceDispatchMap[GetKey(physicalDevice)].GetPhysicalDeviceFeatures2(physicalDevice, &features2);
+            supportedFeatures = features2.features;
+        }
+
         VkPhysicalDeviceFeatures deviceFeatures = {};
         if (modifiedCreateInfo.pEnabledFeatures)
         {
             deviceFeatures = *(modifiedCreateInfo.pEnabledFeatures);
         }
-        deviceFeatures.shaderImageGatherExtended = VK_TRUE;
-        deviceFeatures.shaderStorageImageReadWithoutFormat = VK_TRUE;
-        deviceFeatures.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+        deviceFeatures.shaderImageGatherExtended =
+            deviceFeatures.shaderImageGatherExtended || supportedFeatures.shaderImageGatherExtended;
+        deviceFeatures.shaderStorageImageReadWithoutFormat =
+            deviceFeatures.shaderStorageImageReadWithoutFormat || supportedFeatures.shaderStorageImageReadWithoutFormat;
+        deviceFeatures.shaderStorageImageWriteWithoutFormat =
+            deviceFeatures.shaderStorageImageWriteWithoutFormat || supportedFeatures.shaderStorageImageWriteWithoutFormat;
         modifiedCreateInfo.pEnabledFeatures      = &deviceFeatures;
+
+        if (!supportedFeatures.shaderImageGatherExtended)
+            Logger::warn("device does not support shaderImageGatherExtended; effects that need it will fail to compile");
+        if (!supportedFeatures.shaderStorageImageReadWithoutFormat)
+            Logger::warn("device does not support shaderStorageImageReadWithoutFormat; effects that need it will fail to compile");
+        if (!supportedFeatures.shaderStorageImageWriteWithoutFormat)
+            Logger::warn("device does not support shaderStorageImageWriteWithoutFormat; effects that need it will fail to compile");
 
         void* extendedDevicePNext = const_cast<void*>(modifiedCreateInfo.pNext);
 
