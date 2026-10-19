@@ -7,13 +7,9 @@ set -euo pipefail
 REPO="VKIntox/VKIntox"
 WORKFLOW="flatpak-build.yml"
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
-# the M3 font set, the curated EffectPackages.ini and the built-in shaders all
-# live on main with the rest of the release.
+# the M3 font set and the curated EffectPackages.ini live on main with the
+# rest of the release; the effects themselves are one of its package entries.
 ASSET_REF="main"
-# the effects that ship with the layer have their own repo, fetched at the
-# same cadence as the packages below
-EFFECTS_REPO="VKIntox/VKIntoxEffects"
-EFFECTS_REF="main"
 EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/$ASSET_REF/assets/EffectPackages.ini}"
 
 if [[ -t 1 ]]; then
@@ -768,16 +764,6 @@ PYEOF
 else
     ok "effects up to date"
 fi
-
-# the shaders that ship with VKIntox itself, into their own VKIntox package
-# dir beside the downloaded packages; refreshed every run so a fix lands
-# without a package hash change
-mkdir -p "$SHADERS_DIR/VKIntox"
-for shader in MSAA.fx ExponentialFog.fx; do
-    curl -fsSL "https://raw.githubusercontent.com/$EFFECTS_REPO/$EFFECTS_REF/$shader" \
-        -o "$SHADERS_DIR/VKIntox/$shader" ||
-        warn "couldn't fetch $EFFECTS_REPO/$shader"
-done
 
 section "enable layer"
 if ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
