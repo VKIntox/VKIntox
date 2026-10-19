@@ -87,3 +87,15 @@ TODOS for v0.2.0
 
 - Implement upside-down depth toggle inside Advanced tab
 - Move effects parameters to a separate card on the bottom (foldable, the card has tabs) instead of one card having both effect toggling/reordering AND parameters
+
+- multi-pass techniques cannot be trusted yet: with a trivial copy effect repeated,
+  1-2 passes render fine, 3 passes render fine but segfault at swapchain teardown
+  (NVIDIA: DeferredDestroyQueue::flush calls into the driver after a destroy), and
+  4+ passes render pure black even though a per-pass trace shows every pass
+  sampling the previous pass's output. the framebuffer build and the runtime
+  sampler switch both alternate backBuffer/output from outputWrites % 2 == 0, so
+  the bookkeeping reads consistent and the fault is likely in the descriptor-set
+  swap itself. until this is fixed, ship single-pass effects and iterate by
+  adding the effect again from the effects list, which is what VKIntoxEffects
+  does now. repro: vkcube under the layer with a config whose one effect declares
+  N identical copy passes.
