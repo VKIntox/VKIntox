@@ -4,7 +4,7 @@
 
 # vkintox
 
-vulkan post-processing layer with advanced depth buffer resolve for linux.
+proper reshade (with depth!) for linux games, on linux. utilizes vulkan layers. batteries included, along with a fun, lively material 3 design
 
 [![version](https://img.shields.io/badge/version-0.2.0-blueviolet?style=flat-square)](#)
 [![license](https://img.shields.io/badge/license-zlib-2e8b57?style=flat-square)](LICENSE)
