@@ -36,6 +36,9 @@ proper reshade (with depth!) for linux games, on linux. utilizes vulkan layers. 
 
 ### install
 
+> [!NOTE]
+> this is for flatpak.
+
 fetches the latest binary, config, fonts and shaders automatically.
 
 ```bash
@@ -48,7 +51,13 @@ works in bash, zsh and fish alike. for another flatpak app, append its id:
 curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- com.target.app
 ```
 
-the script picks the version interactively, and `... | bash -s -- uninstall` removes the layer while keeping your config.
+uninstall (keeps config):
+
+```bash
+curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
+```
+
+the script picks the version interactively, and let's you download experimental versions.
 
 > [!IMPORTANT]
 > there are no system prebuilts. use local compilation for native installs.
