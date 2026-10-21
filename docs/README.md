@@ -10,6 +10,7 @@ proper reshade (with depth!) for linux games, on linux. utilizes vulkan layers. 
 [![license](https://img.shields.io/badge/license-zlib-2e8b57?style=flat-square)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-linux-555555?style=flat-square)](#)
 [![CI](https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml)
+[![discord server](https://img.shields.io/badge/discord-server-5865f2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/HrUrzXAxPV)
 
 </div>
 
@@ -184,6 +185,6 @@ thanks to **slobodaapl** (vkshade), **dadschoorse** (vkbasalt), **daaboulex** (w
 
 <div align="center">
 
-made with ♡ by [buwryme](https://github.com/buwryme)
+made with ♡ by [buwryme](https://github.com/buwryme). join the [discord server!](https://discord.gg/HrUrzXAxPV)
 
 </div>
