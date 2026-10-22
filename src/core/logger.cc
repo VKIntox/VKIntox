@@ -10,7 +10,11 @@
 
 namespace VKIntox
 {
-    Logger Logger::s_instance;
+    Logger& Logger::instance()
+    {
+        static Logger logger;
+        return logger;
+    }
 
     Logger::Logger() : minLevel(getMinLogLevel())
     {
@@ -57,32 +61,32 @@ namespace VKIntox
 
     void Logger::trace(const std::string& message)
     {
-        s_instance.emitMsg(LogLevel::Trace, message);
+        instance().emitMsg(LogLevel::Trace, message);
     }
 
     void Logger::debug(const std::string& message)
     {
-        s_instance.emitMsg(LogLevel::Debug, message);
+        instance().emitMsg(LogLevel::Debug, message);
     }
 
     void Logger::info(const std::string& message)
     {
-        s_instance.emitMsg(LogLevel::Info, message);
+        instance().emitMsg(LogLevel::Info, message);
     }
 
     void Logger::warn(const std::string& message)
     {
-        s_instance.emitMsg(LogLevel::Warn, message);
+        instance().emitMsg(LogLevel::Warn, message);
     }
 
     void Logger::err(const std::string& message)
     {
-        s_instance.emitMsg(LogLevel::Error, message);
+        instance().emitMsg(LogLevel::Error, message);
     }
 
     void Logger::log(LogLevel level, const std::string& message)
     {
-        s_instance.emitMsg(level, message);
+        instance().emitMsg(level, message);
     }
 
     void Logger::emitMsg(LogLevel level, const std::string& message)
@@ -130,36 +134,41 @@ namespace VKIntox
 
     std::vector<LogEntry> Logger::getHistory()
     {
-        std::lock_guard<std::mutex> lock(s_instance.mutex);
-        return std::vector<LogEntry>(s_instance.history.begin(), s_instance.history.end());
+        Logger& logger = instance();
+        std::lock_guard<std::mutex> lock(logger.mutex);
+        return std::vector<LogEntry>(logger.history.begin(), logger.history.end());
     }
 
     uint64_t Logger::historyVersion()
     {
-        std::lock_guard<std::mutex> lock(s_instance.mutex);
-        return s_instance.historyVersionCounter;
+        Logger& logger = instance();
+        std::lock_guard<std::mutex> lock(logger.mutex);
+        return logger.historyVersionCounter;
     }
 
     void Logger::clearHistory()
     {
-        std::lock_guard<std::mutex> lock(s_instance.mutex);
-        s_instance.history.clear();
-        ++s_instance.historyVersionCounter;
+        Logger& logger = instance();
+        std::lock_guard<std::mutex> lock(logger.mutex);
+        logger.history.clear();
+        ++logger.historyVersionCounter;
     }
 
     void Logger::setHistoryEnabled(bool enabled)
     {
-        std::lock_guard<std::mutex> lock(s_instance.mutex);
-        s_instance.historyEnabled = enabled;
+        Logger& logger = instance();
+        std::lock_guard<std::mutex> lock(logger.mutex);
+        logger.historyEnabled = enabled;
         if (!enabled)
-            s_instance.history.clear();  // Free memory when disabled
-        ++s_instance.historyVersionCounter;
+            logger.history.clear();  // Free memory when disabled
+        ++logger.historyVersionCounter;
     }
 
     bool Logger::isHistoryEnabled()
     {
-        std::lock_guard<std::mutex> lock(s_instance.mutex);
-        return s_instance.historyEnabled;
+        Logger& logger = instance();
+        std::lock_guard<std::mutex> lock(logger.mutex);
+        return logger.historyEnabled;
     }
 
     const char* Logger::levelName(LogLevel level)

@@ -67,7 +67,7 @@ namespace VKIntox
 
         static LogLevel logLevel()
         {
-            return s_instance.minLevel;
+            return instance().minLevel;
         }
 
         // Cheap level check for lazy logging macros. Reads the const min level
@@ -76,7 +76,8 @@ namespace VKIntox
         // the level is filtered out.
         static bool isLevelEnabled(LogLevel level)
         {
-            return level >= s_instance.minLevel || s_instance.historyEnabled;
+            const Logger& logger = instance();
+            return level >= logger.minLevel || logger.historyEnabled;
         }
 
         // Get log history (thread-safe copy)
@@ -97,7 +98,11 @@ namespace VKIntox
         static const char* levelName(LogLevel level);
 
     private:
-        static Logger s_instance;
+        // Function-local static, so a library constructor that logs before
+        // this translation unit's globals are initialised still gets a valid
+        // logger. A namespace-scope s_instance has no such ordering guarantee.
+        static Logger& instance();
+
         static constexpr size_t MAX_HISTORY_SIZE = 1000;
 
         const LogLevel minLevel;
