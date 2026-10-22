@@ -30,6 +30,7 @@ mkdir -p "$stage/$prefix"
 
 tar -C "$repo_root" -chf - \
     --exclude='./.git' \
+    --exclude='./.pre-commit-config.yaml' \
     --exclude='./.flatpak-builder' \
     --exclude='./build' \
     --exclude='./build-*' \
