@@ -543,18 +543,22 @@ choose_version() {
 
 marker_matches() {
     [[ -f "$MARKER" ]] || return 1
-    local tag asset digest method app
+    local tag asset digest method
     tag=$(sed -n 's/^tag=//p' "$MARKER" | head -1)
     asset=$(sed -n 's/^asset=//p' "$MARKER" | head -1)
     digest=$(sed -n 's/^digest=//p' "$MARKER" | head -1)
     method=$(sed -n 's/^method=//p' "$MARKER" | head -1)
-    app=$(sed -n 's/^app_id=//p' "$MARKER" | head -1)
     [[ "$tag" == "$SELECTED_TAG" && "$asset" == "$SELECTED_ASSET" && "$method" == "$METHOD" ]] || return 1
     [[ -z "$SELECTED_DIGEST" || "$digest" == "${SELECTED_DIGEST#sha256:}" ]] || return 1
-    if [[ "$METHOD" == "flatpak" ]]; then
-        [[ "$app" == "$APP_ID" ]] || return 1
-    fi
+    # the flatpak layer is a global runtime extension, not an app extension:
+    # installing it for one app makes it available to every app. app_id in the
+    # marker is only informational, so do not require it to match here.
     return 0
+}
+
+flatpak_layer_installed() {
+    command -v flatpak >/dev/null 2>&1 || return 1
+    flatpak list --user --runtime --columns=application 2>/dev/null | grep -qx "$LAYER_ID"
 }
 
 installed_pkg_version() {
@@ -887,7 +891,7 @@ choose_version
 
 SKIP_LAYER=0
 if ((FORCE == 0)); then
-    if marker_matches; then
+    if marker_matches && { [[ "$METHOD" != "flatpak" ]] || flatpak_layer_installed; }; then
         SKIP_LAYER=1
     elif [[ "$METHOD" == "system" ]]; then
         installed_version=$(installed_pkg_version || true)
@@ -977,23 +981,28 @@ else
             ok "installed"
         fi
     else
-        FLATPAK_CMD=(flatpak install --user --noninteractive -y "$ASSET_PATH")
+        FLATPAK_CMD=(flatpak install --user --noninteractive -y --or-update "$ASSET_PATH")
         if ((DRY_RUN)); then
             say "dry run: would install with: ${FLATPAK_CMD[*]}"
         else
             section "install"
             run_progress "installing vkintox $SELECTED_TAG" "${FLATPAK_CMD[@]}"
-            if ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
-                warn "couldn't set ENABLE_VKINTOX for $APP_ID"
-            fi
-            if [[ "$APP_ID" == "io.github.microlift.butter" ]]; then
-                flatpak override --user "$APP_ID" --env=GSK_RENDERER=gl 2>/dev/null || true
-            fi
             ok "installed"
         fi
     fi
     if ((DRY_RUN == 0)); then
         write_marker
+    fi
+fi
+
+# the layer is a global extension, so a matching marker means we skipped the
+# install above; the per-app override still has to be applied for this app.
+if [[ "$METHOD" == "flatpak" ]] && ((DRY_RUN == 0)); then
+    if ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
+        warn "couldn't set ENABLE_VKINTOX for $APP_ID"
+    fi
+    if [[ "$APP_ID" == "io.github.microlift.butter" ]]; then
+        flatpak override --user "$APP_ID" --env=GSK_RENDERER=gl 2>/dev/null || true
     fi
 fi
 
