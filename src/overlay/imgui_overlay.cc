@@ -2546,8 +2546,11 @@ namespace VKIntox
         // Pinned under the content, or above it when the setting asks for top.
         {
             // the same reveal for both edges and both styles: a pushed page takes
-            // the strip back rather than having the bar hang over its breadcrumb
-            const float navFade = dockFade;
+            // the strip back rather than having the bar hang over its breadcrumb.
+            // Multiply by the shell fade: PushStyleVar replaces the inherited
+            // alpha, so using dockFade alone makes the dock stay opaque while
+            // the shell is still sliding/fading.
+            const float navFade = dockFade * shellAlpha;
             const float navY = navOnTop ? viewPos.y - navTopInset
                                         : viewPos.y + viewSize.y + dockGap;
             if (navFade > 0.02f)
