@@ -1,0 +1,31 @@
+Source: vkintox
+Section: graphics
+Priority: optional
+Maintainer: buwryme <buwryme@proton.me>
+Build-Depends:
+ debhelper-compat (= 13),
+ meson,
+ ninja-build,
+ pkg-config,
+ g++,
+ glslang-tools,
+ libvulkan-dev,
+ spirv-headers,
+ libx11-dev,
+ libxi-dev,
+ libxtst-dev,
+ libwayland-dev,
+ libxkbcommon-dev,
+ wayland-protocols,
+ libgio-2.0-dev
+Standards-Version: 4.7.0
+Homepage: https://github.com/VKIntox/VKIntox
+Rules-Requires-Root: no
+
+Package: vkintox
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Suggests: vulkan-tools
+Description: Vulkan post-processing layer with overlay UI
+ VKIntox is a Vulkan layer that adds ReShade-compatible post-processing effects,
+ depth buffer resolve, and an in-game Material 3 overlay on Wayland and X11.

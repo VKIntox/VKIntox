@@ -1,0 +1,479 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Full 40-character commit SHA to build and release"
+        required: true
+        type: string
+      version:
+        description: "Version without the v (e.g. 0.2.0); notes go in docs/releases/<version>.md"
+        required: true
+        type: string
+      reuse_run:
+        description: "Optional previous run IDs, comma-separated; their artifacts are added to the release. Disable the builds you want to reuse."
+        required: false
+        type: string
+        default: ""
+      build_arch:
+        description: "Include Arch Linux build?"
+        required: true
+        type: boolean
+        default: true
+      build_rpm:
+        description: "Include Fedora/openSUSE RPM builds?"
+        required: true
+        type: boolean
+        default: true
+      build_deb:
+        description: "Include Debian build?"
+        required: true
+        type: boolean
+        default: true
+      build_flatpak:
+        description: "Include Flatpak build?"
+        required: true
+        type: boolean
+        default: true
+      build_nix:
+        description: "Include Nix build?"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      notes: ${{ steps.meta.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+      - name: Check commit, version, notes and toggles
+        id: meta
+        env:
+          COMMIT: ${{ inputs.commit }}
+          RAW_VERSION: ${{ inputs.version }}
+          REUSE_RUN: ${{ inputs.reuse_run }}
+          BUILD_ARCH: ${{ inputs.build_arch }}
+          BUILD_RPM: ${{ inputs.build_rpm }}
+          BUILD_DEB: ${{ inputs.build_deb }}
+          BUILD_FLATPAK: ${{ inputs.build_flatpak }}
+          BUILD_NIX: ${{ inputs.build_nix }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::commit must be a full 40-character SHA"
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "$COMMIT^{commit}")" ]; then
+            echo "::error::checked out commit does not match $COMMIT"
+            exit 1
+          fi
+
+          version="${RAW_VERSION#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like 0.2.0 (no v, no suffix)"
+            exit 1
+          fi
+          tag="v$version"
+          if [ -n "${REUSE_RUN:-}" ]; then
+            IFS=',' read -ra reuse_runs <<< "$REUSE_RUN"
+            for run in "${reuse_runs[@]}"; do
+              run="$(echo "$run" | xargs)"
+              if [[ ! "$run" =~ ^[0-9]+$ ]]; then
+                echo "::error::reuse_run must be numeric run ids separated by commas"
+                exit 1
+              fi
+            done
+          fi
+
+          repo_version="$(tr -d '\r\n' < VERSION)"
+          repo_version="${repo_version#v}"
+          if [ "$repo_version" != "$version" ]; then
+            echo "::error::VERSION says $repo_version, not $version"
+            exit 1
+          fi
+
+          notes=""
+          for candidate in "docs/releases/$version.md" "docs/releases/v$version.md"; do
+            if [ -s "$candidate" ]; then
+              notes="$candidate"
+              break
+            fi
+          done
+          if [ -z "$notes" ]; then
+            echo "::error::missing or empty release notes: docs/releases/$version.md"
+            exit 1
+          fi
+
+          selected=0
+          for flag in "$BUILD_ARCH" "$BUILD_RPM" "$BUILD_DEB" "$BUILD_FLATPAK" "$BUILD_NIX"; do
+            if [ "$flag" = "true" ]; then
+              selected=1
+            fi
+          done
+          if [ "$selected" -ne 1 ] && [ -z "${REUSE_RUN:-}" ]; then
+            echo "::error::select at least one build, or set reuse_run"
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::tag $tag already exists; delete it first"
+            exit 1
+          fi
+
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "notes=$notes"
+          } >> "$GITHUB_OUTPUT"
+
+  arch:
+    name: Arch package
+    needs: validate
+    if: ${{ inputs.build_arch }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    container: archlinux:latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install git for checkout
+        run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          submodules: recursive
+      - name: Build package
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          pacman -S --noconfirm --needed base-devel meson ninja pkgconf gcc glslang \
+            vulkan-headers spirv-headers vulkan-icd-loader libx11 libxi libxtst wayland \
+            wayland-protocols libxkbcommon glib2 xz
+          packaging/scripts/make-source-tarball.sh "$VERSION" build
+          cp packaging/arch/PKGBUILD build/PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" build/PKGBUILD
+          useradd -m builder
+          chown -R builder:builder "$PWD"
+          su builder -s /bin/bash -c "cd '$PWD/build' && makepkg --noconfirm --nocheck"
+          ls -l "build/vkintox-$VERSION-1-x86_64.pkg.tar.zst"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arch
+          path: build/vkintox-${{ needs.validate.outputs.version }}-1-x86_64.pkg.tar.zst
+          if-no-files-found: error
+
+  rpm:
+    name: RPM (${{ matrix.distro }})
+    needs: validate
+    if: ${{ inputs.build_rpm }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fedora
+            container: fedora:latest
+          - distro: opensuse
+            container: opensuse/tumbleweed:latest
+    container: ${{ matrix.container }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install git for checkout
+        run: |
+          if [ "${{ matrix.distro }}" = "fedora" ]; then
+            dnf install -y git
+          else
+            zypper --non-interactive refresh
+            zypper --non-interactive install --no-recommends git
+          fi
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          submodules: recursive
+      - name: Build package
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          if [ "$DISTRO" = "fedora" ]; then
+            dnf install -y rpm-build meson ninja-build gcc-c++ pkgconf-pkg-config glslang \
+              vulkan-headers spirv-headers-devel libX11-devel libXi-devel libXtst-devel \
+              wayland-devel wayland-protocols-devel libxkbcommon-devel glib2-devel xz make
+          else
+            zypper --non-interactive install --no-recommends rpm-build meson ninja gcc-c++ \
+              pkgconf-pkg-config glslang-devel vulkan-headers spirv-headers libX11-devel \
+              libXi-devel libXtst-devel wayland-devel wayland-protocols-devel \
+              libxkbcommon-devel glib2-devel xz make
+          fi
+
+          packaging/scripts/make-source-tarball.sh "$VERSION" build
+          mkdir -p rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+          cp "build/vkintox-$VERSION.tar.xz" rpmbuild/SOURCES/
+          sed "s/^Version:.*/Version:        $VERSION/" packaging/rpm/vkintox.spec > rpmbuild/SPECS/vkintox.spec
+          rpmbuild --define "_topdir $PWD/rpmbuild" -bb rpmbuild/SPECS/vkintox.spec
+          cp rpmbuild/RPMS/x86_64/*.rpm build/
+          ls -l build/*.rpm
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rpm-${{ matrix.distro }}
+          path: build/*.rpm
+          if-no-files-found: error
+
+  deb:
+    name: Debian package
+    needs: validate
+    if: ${{ inputs.build_deb }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    container: ubuntu:26.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install git for checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          submodules: recursive
+      - name: Build package
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get install -y --no-install-recommends \
+            build-essential debhelper dpkg-dev fakeroot meson ninja-build pkg-config g++ \
+            glslang-tools libvulkan-dev spirv-headers libx11-dev libxi-dev libxtst-dev libwayland-dev \
+            libxkbcommon-dev wayland-protocols libgio-2.0-dev xz-utils
+
+          packaging/scripts/make-source-tarball.sh "$VERSION" build
+          mkdir -p "$RUNNER_TEMP/deb-build"
+          tar -C "$RUNNER_TEMP/deb-build" -xf "build/vkintox-$VERSION.tar.xz"
+          src="$RUNNER_TEMP/deb-build/vkintox-$VERSION"
+          cp -a packaging/debian "$src/debian"
+          sed -i "1s/.*/vkintox ($VERSION-1) unstable; urgency=medium/" "$src/debian/changelog"
+          (cd "$src" && dpkg-buildpackage -us -uc -b)
+          cp "$RUNNER_TEMP/deb-build/vkintox_${VERSION}-1_amd64.deb" build/
+          ls -l build/*.deb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb
+          path: build/*.deb
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak
+    needs: validate
+    if: ${{ inputs.build_flatpak }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          submodules: recursive
+      - name: Install Flatpak build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y flatpak flatpak-builder
+      - name: Install matching Flatpak SDKs
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive -y flathub \
+            runtime/org.freedesktop.Platform/x86_64/26.08 \
+            runtime/org.freedesktop.Sdk/x86_64/26.08
+      - name: Build bundle
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          flatpak-builder --user --force-clean --disable-rofiles-fuse \
+            --install-deps-from=flathub \
+            --repo="$RUNNER_TEMP/vkintox-flatpak-repo" \
+            "$RUNNER_TEMP/vkintox-flatpak-build" \
+            packaging/flatpak/org.freedesktop.Platform.VulkanLayer.VKIntox.json
+
+          mkdir -p build
+          flatpak build-bundle --runtime \
+            "$RUNNER_TEMP/vkintox-flatpak-repo" \
+            "build/vkintox-$VERSION-x86_64.flatpak" \
+            org.freedesktop.Platform.VulkanLayer.VKIntox 26.08
+          ls -l build/*.flatpak
+      - name: Verify the bundle installs as a layer
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          flatpak install --user --noninteractive -y "build/vkintox-$VERSION-x86_64.flatpak"
+          flatpak info --show-metadata runtime/org.freedesktop.Platform.VulkanLayer.VKIntox/x86_64/26.08 \
+            | grep -q '^\[ExtensionOf\]'
+          flatpak uninstall --user --noninteractive -y runtime/org.freedesktop.Platform.VulkanLayer.VKIntox/x86_64/26.08
+      - uses: actions/upload-artifact@v7
+        with:
+          name: flatpak
+          path: build/*.flatpak
+          if-no-files-found: error
+
+  nix:
+    name: Nix build
+    needs: validate
+    if: ${{ inputs.build_nix }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          submodules: recursive
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Build package
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          packaging/scripts/make-source-tarball.sh "$VERSION" build
+          mkdir -p "$RUNNER_TEMP/nix-src"
+          tar -C "$RUNNER_TEMP/nix-src" -xf "build/vkintox-$VERSION.tar.xz"
+          nix build "path:$RUNNER_TEMP/nix-src/vkintox-$VERSION#vkintox" --print-build-logs
+          mkdir -p build/nix
+          cp -a result/. build/nix/
+          tar -C build/nix -cJf "build/vkintox-$VERSION-x86_64-nix.tar.xz" .
+          ls -l build/*nix.tar.xz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nix
+          path: build/*nix.tar.xz
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [validate, arch, rpm, deb, flatpak, nix]
+    if: ${{ always() && needs.validate.result == 'success' && (needs.arch.result == 'success' || needs.arch.result == 'skipped') && (needs.rpm.result == 'success' || needs.rpm.result == 'skipped') && (needs.deb.result == 'success' || needs.deb.result == 'skipped') && (needs.flatpak.result == 'success' || needs.flatpak.result == 'skipped') && (needs.nix.result == 'success' || needs.nix.result == 'skipped') }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        if: ${{ inputs.build_arch || inputs.build_rpm || inputs.build_deb || inputs.build_flatpak || inputs.build_nix }}
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Reuse artifacts from earlier runs
+        if: ${{ inputs.reuse_run != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_RUN: ${{ inputs.reuse_run }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          IFS=',' read -ra runs <<< "$REUSE_RUN"
+          for run in "${runs[@]}"; do
+            run="$(echo "$run" | xargs)"
+            [ -n "$run" ] || continue
+            gh run download "$run" --repo "$GITHUB_REPOSITORY" --dir "reuse-$run"
+          done
+          for dir in reuse-*; do
+            [ -d "$dir" ] || continue
+            find "$dir" -type f -exec mv -f {} dist/ \;
+          done
+          rm -rf reuse-*
+          ls -lh dist
+      - name: Check the selected artifacts
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          BUILD_ARCH: ${{ inputs.build_arch }}
+          BUILD_RPM: ${{ inputs.build_rpm }}
+          BUILD_DEB: ${{ inputs.build_deb }}
+          BUILD_FLATPAK: ${{ inputs.build_flatpak }}
+          BUILD_NIX: ${{ inputs.build_nix }}
+          REUSE_RUN: ${{ inputs.reuse_run }}
+        run: |
+          set -euo pipefail
+          ls -lh dist
+          test -n "$(find dist -maxdepth 1 -type f -print -quit)"
+
+          require() {
+            compgen -G "dist/$1" >/dev/null || {
+              echo "::error::missing release asset: $1"
+              exit 1
+            }
+          }
+          maybe_require() {
+            if [ "$1" = "true" ]; then
+              require "$2"
+            fi
+          }
+
+          maybe_require "$BUILD_ARCH" "vkintox-$VERSION-1-x86_64.pkg.tar.zst"
+          maybe_require "$BUILD_RPM" "vkintox-$VERSION-1*.x86_64.rpm"
+          maybe_require "$BUILD_DEB" "vkintox_${VERSION}-1_amd64.deb"
+          maybe_require "$BUILD_FLATPAK" "vkintox-$VERSION-x86_64.flatpak"
+          maybe_require "$BUILD_NIX" "vkintox-$VERSION-x86_64-nix.tar.xz"
+
+          if [ -n "${REUSE_RUN:-}" ]; then
+            echo "reused run ids: $REUSE_RUN"
+            require "vkintox-$VERSION-1-x86_64.pkg.tar.zst"
+            require "vkintox-$VERSION-1*.x86_64.rpm"
+            require "vkintox_${VERSION}-1_amd64.deb"
+            require "vkintox-$VERSION-x86_64.flatpak"
+            require "vkintox-$VERSION-x86_64-nix.tar.xz"
+          fi
+      - name: Create the GitHub release
+        env:
+          # the built-in token cannot create tags or releases for commits that
+          # touch .github/workflows; RELEASE_TOKEN is a PAT with workflows: write.
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          NOTES: ${{ needs.validate.outputs.notes }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --target "$COMMIT" \
+            --title "VKIntox v$VERSION" \
+            --notes-file "$NOTES" \
+            dist/*

@@ -1,0 +1,28 @@
+# Maintainer: buwryme <buwryme@proton.me>
+pkgname=vkintox
+pkgver=0.2.0
+pkgrel=1
+pkgdesc='Vulkan post-processing layer with overlay UI'
+arch=('x86_64')
+url='https://github.com/VKIntox/VKIntox'
+license=('Zlib')
+depends=('gcc-libs' 'glib2' 'libx11' 'libxi' 'libxtst' 'wayland' 'libxkbcommon' 'vulkan-icd-loader')
+makedepends=('gcc' 'glslang' 'meson' 'ninja' 'pkgconf' 'spirv-headers' 'vulkan-headers' 'wayland-protocols')
+source=("$pkgname-$pkgver.tar.xz")
+sha256sums=('SKIP')
+options=(!debug)
+
+build() {
+    cd "$pkgname-$pkgver"
+    meson setup build \
+        --buildtype=release \
+        --prefix=/usr \
+        --libdir=lib \
+        -Dappend_libdir_vkintox=false
+    meson compile -C build
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    DESTDIR="$pkgdir" meson install -C build --no-rebuild
+}

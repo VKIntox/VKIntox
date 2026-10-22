@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		--buildtype=release \
+		--prefix=/usr \
+		--libdir=lib/$(DEB_HOST_MULTIARCH) \
+		-Dappend_libdir_vkintox=false
+
+# the wayland patch fixture needs a JUMP_SLOT relocation, which ubuntu's
+# -Wl,-Bsymbolic-functions hardening removes; upstream ci covers this test
+override_dh_auto_test:
