@@ -2,6 +2,7 @@
       description = "VKIntox — Vulkan post-processing layer with in-game UI (Wayland + X11)";
 
   inputs = {
+    self.submodules = true;
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     git-hooks = {
       url = "github:cachix/git-hooks.nix";
@@ -30,7 +31,7 @@
 
           vkintox = pkgs.stdenv.mkDerivation {
             pname = "vkintox";
-            version = "0.1.0-unstable-${self.shortRev or "dirty"}";
+            version = pkgs.lib.removePrefix "v" (pkgs.lib.strings.trim (builtins.readFile "${self}/VERSION"));
 
             src = self;
 
@@ -47,11 +48,13 @@
               vulkan-loader
               spirv-headers
               libx11
+              libxcb
               libxi
               libxtst
               wayland
               wayland-protocols
               libxkbcommon
+              glib
             ];
 
             mesonBuildType = "release";
@@ -64,7 +67,7 @@
             postInstall = ''
               # vkintox-run wrapper: sets ENABLE_VKINTOX.
               mkdir -p "$out/bin"
-              substitute ${./../../scripts/vkintox-run.sh} "$out/bin/vkintox-run" \
+              substitute ${self}/scripts/vkintox-run.sh "$out/bin/vkintox-run" \
                 --subst-var out
               chmod +x "$out/bin/vkintox-run"
             '';

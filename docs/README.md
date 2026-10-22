@@ -136,6 +136,8 @@ vkintox intercepts vulkan swapchain calls as a layer between the game and the dr
 -   **wine:** games using dxvk/vkd3d might break (depends on the game itself), and anti-cheat *could* get you moderated.
 -   **flatpak layer updates:** a reboot can be needed after re-installing or updating the layer for flatpak targets (remote and local builds alike). doesn't apply to native installs.
 
+**flatpak runtime branch:** the flatpak layer is built for `org.freedesktop.Platform` 26.08. apps on other freedesktop branches or on GNOME/KDE runtimes will not load it.
+
 ### troubleshooting
 
 **logs and diagnostics.** logs save to `/path/to/config/VKIntox/vkintox.log`, and the `about` tab reports the embedded version. for sober debug output:
