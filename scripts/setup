@@ -505,23 +505,39 @@ choose_version() {
     local want want_base i base idx
     if [[ -n "$WANT_VERSION" ]]; then
         want="${WANT_VERSION#v}"
+
+        # An explicitly requested suffixed tag (rc/beta/hotfixN) must match
+        # exactly. A plain version like 0.2.0 resolves through BEST_IDX, so the
+        # newest -hotfixN build wins over the original stable tag.
+        if [[ "$want" == *-* ]]; then
+            for i in "${!REL_TAG[@]}"; do
+                if [[ "${REL_TAG[$i]#v}" == "$want" ]]; then
+                    SELECTED_TAG="${REL_TAG[$i]}"
+                    SELECTED_ASSET="${REL_ASSET[$i]}"
+                    SELECTED_URL="${REL_URL[$i]}"
+                    SELECTED_DIGEST="${REL_DIGEST[$i]}"
+                    return 0
+                fi
+            done
+            die "version $WANT_VERSION is not available for $METHOD"
+        fi
+
+        want_base="${want%%-*}"
+        if [[ -n "${BEST_IDX[$want_base]:-}" ]]; then
+            idx="${BEST_IDX[$want_base]}"
+            SELECTED_TAG="${REL_TAG[$idx]}"
+            SELECTED_ASSET="${REL_ASSET[$idx]}"
+            SELECTED_URL="${REL_URL[$idx]}"
+            SELECTED_DIGEST="${REL_DIGEST[$idx]}"
+            return 0
+        fi
+
         for i in "${!REL_TAG[@]}"; do
             if [[ "${REL_TAG[$i]#v}" == "$want" ]]; then
                 SELECTED_TAG="${REL_TAG[$i]}"
                 SELECTED_ASSET="${REL_ASSET[$i]}"
                 SELECTED_URL="${REL_URL[$i]}"
                 SELECTED_DIGEST="${REL_DIGEST[$i]}"
-                return 0
-            fi
-        done
-        want_base="${want%%-*}"
-        for base in "${ORDERED_BASES[@]}"; do
-            if [[ "$base" == "$want_base" ]]; then
-                idx="${BEST_IDX[$base]}"
-                SELECTED_TAG="${REL_TAG[$idx]}"
-                SELECTED_ASSET="${REL_ASSET[$idx]}"
-                SELECTED_URL="${REL_URL[$idx]}"
-                SELECTED_DIGEST="${REL_DIGEST[$idx]}"
                 return 0
             fi
         done
