@@ -1,0 +1,22 @@
+name: Release test
+
+on:
+  push:
+    branches: [build-system-experimental]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    uses: ./.github/workflows/release.yml
+    with:
+      commit: ${{ github.sha }}
+      version: "0.2.0"
+      build_arch: true
+      build_rpm: true
+      build_deb: true
+      build_flatpak: true
+      build_nix: true
+    secrets: inherit
