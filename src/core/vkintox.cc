@@ -3719,6 +3719,10 @@ namespace VKIntox
                 if (logicalDevice->depthTransitionHold || logicalDevice->depthReallocPending
                     || logicalSwapchain->depthReallocPending)
                 {
+                    Logger::debug("present: bypassing layer submit; depth rebuild pending (devicePending="
+                                  + std::to_string(logicalDevice->depthReallocPending)
+                                  + " swapchainPending=" + std::to_string(logicalSwapchain->depthReallocPending)
+                                  + " hold=" + std::to_string(logicalDevice->depthTransitionHold) + ")");
                     bypassDepthForPresent = true;
                     break;
                 }
@@ -3795,6 +3799,20 @@ namespace VKIntox
                 Logger::debug("present after depth rebuild: overlay submit done for image " + std::to_string(index));
 
             presentSemaphores.push_back(finalSemaphore);
+        }
+
+        if (bypassDepthForPresent)
+        {
+            // The loop above can arm this after the pre-loop check: another
+            // thread may have requested a depth rebuild between the two lock
+            // scopes. Present the app's image exactly as it gave it to us.
+            // Constructing a present with an empty semaphore list here drops
+            // the app's own waits and races the compositor against its render.
+            VkResult passthroughResult = logicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+            reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueuePresentKHR(depth-disabled passthrough, late)", passthroughResult);
+            if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                panicLayer(logicalDevice, "Vulkan device lost during late depth-disabled passthrough present");
+            return passthroughResult;
         }
 
         VkPresentInfoKHR presentInfo   = *pPresentInfo;
