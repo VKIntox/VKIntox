@@ -12,6 +12,7 @@
 #include "depth_copy_state.hh"
 #include <chrono>
 #include <mutex>
+#include <utility>
 
 namespace VKIntox
 {
@@ -116,6 +117,13 @@ namespace VKIntox
         std::unordered_map<VkImageView, DepthSnapshotTarget> snapshotTargetViewStates;
         std::unordered_map<VkFramebuffer, DepthState> framebufferDepthStates;
         std::unordered_map<VkFramebuffer, DepthSnapshotTarget> framebufferSnapshotTargets;
+        // Fake swapchain images are handed to the application as if they were
+        // the real swapchain. Keep them alive until the last app image view is
+        // gone, even if the swapchain itself was destroyed first.
+        std::unordered_map<VkImage, VkDeviceMemory> fakeImageMemory;
+        std::unordered_map<VkImage, uint32_t> fakeImageViewCounts;
+        std::unordered_map<VkImageView, VkImage> fakeImageViewImage;
+        std::vector<std::pair<VkImage, VkDeviceMemory>> pendingFakeImageDestroy;
         std::unordered_map<VkCommandBuffer, DepthScopeTrackingState> commandBufferDepthStates;
         std::unordered_map<VkCommandBuffer, DepthScopeTrackingState> pendingTransferLinkedDepthScopes;
         std::unordered_map<VkCommandBuffer, uint32_t> commandBufferRecordedDrawCounts;

@@ -1,6 +1,7 @@
 #include "logical_swapchain.hh"
 
 #include "vk_handle.hh"
+#include "util.hh"
 
 namespace VKIntox
 {
@@ -48,20 +49,31 @@ namespace VKIntox
 
             destroyDepthResolveResources(this);
 
-            // Images before the memory backing them. These two loops used to run
-            // the other way round, which freed every allocation while the image
-            // living in it was still alive -- destroying an image whose memory has
-            // already been returned is a use-after-free, and it is the exact
-            // ordering the deferred queue exists to enforce everywhere else.
-            // QueueWaitIdle above is what makes it safe to do either way round
-            // from the GPU's perspective, but not from the allocator's.
-            for (uint32_t i = 0; i < fakeImages.size(); i++)
+            // Fake images may still have application image views attached.
+            // Destroying the image first is a use-after-free on Sober's
+            // translation layer, so hand them to the view-count gate instead.
+            for (VkImage image : fakeImages)
             {
-                logicalDevice->vkd.DestroyImage(logicalDevice->device, fakeImages[i], nullptr);
+                auto memIt = logicalDevice->fakeImageMemory.find(image);
+                VkDeviceMemory memory = memIt != logicalDevice->fakeImageMemory.end() ? memIt->second : VK_NULL_HANDLE;
+                auto countIt = logicalDevice->fakeImageViewCounts.find(image);
+                if (countIt == logicalDevice->fakeImageViewCounts.end() || countIt->second == 0)
+                {
+                    logicalDevice->vkd.DestroyImage(logicalDevice->device, image, nullptr);
+                    if (memory != VK_NULL_HANDLE)
+                    {
+                        logicalDevice->vkd.FreeMemory(logicalDevice->device, memory, nullptr);
+                        logicalDevice->fakeImageMemory.erase(image);
+                    }
+                    logicalDevice->fakeImageViewCounts.erase(image);
+                }
+                else
+                {
+                    logicalDevice->pendingFakeImageDestroy.emplace_back(image, memory);
+                    Logger::debug("swapchain destroy: deferring fake image " + convertToString(image)
+                                  + " with " + std::to_string(countIt->second) + " live app view(s)");
+                }
             }
-
-            for (VkDeviceMemory mem : fakeImageMemories)
-                logicalDevice->vkd.FreeMemory(logicalDevice->device, mem, nullptr);
             fakeImageMemories.clear();
 
             // Walked per vector rather than indexed by imageCount: the two

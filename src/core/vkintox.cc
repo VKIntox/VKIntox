@@ -2304,6 +2304,8 @@ namespace VKIntox
             Logger::err("vkCreateSwapchainKHR failed: " + std::to_string(result));
         }
 
+        Logger::trace("vkCreateSwapchainKHR result=" + std::to_string(result)
+                      + " handle=" + convertToString(swapchain ? *swapchain : VK_NULL_HANDLE));
         return result;
     }
 
@@ -2628,6 +2630,19 @@ namespace VKIntox
                                                        const VkSubmitInfo* pSubmits,
                                                        VkFence fence)
     {
+        Logger::trace("vkQueueSubmit queue=" + convertToString(queue)
+                      + " submits=" + std::to_string(submitCount)
+                      + " fence=" + convertToString(fence));
+        for (uint32_t i = 0; pSubmits && i < submitCount; ++i)
+        {
+            const VkSubmitInfo& submit = pSubmits[i];
+            Logger::trace("  submit[" + std::to_string(i) + "] waits=" + std::to_string(submit.waitSemaphoreCount)
+                          + " signals=" + std::to_string(submit.signalSemaphoreCount)
+                          + " commandBuffers=" + std::to_string(submit.commandBufferCount)
+                          + (submit.commandBufferCount && submit.pCommandBuffers
+                                 ? " firstCB=" + convertToString(submit.pCommandBuffers[0]) : ""));
+        }
+
         LogicalDevice* logicalDevice = nullptr;
         {
             scoped_lock l(globalLock);
@@ -2995,6 +3010,19 @@ namespace VKIntox
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo)
     {
+        if (pPresentInfo)
+        {
+            Logger::trace("vkQueuePresentKHR queue=" + convertToString(queue)
+                          + " swapchains=" + std::to_string(pPresentInfo->swapchainCount)
+                          + " waits=" + std::to_string(pPresentInfo->waitSemaphoreCount));
+            for (uint32_t i = 0; i < pPresentInfo->swapchainCount; ++i)
+            {
+                Logger::trace("  present[" + std::to_string(i) + "] swapchain="
+                              + convertToString(pPresentInfo->pSwapchains[i])
+                              + " image=" + std::to_string(pPresentInfo->pImageIndices[i]));
+            }
+        }
+
         // Soft-disable fast path: panicLayer() has flipped this bit. The layer
         // is no longer trusted to touch the GPU, so we pass straight through
         // to the driver — except we still submit an overlay-only frame so any
@@ -3662,11 +3690,13 @@ namespace VKIntox
             }
             else
             {
-                VkResult passthroughResult = logicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
-                reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueuePresentKHR(depth-disabled passthrough)", passthroughResult);
-                if (passthroughResult == VK_ERROR_DEVICE_LOST)
-                    panicLayer(logicalDevice, "Vulkan device lost during depth-disabled passthrough present");
-                return passthroughResult;
+                // The layer only serves fake images when this swapchain is
+                // active, so passing the app's present through would present an
+                // unwritten real image. This should be unreachable: every
+                // active swapchain records no-effect buffers. Force the app to
+                // recreate instead of violating the swapchain contract.
+                Logger::err("present: no no-effect command buffers; asking the app to recreate the swapchain");
+                return VK_ERROR_OUT_OF_DATE_KHR;
             }
         }
 
@@ -3832,16 +3862,11 @@ namespace VKIntox
 
         if (bypassDepthForPresent)
         {
-            // The loop above can arm this after the pre-loop check: another
-            // thread may have requested a depth rebuild between the two lock
-            // scopes. Present the app's image exactly as it gave it to us.
-            // Constructing a present with an empty semaphore list here drops
-            // the app's own waits and races the compositor against its render.
-            VkResult passthroughResult = logicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
-            reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueuePresentKHR(depth-disabled passthrough, late)", passthroughResult);
-            if (passthroughResult == VK_ERROR_DEVICE_LOST)
-                panicLayer(logicalDevice, "Vulkan device lost during late depth-disabled passthrough present");
-            return passthroughResult;
+            // Reached only if a swapchain is missing its no-effect command
+            // buffers. Presenting the app's image directly would be invalid
+            // because the app rendered into fake images, so force a recreate.
+            Logger::err("present: layer command buffers unavailable; asking the app to recreate the swapchain");
+            return VK_ERROR_OUT_OF_DATE_KHR;
         }
 
         VkPresentInfoKHR presentInfo   = *pPresentInfo;
@@ -3904,6 +3929,7 @@ namespace VKIntox
         auto devIt = deviceMap.find(GetKey(device));
         if (devIt != deviceMap.end() && devIt->second)
             devIt->second->vkd.DestroySwapchainKHR(device, swapchain, pAllocator);
+        Logger::trace("vkDestroySwapchainKHR done " + convertToString(swapchain));
     }
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_CreateRenderPass(VkDevice device,
@@ -4234,6 +4260,12 @@ namespace VKIntox
                                                            const VkAllocationCallbacks* pAllocator,
                                                            VkImageView* view)
     {
+        if (pCreateInfo)
+        {
+            Logger::trace("vkCreateImageView image=" + convertToString(pCreateInfo->image)
+                          + " format=" + convertToString(pCreateInfo->format)
+                          + " type=" + convertToString(pCreateInfo->viewType));
+        }
         if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
@@ -4337,6 +4369,7 @@ namespace VKIntox
     {
         if (!imageView)
             return;
+        Logger::trace("vkDestroyImageView view=" + convertToString(imageView));
 
         if (!VKIntox::depthCaptureActive())
         {
@@ -4400,6 +4433,12 @@ namespace VKIntox
                                                              const VkAllocationCallbacks* pAllocator,
                                                              VkFramebuffer* pFramebuffer)
     {
+        if (pCreateInfo)
+        {
+            Logger::trace("vkCreateFramebuffer renderPass=" + convertToString(pCreateInfo->renderPass)
+                          + " attachments=" + std::to_string(pCreateInfo->attachmentCount)
+                          + " extent=" + std::to_string(pCreateInfo->width) + "x" + std::to_string(pCreateInfo->height));
+        }
         if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
@@ -4454,6 +4493,7 @@ namespace VKIntox
     {
         if (!framebuffer)
             return;
+        Logger::trace("vkDestroyFramebuffer framebuffer=" + convertToString(framebuffer));
 
         if (!VKIntox::depthCaptureActive())
         {
@@ -4479,6 +4519,12 @@ namespace VKIntox
                                                           const VkRenderPassBeginInfo* pRenderPassBegin,
                                                           VkSubpassContents contents)
     {
+        if (pRenderPassBegin)
+        {
+            Logger::trace("vkCmdBeginRenderPass cb=" + convertToString(commandBuffer)
+                          + " renderPass=" + convertToString(pRenderPassBegin->renderPass)
+                          + " framebuffer=" + convertToString(pRenderPassBegin->framebuffer));
+        }
         if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
@@ -4716,6 +4762,7 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdEndRenderPass(VkCommandBuffer commandBuffer)
     {
+        Logger::trace("vkCmdEndRenderPass cb=" + convertToString(commandBuffer));
         if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);

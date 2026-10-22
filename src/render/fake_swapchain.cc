@@ -47,7 +47,8 @@ namespace VKIntox
         imageCreateInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
         imageCreateInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
         imageCreateInfo.usage         = swapchainCreateInfo.imageUsage | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-                                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                                | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                                | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
         imageCreateInfo.sharingMode           = swapchainCreateInfo.imageSharingMode;
         imageCreateInfo.queueFamilyIndexCount = swapchainCreateInfo.queueFamilyIndexCount;
         imageCreateInfo.pQueueFamilyIndices   = swapchainCreateInfo.pQueueFamilyIndices;
@@ -83,56 +84,19 @@ namespace VKIntox
             return {};
         }
 
-        // Pad per-image size to alignment
-        VkDeviceSize alignedSize = memoryRequirements.size;
-        if (alignedSize % memoryRequirements.alignment != 0)
-            alignedSize = (alignedSize / memoryRequirements.alignment + 1) * memoryRequirements.alignment;
-
-        VkDeviceSize bulkSize = alignedSize * count;
-
-        // --- Attempt 1: single bulk allocation ---
-        VkMemoryAllocateInfo allocInfo = {};
-        allocInfo.sType            = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize   = bulkSize;
-        allocInfo.memoryTypeIndex  = memoryTypeIndex;
-
-        VkDeviceMemory bulkMemory = VK_NULL_HANDLE;
-        result = logicalDevice->vkd.AllocateMemory(logicalDevice->device, &allocInfo, nullptr, &bulkMemory);
-
-        if (result == VK_SUCCESS)
-        {
-            Logger::debug("createFakeSwapchainImages: bulk allocation succeeded (" + std::to_string(bulkSize) + " bytes)");
-
-            bool bindOk = true;
-            for (uint32_t i = 0; i < count; i++)
-            {
-                result = logicalDevice->vkd.BindImageMemory(logicalDevice->device, fakeImages[i], bulkMemory, alignedSize * i);
-                if (result != VK_SUCCESS)
-                {
-                    Logger::err("createFakeSwapchainImages: BindImageMemory[" + std::to_string(i) + "] failed: " + std::to_string(result));
-                    bindOk = false;
-                    break;
-                }
-            }
-
-            if (bindOk)
-            {
-                deviceMemories.push_back(bulkMemory);
-                return fakeImages;
-            }
-
-            logicalDevice->vkd.FreeMemory(logicalDevice->device, bulkMemory, nullptr);
-        }
-        else
-        {
-            Logger::warn("createFakeSwapchainImages: bulk allocation failed (" + std::to_string(result)
-                         + " size=" + std::to_string(bulkSize) + " type=" + std::to_string(memoryTypeIndex)
-                         + "), falling back to per-image allocation");
-        }
+        // Fake images always get their own allocation. Bulk allocation was the
+        // source of translation-layer faults: a large contiguous block works on
+        // native Vulkan but Sober's Android-on-Linux layer can fault when many
+        // images are bound into it. Per-image is slower to allocate and uses
+        // more allocator bookkeeping, but it is the robust path.
+        Logger::debug("createFakeSwapchainImages: using per-image allocations");
 
         // --- Attempt 2: per-image allocation ---
         // Handles translation layers (e.g. Sober/Android-on-Linux) that reject
         // large contiguous allocations or report huge alignment requirements.
+        VkMemoryAllocateInfo allocInfo = {};
+        allocInfo.sType            = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.memoryTypeIndex  = memoryTypeIndex;
         allocInfo.allocationSize = memoryRequirements.size; // raw per-image size
 
         deviceMemories.reserve(count);
@@ -180,6 +144,8 @@ namespace VKIntox
             }
 
             deviceMemories.push_back(imgMem);
+            logicalDevice->fakeImageMemory[fakeImages[i]] = imgMem;
+            logicalDevice->fakeImageViewCounts[fakeImages[i]] = 0;
         }
 
         Logger::info("createFakeSwapchainImages: per-image allocation succeeded (" + std::to_string(count) + " images)");
