@@ -48,6 +48,7 @@
               vulkan-loader
               spirv-headers
               libx11
+              libxcb
               libxi
               libxtst
               wayland
