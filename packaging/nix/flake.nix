@@ -31,7 +31,7 @@
 
           vkintox = pkgs.stdenv.mkDerivation {
             pname = "vkintox";
-            version = pkgs.lib.removePrefix "v" (pkgs.lib.strings.trim (builtins.readFile ../../VERSION));
+            version = pkgs.lib.removePrefix "v" (pkgs.lib.strings.trim (builtins.readFile "${self}/VERSION"));
 
             src = self;
 
@@ -66,7 +66,7 @@
             postInstall = ''
               # vkintox-run wrapper: sets ENABLE_VKINTOX.
               mkdir -p "$out/bin"
-              substitute ${./../../scripts/vkintox-run.sh} "$out/bin/vkintox-run" \
+              substitute ${self}/scripts/vkintox-run.sh "$out/bin/vkintox-run" \
                 --subst-var out
               chmod +x "$out/bin/vkintox-run"
             '';
