@@ -5,6 +5,7 @@
 set -euo pipefail
 
 REPO="VKIntox/VKIntox"
+LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
 RELEASES_URL="${VKINTOX_RELEASES_URL:-https://api.github.com/repos/$REPO/releases?per_page=100}"
 EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/main/assets/EffectPackages.ini}"
 MARKER_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/VKIntox"
@@ -16,6 +17,7 @@ LATEST=0
 ASSUME_YES=0
 DRY_RUN=0
 FORCE=0
+UNINSTALL=0
 WANT_EFFECTS=""
 APP_ID=""
 SYSTEM_KIND=""
@@ -143,8 +145,10 @@ usage:
   curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
   curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- --system --latest --yes
   curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- --flatpak --app org.vinegarhq.Sober --version v0.2.0 --yes
+  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
 
 options:
+  uninstall             remove the layer, keeping the config
   --system, --flatpak   skip the install-method prompt
   --app <id>            flatpak app id to enable the layer for
   --version <tag>       pick an exact release (e.g. v0.2.0)
@@ -177,6 +181,7 @@ while (($#)); do
         --yes | -y) ASSUME_YES=1; shift ;;
         --reinstall) FORCE=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
+        uninstall | --uninstall | -u) UNINSTALL=1; shift ;;
         -h | --help) usage; exit 0 ;;
         *) die "unknown option: $1" ;;
     esac
@@ -560,6 +565,100 @@ installed_pkg_version() {
     esac
 }
 
+uninstall_flatpak() {
+    need_cmd flatpak
+    section "removing layer"
+    local installed
+    installed=$(flatpak list --user --runtime --columns=application,branch 2>/dev/null |
+        awk -v id="$LAYER_ID" '$1==id{print id "//" $2}')
+    if [[ -n "$installed" ]]; then
+        while read -r ref; do
+            [[ -n "$ref" ]] || continue
+            run_progress "uninstalling $ref" flatpak uninstall --user --noninteractive -y "$ref"
+        done <<<"$installed"
+    else
+        ok "layer is not installed"
+    fi
+    rm -f "$MARKER"
+    ok "removed the install marker"
+}
+
+uninstall_system() {
+    detect_system
+    local installed
+    installed=$(installed_pkg_version || true)
+    if [[ -z "$installed" ]]; then
+        ok "vkintox is not installed"
+        rm -f "$MARKER"
+        return 0
+    fi
+
+    section "sudo"
+    if ((EUID == 0)); then
+        ok "running as root; no sudo needed"
+    else
+        say "sudo is needed to remove the package"
+        sudo -v || die "sudo was not granted"
+        start_sudo
+        ok "sudo ready"
+    fi
+
+    case "$SYSTEM_KIND" in
+        rpm)
+            if [[ "$RPM_FLAVOR" == "suse" ]]; then
+                REMOVE_CMD=(zypper --non-interactive remove -y vkintox)
+            elif command -v dnf >/dev/null 2>&1; then
+                REMOVE_CMD=(dnf remove -y vkintox)
+            else
+                REMOVE_CMD=(yum remove -y vkintox)
+            fi
+            ;;
+        deb)
+            REMOVE_CMD=(env DEBIAN_FRONTEND=noninteractive apt-get remove -y vkintox)
+            ;;
+        arch)
+            REMOVE_CMD=(pacman -R --noconfirm vkintox)
+            ;;
+    esac
+    if ((EUID != 0)); then
+        REMOVE_CMD=(sudo "${REMOVE_CMD[@]}")
+    fi
+    section "remove"
+    run_progress "removing vkintox" "${REMOVE_CMD[@]}"
+    rm -f "$MARKER"
+    ok "removed the install marker"
+}
+
+run_uninstall() {
+    if [[ -z "$METHOD" ]]; then
+        select_menu "uninstall vkintox system-wide, or via flatpak?" "system-wide" "flatpak"
+        if ((SELECTED == 0)); then
+            METHOD=system
+        else
+            METHOD=flatpak
+        fi
+    fi
+
+    section "confirm"
+    if [[ "$METHOD" == "flatpak" ]]; then
+        printf "  remove: the flatpak layer\n"
+    else
+        printf "  remove: the system-wide package\n"
+    fi
+    printf '  %bpress enter to confirm%b\n' "$DIM" "$NC"
+    confirm
+    ok "confirmed"
+
+    if [[ "$METHOD" == "flatpak" ]]; then
+        uninstall_flatpak
+    else
+        uninstall_system
+    fi
+
+    finish "uninstalled"
+    say "config and shader presets were kept"
+}
+
 write_marker() {
     mkdir -p "$MARKER_DIR"
     {
@@ -740,6 +839,11 @@ PYEOF
 
 TMP_DIR=$(mktemp -d)
 save_tty
+
+if ((UNINSTALL)); then
+    run_uninstall
+    exit 0
+fi
 
 need_cmd curl
 need_cmd jq
