@@ -94,7 +94,9 @@ namespace VKIntox::DefaultConfig
     inline bool depthInvertForGame(const std::string& executableName)
     {
         return executableName == "sober" || executableName == "rosemary"
-            || flatpakAppId() == "io.github.microlift.butter";
+            || executableName == "Roseline" || executableName == "roseline"
+            || flatpakAppId() == "io.github.microlift.butter"
+            || flatpakAppId() == "net.buwryy.Roseline";
     }
 
     inline bool depthFlipForGame(const std::string& executableName)
