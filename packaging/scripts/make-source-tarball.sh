@@ -28,7 +28,7 @@ trap 'rm -rf "$stage"' EXIT
 
 mkdir -p "$stage/$prefix"
 
-tar -C "$repo_root" -cf - \
+tar -C "$repo_root" -chf - \
     --exclude='./.git' \
     --exclude='./.flatpak-builder' \
     --exclude='./build' \

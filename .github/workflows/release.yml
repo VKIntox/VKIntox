@@ -259,10 +259,11 @@ jobs:
               vulkan-headers spirv-headers-devel libX11-devel libXi-devel libXtst-devel \
               wayland-devel wayland-protocols-devel libxkbcommon-devel glib2-devel xz make
           else
+            zypper --non-interactive remove --no-recommends busybox-gawk >/dev/null 2>&1 || true
             zypper --non-interactive install --no-recommends rpm-build meson ninja gcc-c++ \
               pkgconf-pkg-config glslang-devel vulkan-headers spirv-headers libX11-devel \
               libXi-devel libXtst-devel wayland-devel wayland-protocols-devel \
-              libxkbcommon-devel glib2-devel xz make
+              libxkbcommon-devel glib2-devel xz make gawk
           fi
 
           packaging/scripts/make-source-tarball.sh "$VERSION" build
