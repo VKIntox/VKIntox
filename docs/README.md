@@ -126,6 +126,11 @@ vkintox intercepts vulkan swapchain calls as a layer between the game and the dr
 
 **flatpak runtime branch:** the flatpak layer is built for `org.freedesktop.Platform` 26.08. apps on other freedesktop branches or on GNOME/KDE runtimes will not load it.
 
+> [!IMPORTANT]
+> Sober's homescreen stability remains poor. Either 1) Switch to Roséline or 2) Join games with browser instead
+> This, unfortunately, is mostly a Roblox-sided issue, and/or isn't in my hands, 
+> as this doesn't happen on macOS builds, but strangely happens on Android APK builds (Sober)
+
 ### troubleshooting
 
 **logs and diagnostics.** logs save to `/path/to/config/VKIntox/vkintox.log`, and the `about` tab reports the embedded version. for sober debug output:
@@ -159,7 +164,6 @@ verify active drivers with `flatpak --gl-drivers`. host and flatpak nvidia runti
 -   **effects off at launch:** press `f10` (or your reload key) to re-enable them. effects are on by default, so a shader that failed to compile at launch is the usual cause.
 -   **3d effects frozen:** press the reload keybind (`f10`) to refresh the depth buffer.
 -   **reshade presets:** drop the `.ini` into `/path/to/config/VKIntox/configs/shaders/`, then reload. it appears in the shader ini dropdown.
--   **freezes:** restart sober once or twice. catalog freezes are expected.
 
 > [!NOTE]
 > wayland and x11 are both supported. on x11 (including xwayland) the overlay takes a pointer grab while the cursor is over it, and a keyboard grab only while it is consuming keys (a text field is active or a popup is open); if the compositor does not honour xwayland's keyboard-grab protocol, the game can still receive keys while you type in the overlay. games that don't route through an abstractor like SDL or GLFW may handle input in ways the overlay can't intercept, so input blocking can stop working.
