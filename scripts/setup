@@ -1,24 +1,38 @@
 #!/usr/bin/env bash
-# vkintox flatpak installer
-# usage: curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash [-s -- APP_ID]
+# vkintox remote installer
+# usage: curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
 
 set -euo pipefail
 
 REPO="VKIntox/VKIntox"
-WORKFLOW="flatpak-build.yml"
-LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
-# the M3 font set and the curated EffectPackages.ini live on main with the
-# rest of the release; the effects themselves are one of its package entries.
-ASSET_REF="main"
-EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/$ASSET_REF/assets/EffectPackages.ini}"
+RELEASES_URL="${VKINTOX_RELEASES_URL:-https://api.github.com/repos/$REPO/releases?per_page=100}"
+EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/main/assets/EffectPackages.ini}"
+MARKER_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/VKIntox"
+MARKER="$MARKER_DIR/install-state"
+
+METHOD=""
+WANT_VERSION=""
+LATEST=0
+ASSUME_YES=0
+DRY_RUN=0
+FORCE=0
+WANT_EFFECTS=""
+APP_ID=""
+SYSTEM_KIND=""
+RPM_FLAVOR=""
+ASSET_GLOB=""
+SELECTED_TAG=""
+SELECTED_ASSET=""
+SELECTED_URL=""
+SELECTED_DIGEST=""
+TMP_DIR=""
+SUDO_PID=""
+TTY_SAVED=""
 
 if [[ -t 1 ]]; then
     B='\033[1m'; BLUE='\033[34m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; DIM='\033[2m'; NC='\033[0m'
     SPIN_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-    # Nerd Font chevron up then down, shown dimmed beside a prompt to advertise
-    # that the list takes arrow keys. Real bytes rather than the literal-escape
-    # form the colour variables use, because this one is passed as a %s argument.
-    NAV_HINT=$''
+    NAV_HINT=$'\uf0d7\uf0d8'
 else
     B=''; BLUE=''; GREEN=''; YELLOW=''; RED=''; DIM=''; NC=''
     SPIN_FRAMES=()
@@ -27,9 +41,6 @@ fi
 
 spin_pid=""
 start_spin() {
-    # return 0, not a bare return: a bare return propagates the failed [[ ]] as
-    # status 1, and set -e would kill the script on the first run_progress when
-    # stdout is not a terminal, which is every non-interactive invocation
     [[ ${#SPIN_FRAMES[@]} -gt 0 ]] || return 0
     local msg="$1"
     (
@@ -43,6 +54,7 @@ start_spin() {
     spin_pid=$!
     disown "$spin_pid" 2>/dev/null || true
 }
+
 stop_spin() {
     if [[ -n "$spin_pid" ]]; then
         kill "$spin_pid" 2>/dev/null || true
@@ -51,6 +63,7 @@ stop_spin() {
         [[ ! -t 1 ]] || printf '\r\033[K'
     fi
 }
+
 say() { stop_spin; printf "${BLUE}  →${NC} %s\n" "$*"; }
 ok() { stop_spin; printf "${GREEN}  ✓${NC} %s\n" "$*"; }
 warn() { stop_spin; printf "${YELLOW}  !${NC} %s\n" "$*"; }
@@ -58,6 +71,7 @@ die() { stop_spin; printf "${RED}  ✗${NC} %s\n" "$*" >&2; exit 1; }
 section() { stop_spin; printf "\n${BLUE}${B}%s${NC}\n" "$*"; }
 finish() { stop_spin; printf "\n${BLUE}${B}%s${NC}\n" "$*"; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing $1 — install it first"; }
+
 run_progress() {
     local label="$1" log status
     shift
@@ -73,187 +87,45 @@ run_progress() {
     fi
 }
 
-# The terminal state the menu found the tty in, captured once so it can be put
-# back no matter how the script ends. A terminal left in -icanon -echo does not
-# look broken so much as feel broken: nothing echoes and reads swallow one
-# character at a time, so the shell that invoked us is unusable until reset.
-TTY_SAVED=""
 save_tty() {
-    # a piped script (curl | bash) has no tty on stdin, but the user is still
-    # sitting at one, so capture the controlling terminal instead
     if [[ -t 0 ]]; then
         TTY_SAVED=$(stty -g 2>/dev/null || true)
-    elif [[ -r /dev/tty ]]; then
-        TTY_SAVED=$(stty -g </dev/tty 2>/dev/null || true)
+    elif { exec 3</dev/tty; } 2>/dev/null && [[ -t 3 ]]; then
+        TTY_SAVED=$(stty -g <&3 2>/dev/null || true)
+        exec 3<&-
     fi
 }
+
 restore_tty() {
     [[ -n "$TTY_SAVED" ]] || return 0
     if [[ -t 0 ]]; then
         stty "$TTY_SAVED" 2>/dev/null || true
-    elif [[ -r /dev/tty ]]; then
-        stty "$TTY_SAVED" </dev/tty 2>/dev/null || true
+    elif { exec 3</dev/tty; } 2>/dev/null && [[ -t 3 ]]; then
+        stty "$TTY_SAVED" <&3 2>/dev/null || true
+        exec 3<&-
     fi
 }
 
-usage() {
-    cat <<'EOF'
-usage:
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- com.target.app
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- butter
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
-EOF
+start_sudo() {
+    [[ -z "$SUDO_PID" ]] || return 0
+    ( while true; do sudo -n true 2>/dev/null || exit; sleep 50; done ) &
+    SUDO_PID=$!
+    disown "$SUDO_PID" 2>/dev/null || true
 }
 
-# Removes the layer and the local repo it came from. The config directories are
-# deliberately left alone: shader presets, profiles and the effect list are the
-# user's own work, and an uninstall that deletes them is an uninstall nobody
-# wants to have to redo.
-uninstall_layer() {
-    section "removing layer"
-    local installed
-    installed=$(flatpak list --user --runtime --columns=application,branch 2>/dev/null | awk -v id="$LAYER_ID" '$1==id{print id "//" $2}')
-    if [ -n "$installed" ]; then
-        while read -r ref; do
-            [ -n "$ref" ] || continue
-            run_progress "uninstalling $ref" flatpak uninstall --user --noninteractive -y "$ref"
-        done <<<"$installed"
-    else
-        ok "layer is not installed"
+stop_sudo() {
+    if [[ -n "$SUDO_PID" ]]; then
+        kill "$SUDO_PID" 2>/dev/null || true
+        wait "$SUDO_PID" 2>/dev/null || true
+        SUDO_PID=""
     fi
-
-    section "removing local repo"
-    if flatpak remote-list --user 2>/dev/null | awk '{print $1}' | grep -qx 'vkintox-local'; then
-        run_progress "removing vkintox-local" flatpak remote-remove --user vkintox-local
-    else
-        ok "vkintox-local remote is not configured"
-    fi
-
-    if [[ -d "$BUILD_ROOT" ]]; then
-        rm -rf -- "$BUILD_ROOT"
-        ok "removed the local build cache"
-    fi
-
-    section "config kept"
-    local kept
-    kept=$(find "$HOME/.var/app" -maxdepth 3 -type d -name VKIntox -path '*/config/*' 2>/dev/null | head -5)
-    if [[ -n "$kept" ]]; then
-        printf "%s\n" "$kept" | while IFS= read -r line; do printf "  %s\n" "$line"; done
-    else
-        printf "  ${DIM}no per-app config directories found${NC}\n"
-    fi
-    printf "  ${DIM}reinstall with the same command to pick your settings back up${NC}\n"
 }
 
-# Arrow-key picker used for the install method and the version list. The chosen
-# index comes back in SELECTED. Without a terminal on stdin there is nobody to
-# answer the prompt, so it takes the first entry and returns instead of hanging —
-# that is what keeps the curl|bash path usable from CI and nested scripts.
-select_menu() {
-    local prompt="$1"; shift
-    local -a labels=("$@")
-    local count=${#labels[@]}
-    local cursor=0 drawn=0 index key rest
-
-    SELECTED=0
-    (( count > 0 )) || return 0
-
-    # stdin is the script itself when piped (curl | bash), so read from the
-    # controlling terminal instead of silently taking the default
-    local read_fd=0
-    if [[ ! -t 0 ]]; then
-        if exec 3</dev/tty 2>/dev/null && [[ -t 3 ]]; then
-            read_fd=3
-        else
-            printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
-            return 0
-        fi
-    fi
-    # without stty the terminal stays canonical, arrow keys would sit in the line
-    # buffer until enter, and the prompt would look frozen. say so and take the
-    # default instead of pretending the keys work
-    if ! command -v stty >/dev/null 2>&1; then
-        warn "stty is unavailable, so arrow keys cannot be read; taking the default"
-        printf "${DIM}  %s${NC} %b\n" "$prompt" "${labels[0]}"
-        if (( read_fd == 3 )); then exec 3<&-; fi
-        return 0
-    fi
-
-    # -icanon rather than raw: canonical mode buffers until Enter, so a single
-    # read would never see an arrow key. ISIG stays on so ctrl-c still aborts,
-    # and because that means ctrl-c arrives as a signal rather than a byte, the
-    # restore lives in the EXIT trap instead of at the end of this function
-    stty -icanon min 1 time 0 -echo <&"$read_fd" 2>/dev/null || true
-
-    # leading blank line, so a prompt sits like section() does instead of
-    # crowding whatever the previous step printed
-    printf "\n"
-
-    while true; do
-        if (( drawn > 0 )); then
-            printf "\033[%dA" "$drawn"
-        fi
-        printf "\r\033[K${B}%s${NC} ${DIM}%s${NC}\n" "$prompt" "$NAV_HINT"
-        for ((index = 0; index < count; index++)); do
-            # %b, not %s: the labels carry colour codes built from the literal
-            # -escape variables, and printf only expands those in a format
-            # string. With %s the raw "\033[32m" text would land on the screen.
-            if (( index == cursor )); then
-                printf "\r\033[K  ${BLUE}${B}>${NC} %b\n" "${labels[index]}"
-            else
-                printf "\r\033[K    %b\n" "${labels[index]}"
-            fi
-        done
-        drawn=$(( count + 1 ))
-
-        key=""
-        IFS= read -rsn1 -u "$read_fd" key || true
-        [[ -n "$key" ]] || break
-        if [[ "$key" == $'\e' || "$key" == $'\033' ]]; then
-            # arrows arrive as ESC [ A/B, or ESC O A/B from some terminals
-            rest=""
-            IFS= read -rsn2 -u "$read_fd" rest || true
-            case "$rest" in
-                '[A' | 'OA') cursor=$(( (cursor - 1 + count) % count )) ;;
-                '[B' | 'OB') cursor=$(( (cursor + 1) % count )) ;;
-            esac
-            continue
-        fi
-        case "$key" in
-            $'\r' | $'\n') break ;;
-            # ctrl-c is normally a signal, not a byte, so this only fires on a
-            # terminal with ISIG off. ctrl-d does arrive as a byte in raw mode.
-            # either way die() exits and the EXIT trap puts the tty back.
-            $'\003' | $'\004') die "aborted" ;;
-        esac
-    done
-
-    restore_tty
-    if (( read_fd == 3 )); then exec 3<&-; fi
-
-    # wipe the menu and leave one confirmation line, so the transcript reads as
-    # a choice rather than a scrolling list that was redrawn a dozen times
-    printf "\033[%dA" "$drawn"
-    for ((index = 0; index < drawn; index++)); do
-        printf "\r\033[K\n"
-    done
-    printf "\033[%dA" "$drawn"
-    printf "  ${GREEN}✓${NC} %b\n" "${labels[$cursor]}"
-    SELECTED=$cursor
-}
-
-APP_ID="${1:-sober}"
-[[ "$APP_ID" != "-h" && "$APP_ID" != "--help" ]] || { usage; exit 0; }
-
-TMP_DIR=$(mktemp -d)
-BUILD_ROOT="$HOME/.local/share/flatpak-builder/vkintox-remote-setup"
 cleanup() {
     local status=$?
     trap - EXIT HUP INT TERM
-    # first, because a signal that kills us mid-menu leaves the tty in raw mode
-    # and the user's shell inherits it
     restore_tty
+    stop_sudo
     if [[ -n "${TMP_DIR:-}" && -d "$TMP_DIR" ]]; then
         rm -rf -- "$TMP_DIR"
     fi
@@ -264,302 +136,455 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-save_tty
 
-# uninstall short-circuits before the install dependencies, because removing a
-# layer should not require curl, python3 or a shader download to work
-case "$APP_ID" in
-    uninstall | --uninstall | -u)
-        need_cmd flatpak
-        uninstall_layer
-        finish "uninstalled"
-        exit 0
-        ;;
-esac
+usage() {
+    cat <<'EOF'
+usage:
+  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
+  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- --system --latest --yes
+  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- --flatpak --app org.vinegarhq.Sober --version v0.2.0 --yes
 
-[[ "$APP_ID" != "sober" ]] || APP_ID="org.vinegarhq.Sober"
-[[ "$APP_ID" != "butter" ]] || APP_ID="io.github.microlift.butter"
-
-for cmd in curl jq unzip flatpak flatpak-builder python3 sha256sum readelf grep install awk sed sort mktemp find head basename dirname; do need_cmd "$cmd"; done
-
-section "dependencies"
-if ! flatpak remote-list --user 2>/dev/null | grep -q '^flathub'; then
-    flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-    ok "added flathub remote"
-else
-    ok "flathub remote exists"
-fi
-
-section "fetching vkintox build"
-API="https://api.github.com/repos/$REPO"
-# a token lifts the unauthenticated GitHub API rate limit, which is what turns
-# this into a 403 on a shared connection. either variable name is accepted.
-AUTH_ARGS=()
-if [[ -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}" ]]; then
-    AUTH_ARGS=(-H "Authorization: Bearer ${GITHUB_TOKEN:-$GH_TOKEN}")
-fi
-HTTP_CODE=$(curl -sSL -w '%{http_code}' -H 'Accept: application/vnd.github+json' \
-    -H 'X-GitHub-Api-Version: 2022-11-28' "${AUTH_ARGS[@]}" \
-    "$API/releases/tags/flatpak-build" -o "$TMP_DIR/release.json" || true)
-case "$HTTP_CODE" in
-    200) ;;
-    403) die "GitHub API rate limit hit (HTTP 403); set GH_TOKEN or wait and retry" ;;
-    404) die "the public flatpak-build release is missing; run the manual $WORKFLOW workflow first" ;;
-    *)   die "couldn't fetch the flatpak-build release (HTTP ${HTTP_CODE:-no response})" ;;
-esac
-
-# Every published build lands in the one rolling flatpak-build release, with the
-# version and build date encoded in the asset name, so the version list is
-# whatever has actually been built instead of a list someone has to maintain.
-# Newest plain build per version wins, a plain release outranks -rc/-beta labels
-# of the same version, stable builds are listed before experimental ones, and a
-# version counts as experimental only when it ends in -experimental.
-jq -r '
-    def vkey: sub("^v"; "") | sub("[-+].*$"; "") | split(".") | map(tonumber? // 0);
-    # v0.2.0-rc1 and v0.2.0 share a key; the plain release has to win the tie
-    def plainrank: if (.v | sub("^v"; "") | test("^[0-9]+(\\.[0-9]+)*$")) then 1 else 0 end;
-    [.assets[]
-     | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$"))
-     | { v: (.name | sub("^libvkintox_flatpak_"; "") | sub("_[0-9]{8}\\.so$"; "")),
-         d: (.name | capture("_(?<d>[0-9]{8})\\.so$").d),
-         created: .created_at,
-         url: .browser_download_url }]
-    | (map(select(.v | endswith("-experimental") | not)) | sort_by([(.v | vkey), plainrank, .d]) | reverse) as $stable
-    | (map(select(.v | endswith("-experimental")))       | sort_by([(.v | vkey), plainrank, .d]) | reverse) as $experimental
-    | ($stable + $experimental)[]
-    | "\(.v)\t\(.d)\t\(.url)"
-' "$TMP_DIR/release.json" >"$TMP_DIR/versions.tsv"
-
-declare -a BUILD_VERSIONS=() BUILD_DATES=() BUILD_URLS=()
-while IFS=$'\t' read -r build_version build_date build_url; do
-    [[ -n "$build_version" && -n "$build_url" ]] || continue
-    BUILD_VERSIONS+=("$build_version")
-    BUILD_DATES+=("$build_date")
-    BUILD_URLS+=("$build_url")
-done <"$TMP_DIR/versions.tsv"
-((${#BUILD_URLS[@]})) || die "the flatpak-build release has no dated library asset"
-
-# Published names have carried the date both ways: DDMMYYYY up to October 2026,
-# YYYYMMDD from then on. Normalise to YYYYMMDD, the form that compares and sorts,
-# and pass anything unrecognised straight through so it shows up in the menu
-# instead of being silently wrong.
-normalise_build_date() {
-    local d="$1"
-    if [[ ! "$d" =~ ^[0-9]{8}$ ]]; then
-        printf '%s' "$d"
-        return
-    fi
-    # Year-first puts a month in chars 5-6; day-first puts the year's century
-    # there, which is "20xx" and so never a month. Testing the month is exact for
-    # these two forms, where a year range is not: a 20th of the month reads as a
-    # perfectly plausible year.
-    local month=$((10#${d:4:2}))
-    if ((month >= 1 && month <= 12)); then
-        printf '%s' "$d"
-        return
-    fi
-    local day=$((10#${d:0:2}))
-    month=$((10#${d:2:2}))
-    if ((day >= 1 && day <= 31)) && ((month >= 1 && month <= 12)); then
-        printf '%s%s%s' "${d:4:4}" "${d:2:2}" "${d:0:2}"
-        return
-    fi
-    printf '%s' "$d"
+options:
+  --system, --flatpak   skip the install-method prompt
+  --app <id>            flatpak app id to enable the layer for
+  --version <tag>       pick an exact release (e.g. v0.2.0)
+  --latest              skip the version prompt and take the recommended release
+  --effects             fetch ReShade effects and textures without asking
+  --no-effects          skip ReShade effects and textures
+  --yes, -y             skip the confirmation prompt
+  --reinstall           install the layer even when the marker matches
+  --dry-run             print what would be downloaded and installed
+EOF
 }
 
-# month names for the build picker, so a date reads as a date
-MONTH_NAMES=(January February March April May June July August September October November December)
-ordinal() {
-    local n=$((10#$1))
-    case $((n % 100)) in
-        11 | 12 | 13) printf '%dth' "$n" ;;
-        *)
-            case $((n % 10)) in
-                1) printf '%dst' "$n" ;;
-                2) printf '%dnd' "$n" ;;
-                3) printf '%drd' "$n" ;;
-                *) printf '%dth' "$n" ;;
+while (($#)); do
+    case "$1" in
+        --system) METHOD=system; shift ;;
+        --flatpak) METHOD=flatpak; shift ;;
+        --app)
+            (($# >= 2)) || die "--app needs a value"
+            APP_ID="$2"
+            shift 2
+            ;;
+        --version)
+            (($# >= 2)) || die "--version needs a value"
+            WANT_VERSION="$2"
+            shift 2
+            ;;
+        --latest) LATEST=1; shift ;;
+        --effects) WANT_EFFECTS=yes; shift ;;
+        --no-effects) WANT_EFFECTS=no; shift ;;
+        --yes | -y) ASSUME_YES=1; shift ;;
+        --reinstall) FORCE=1; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        -h | --help) usage; exit 0 ;;
+        *) die "unknown option: $1" ;;
+    esac
+done
+[[ -z "$WANT_VERSION" || "$LATEST" -eq 0 ]] || die "--version and --latest cannot be combined"
+[[ "$METHOD" != "system" || -z "$APP_ID" ]] || die "--app is only valid with --flatpak"
+
+select_menu() {
+    local prompt="$1"
+    shift
+    local -a labels=("$@")
+    local count=${#labels[@]}
+    local cursor=0 drawn=0 index key rest read_fd=0
+    SELECTED=0
+    ((count > 0)) || return 0
+
+    if [[ ! -t 0 ]]; then
+        if exec 3</dev/tty 2>/dev/null && [[ -t 3 ]]; then
+            read_fd=3
+        else
+            die "this step needs a terminal; use --system or --flatpak plus --version or --latest, and --yes"
+        fi
+    fi
+    need_cmd stty
+    stty -icanon min 1 time 0 -echo <&"$read_fd" 2>/dev/null || true
+    printf '\n'
+
+    while true; do
+        if ((drawn > 0)); then
+            printf '\033[%dA' "$drawn"
+        fi
+        printf "\r\033[K${B}%s${NC} ${DIM}%s${NC}\n" "$prompt" "$NAV_HINT"
+        for ((index = 0; index < count; index++)); do
+            if ((index == cursor)); then
+                printf "\r\033[K  ${BLUE}${B}>${NC} %b\n" "${labels[index]}"
+            else
+                printf "\r\033[K    %b\n" "${labels[index]}"
+            fi
+        done
+        drawn=$((count + 1))
+
+        key=""
+        IFS= read -rsn1 -u "$read_fd" key || true
+        [[ -n "$key" ]] || break
+        if [[ "$key" == $'\e' || "$key" == $'\033' ]]; then
+            rest=""
+            IFS= read -rsn2 -u "$read_fd" rest || true
+            case "$rest" in
+                '[A' | 'OA') cursor=$(((cursor - 1 + count) % count)) ;;
+                '[B' | 'OB') cursor=$(((cursor + 1) % count)) ;;
             esac
+            continue
+        fi
+        case "$key" in
+            $'\r' | $'\n') break ;;
+            $'\003' | $'\004') die "aborted" ;;
+        esac
+    done
+
+    restore_tty
+    if ((read_fd == 3)); then exec 3<&-; fi
+
+    printf '\033[%dA' "$drawn"
+    for ((index = 0; index < drawn; index++)); do
+        printf '\r\033[K\n'
+    done
+    printf '\033[%dA' "$drawn"
+    printf "  ${GREEN}✓${NC} %b\n" "${labels[$cursor]}"
+    SELECTED=$cursor
+}
+
+confirm() {
+    ((ASSUME_YES)) && return 0
+    local fd=0
+    if [[ ! -t 0 ]]; then
+        if exec 3</dev/tty 2>/dev/null && [[ -t 3 ]]; then
+            fd=3
+        else
+            die "confirmation needs a terminal; pass --yes for unattended installs"
+        fi
+    fi
+    IFS= read -r -u "$fd" _ || die "aborted"
+    if ((fd == 3)); then exec 3<&-; fi
+}
+
+detect_system() {
+    local arch id like
+    arch="$(uname -m)"
+    [[ "$arch" == "x86_64" ]] || die "vkintox is x86_64 only (this machine is $arch)"
+    id=""
+    like=""
+    if [[ -r /etc/os-release ]]; then
+        id="$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"')"
+        like="$(sed -n 's/^ID_LIKE=//p' /etc/os-release | tr -d '"')"
+    fi
+    case " $id $like " in
+        *" arch "*) SYSTEM_KIND=arch ;;
+        *" debian "* | *" ubuntu "*) SYSTEM_KIND=deb ;;
+        *" suse "* | *" opensuse "*) SYSTEM_KIND=rpm; RPM_FLAVOR=suse ;;
+        *" fedora "* | *" rhel "* | *" centos "*) SYSTEM_KIND=rpm; RPM_FLAVOR=fedora ;;
+        *)
+            if command -v pacman >/dev/null 2>&1; then
+                SYSTEM_KIND=arch
+            elif command -v apt-get >/dev/null 2>&1; then
+                SYSTEM_KIND=deb
+            elif command -v zypper >/dev/null 2>&1; then
+                SYSTEM_KIND=rpm; RPM_FLAVOR=suse
+            elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+                SYSTEM_KIND=rpm; RPM_FLAVOR=fedora
+            else
+                die "system-wide installs are available for Fedora/openSUSE, Debian/Ubuntu and Arch; use --flatpak instead"
+            fi
             ;;
     esac
-}
-format_build_date() {
-    local d="$1"
-    if [[ ! "$d" =~ ^[0-9]{8}$ ]]; then
-        printf '%s' "${d:-unknown date}"
-        return
-    fi
-    local month=$((10#${d:4:2}))
-    local day=$((10#${d:6:2}))
-    if ((month < 1 || month > 12 || day < 1 || day > 31)); then
-        printf '%s' "$d"
-        return
-    fi
-    printf '%s %s %s' "${MONTH_NAMES[month - 1]}" "$(ordinal "$day")" "${d:0:4}"
+    case "$SYSTEM_KIND" in
+        rpm) ASSET_GLOB='*.x86_64.rpm' ;;
+        deb) ASSET_GLOB='*_amd64.deb' ;;
+        arch) ASSET_GLOB='*x86_64.pkg.tar.zst' ;;
+    esac
 }
 
-# one menu entry per version, newest build first, so the counts come free
-declare -a VERSION_LABELS=()
-declare -a VERSION_FIRST_BUILD=()
-version_index=0
-for build_index in "${!BUILD_VERSIONS[@]}"; do
-    if ((build_index > 0)) && [[ "${BUILD_VERSIONS[$build_index]}" == "${BUILD_VERSIONS[$build_index - 1]}" ]]; then
-        continue
+select_flatpak_app() {
+    need_cmd flatpak
+    if [[ -n "$APP_ID" ]]; then
+        flatpak list --app --columns=application 2>/dev/null | grep -qx "$APP_ID" ||
+            die "flatpak app $APP_ID is not installed"
+        return 0
     fi
-    builds=0
-    for other in "${BUILD_VERSIONS[@]}"; do
-        [[ "$other" == "${BUILD_VERSIONS[$build_index]}" ]] && builds=$((builds + 1))
-    done
-    version_label="${BUILD_VERSIONS[$build_index]}"
-    ((builds > 1)) && version_label="$version_label ($builds builds)"
-    # the list is stable-first, so only the head of it can be recommended
-    if [[ "$version_label" == *-experimental* ]]; then
-        version_label="${YELLOW}${version_label} (experimental! be careful)${NC}"
-    elif ((version_index == 0)); then
-        version_label="${GREEN}${version_label} (recommended)${NC}"
-    fi
-    VERSION_LABELS+=("$version_label")
-    VERSION_FIRST_BUILD+=("$build_index")
-    version_index=$((version_index + 1))
-done
 
-select_menu "pick installation method:" "fetch latest" "choose manually"
-if (( SELECTED == 0 )); then
-    # highest version wins, a plain release beats its -rc/-beta builds, and an
-    # experimental branch is only the default when nothing else exists
-    ASSET_URL=$(jq -er '
-        def vkey: .name | sub("^libvkintox_flatpak_"; "") | sub("_[0-9]{8}\\.so$"; "") | sub("^v"; "") | sub("[-+].*$"; "") | split(".") | map(tonumber? // 0);
-        def plainrank: if (.name | sub("^libvkintox_flatpak_"; "") | sub("_[0-9]{8}\\.so$"; "") | sub("^v"; "") | test("^[0-9]+(\\.[0-9]+)*$")) then 1 else 0 end;
-        [ .assets[] | select(.name | test("^libvkintox_flatpak_.+_[0-9]{8}\\.so$")) ]
-        | (map(select(.name | contains("-experimental") | not))) as $stable
-        | (if ($stable | length) > 0 then $stable else . end)
-        | sort_by([vkey, plainrank, .created_at]) | last
-        | .browser_download_url // empty
-    ' "$TMP_DIR/release.json") || die "the flatpak-build release has no dated library asset"
-    SELECTED_VERSION_NAME="$(basename "$ASSET_URL" | sed -E 's/^libvkintox_flatpak_//; s/_[0-9]{8}\.so$//')"
-    SELECTED_BUILD_DATE="$(normalise_build_date "$(basename "$ASSET_URL" | sed -nE 's/^.*_([0-9]{8})\.so$/\1/p')")"
-else
-    select_menu "multiple versions found:" "${VERSION_LABELS[@]}"
-    version_choice=$SELECTED
-    first_build="${VERSION_FIRST_BUILD[$version_choice]}"
-    chosen_version="${BUILD_VERSIONS[$first_build]}"
-    declare -a BUILD_LABELS=() BUILD_CHOICE_URLS=()
-    for build_index in "${!BUILD_VERSIONS[@]}"; do
-        [[ "${BUILD_VERSIONS[$build_index]}" == "$chosen_version" ]] || continue
-        BUILD_LABELS+=("$(format_build_date "$(normalise_build_date "${BUILD_DATES[$build_index]}")")")
-        BUILD_CHOICE_URLS+=("${BUILD_URLS[$build_index]}")
+    local -a ids=() names=() labels=()
+    while IFS=$'\t' read -r id name; do
+        [[ -n "$id" ]] || continue
+        ids+=("$id")
+        names+=("$name")
+    done < <(flatpak list --app --columns=application,name 2>/dev/null)
+    ((${#ids[@]})) || die "no flatpak apps are installed; install one first or use --system"
+
+    local -a order_ids=() order_labels=()
+    local preferred id index found
+    for preferred in org.vinegarhq.Sober net.buwryy.Roseline; do
+        found=0
+        for index in "${!ids[@]}"; do
+            if [[ "${ids[$index]}" == "$preferred" ]]; then
+                order_ids+=("$preferred")
+                order_labels+=("${GREEN}${preferred}${NC} (${names[$index]})")
+                found=1
+                break
+            fi
+        done
+        ((found)) || true
     done
-    if ((${#BUILD_CHOICE_URLS[@]} > 1)); then
-        select_menu "$chosen_version has ${#BUILD_CHOICE_URLS[@]} builds. pick:" "${BUILD_LABELS[@]}"
-        ASSET_URL="${BUILD_CHOICE_URLS[$SELECTED]}"
+    local -a rest=()
+    for id in "${ids[@]}"; do
+        [[ "$id" == "org.vinegarhq.Sober" || "$id" == "net.buwryy.Roseline" ]] && continue
+        rest+=("$id")
+    done
+    if ((${#rest[@]})); then
+        mapfile -t rest < <(printf '%s\n' "${rest[@]}" | LC_ALL=C sort)
+        for id in "${rest[@]}"; do
+            for index in "${!ids[@]}"; do
+                if [[ "${ids[$index]}" == "$id" ]]; then
+                    order_ids+=("$id")
+                    order_labels+=("$id (${names[$index]})")
+                    break
+                fi
+            done
+        done
+    fi
+
+    select_menu "which flatpak app should use vkintox?" "${order_labels[@]}"
+    APP_ID="${order_ids[$SELECTED]}"
+}
+
+fetch_releases() {
+    local http
+    start_spin "fetching releases..."
+    http=$(curl -sSL -w '%{http_code}' \
+        -H 'Accept: application/vnd.github+json' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "${AUTH_ARGS[@]}" \
+        "$RELEASES_URL" -o "$TMP_DIR/releases.json" || true)
+    stop_spin
+    case "$http" in
+        200) ;;
+        403) die "GitHub API rate limit hit (HTTP 403); set GH_TOKEN or wait and retry" ;;
+        404) die "no vkintox releases were found" ;;
+        *) die "couldn't fetch releases (HTTP ${http:-no response})" ;;
+    esac
+    jq -e 'type == "array" and length > 0' "$TMP_DIR/releases.json" >/dev/null 2>&1 ||
+        die "no vkintox releases are published yet"
+}
+
+REL_TAG=() REL_BASE=() REL_CAT=() REL_HOTFIX=() REL_DATE=() REL_ASSET=() REL_URL=() REL_DIGEST=()
+declare -A BEST_IDX=()
+ORDERED_BASES=() VERSION_LABELS=() STABLE_BASES=() PREFIX_BASES=()
+
+load_releases() {
+    local tag date name url digest base suffix category hotfix
+    local -A seen=()
+    REL_TAG=() REL_BASE=() REL_CAT=() REL_HOTFIX=() REL_DATE=() REL_ASSET=() REL_URL=() REL_DIGEST=()
+    while IFS=$'\t' read -r tag date name url digest; do
+        [[ -n "$tag" && -n "$name" ]] || continue
+        # shellcheck disable=SC2254
+        case "$name" in
+            $ASSET_GLOB) ;;
+            *) continue ;;
+        esac
+        if [[ "$METHOD" == "system" && "$SYSTEM_KIND" == "rpm" ]]; then
+            if [[ "$RPM_FLAVOR" == "fedora" ]]; then
+                [[ "$name" == *".fc"*".x86_64.rpm" ]] || continue
+            else
+                [[ "$name" != *".fc"* ]] || continue
+            fi
+        fi
+        [[ -z "${seen[$tag]:-}" ]] || continue
+        [[ "$tag" =~ ^v?([0-9]+(\.[0-9]+)+)(-(.+))?$ ]] || continue
+        base="${BASH_REMATCH[1]}"
+        suffix="${BASH_REMATCH[4]:-}"
+        category=0
+        hotfix=0
+        if [[ -z "$suffix" ]]; then
+            category=1
+        elif [[ "$suffix" =~ ^(hotfix|hf)([.-]?([0-9]+))?$ ]]; then
+            category=2
+            hotfix=$((10#${BASH_REMATCH[3]:-1}))
+        fi
+        seen[$tag]=1
+        REL_TAG+=("$tag")
+        REL_BASE+=("$base")
+        REL_CAT+=("$category")
+        REL_HOTFIX+=("$hotfix")
+        REL_DATE+=("$date")
+        REL_ASSET+=("$name")
+        REL_URL+=("$url")
+        REL_DIGEST+=("$digest")
+    done < <(jq -r '
+        .[] | select(.draft | not) as $r
+        | $r.assets[]?
+        | [$r.tag_name, ($r.published_at // $r.created_at // ""), .name, .browser_download_url, (.digest // "")]
+        | @tsv
+    ' "$TMP_DIR/releases.json")
+    if ((${#REL_TAG[@]} == 0)); then
+        if [[ "$METHOD" == "system" ]]; then
+            die "no native packages for $SYSTEM_KIND were found in the releases; try --flatpak"
+        fi
+        die "no Flatpak packages were found in the releases"
+    fi
+}
+
+choose_releases() {
+    local i base category hotfix date
+    local -A best_cat=() best_hot=() best_date=() best_idx=()
+    for i in "${!REL_TAG[@]}"; do
+        base="${REL_BASE[$i]}"
+        category="${REL_CAT[$i]}"
+        hotfix="${REL_HOTFIX[$i]}"
+        date="${REL_DATE[$i]}"
+        if [[ -z "${best_idx[$base]:-}" ]]; then
+            best_cat[$base]=$category
+            best_hot[$base]=$hotfix
+            best_date[$base]=$date
+            best_idx[$base]=$i
+            continue
+        fi
+        if ((category > best_cat[$base])) ||
+            ((category == best_cat[$base] && hotfix > best_hot[$base])); then
+            best_cat[$base]=$category
+            best_hot[$base]=$hotfix
+            best_date[$base]=$date
+            best_idx[$base]=$i
+        elif ((category == best_cat[$base] && hotfix == best_hot[$base])) &&
+            [[ "$date" > "${best_date[$base]}" ]]; then
+            best_date[$base]=$date
+            best_idx[$base]=$i
+        fi
+    done
+    BEST_IDX=()
+    for base in "${!best_idx[@]}"; do
+        BEST_IDX[$base]="${best_idx[$base]}"
+    done
+}
+
+build_versions() {
+    local base index idx label
+    STABLE_BASES=()
+    PREFIX_BASES=()
+    for base in "${!BEST_IDX[@]}"; do
+        idx="${BEST_IDX[$base]}"
+        if ((REL_CAT[idx] >= 1)); then
+            STABLE_BASES+=("$base")
+        else
+            PREFIX_BASES+=("$base")
+        fi
+    done
+    if ((${#STABLE_BASES[@]})); then
+        mapfile -t STABLE_BASES < <(printf '%s\n' "${STABLE_BASES[@]}" | sort -Vr)
+    fi
+    if ((${#PREFIX_BASES[@]})); then
+        mapfile -t PREFIX_BASES < <(printf '%s\n' "${PREFIX_BASES[@]}" | sort -Vr)
+    fi
+    ORDERED_BASES=()
+    if ((${#STABLE_BASES[@]})); then ORDERED_BASES+=("${STABLE_BASES[@]}"); fi
+    if ((${#PREFIX_BASES[@]})); then ORDERED_BASES+=("${PREFIX_BASES[@]}"); fi
+    ((${#ORDERED_BASES[@]})) || die "no installable versions were found"
+
+    VERSION_LABELS=()
+    for index in "${!ORDERED_BASES[@]}"; do
+        base="${ORDERED_BASES[$index]}"
+        idx="${BEST_IDX[$base]}"
+        label="${REL_TAG[$idx]}"
+        if ((REL_CAT[idx] == 0)); then
+            label="${YELLOW}${label} (pre-release)${NC}"
+        elif ((index == 0)); then
+            label="${GREEN}${label} (recommended)${NC}"
+        fi
+        VERSION_LABELS+=("$label")
+    done
+}
+
+choose_version() {
+    local want want_base i base idx
+    if [[ -n "$WANT_VERSION" ]]; then
+        want="${WANT_VERSION#v}"
+        for i in "${!REL_TAG[@]}"; do
+            if [[ "${REL_TAG[$i]#v}" == "$want" ]]; then
+                SELECTED_TAG="${REL_TAG[$i]}"
+                SELECTED_ASSET="${REL_ASSET[$i]}"
+                SELECTED_URL="${REL_URL[$i]}"
+                SELECTED_DIGEST="${REL_DIGEST[$i]}"
+                return 0
+            fi
+        done
+        want_base="${want%%-*}"
+        for base in "${ORDERED_BASES[@]}"; do
+            if [[ "$base" == "$want_base" ]]; then
+                idx="${BEST_IDX[$base]}"
+                SELECTED_TAG="${REL_TAG[$idx]}"
+                SELECTED_ASSET="${REL_ASSET[$idx]}"
+                SELECTED_URL="${REL_URL[$idx]}"
+                SELECTED_DIGEST="${REL_DIGEST[$idx]}"
+                return 0
+            fi
+        done
+        die "version $WANT_VERSION is not available for $METHOD"
+    fi
+    if ((LATEST)); then
+        base="${ORDERED_BASES[0]}"
+        idx="${BEST_IDX[$base]}"
     else
-        ASSET_URL="${BUILD_CHOICE_URLS[0]}"
+        select_menu "choose a version" "${VERSION_LABELS[@]}"
+        base="${ORDERED_BASES[$SELECTED]}"
+        idx="${BEST_IDX[$base]}"
     fi
-    SELECTED_VERSION_NAME="$(basename "$ASSET_URL" | sed -E 's/^libvkintox_flatpak_//; s/_[0-9]{8}\.so$//')"
-    SELECTED_BUILD_DATE="$(normalise_build_date "$(basename "$ASSET_URL" | sed -nE 's/^.*_([0-9]{8})\.so$/\1/p')")"
-fi
-LIBRARY="$TMP_DIR/$(basename "$ASSET_URL")"
-say "downloading $(basename "$ASSET_URL")"
-curl -fsSL "$ASSET_URL" -o "$LIBRARY" || die "couldn't download the Flatpak library for $ASSET_URL"
-[[ -s "$LIBRARY" ]] || die "downloaded Flatpak library is empty"
-if ! ELF_HEADER=$(LC_ALL=C readelf -h "$LIBRARY" 2>/dev/null); then
-    die "downloaded file is not a readable ELF library"
-fi
-grep -Eq 'Class:[[:space:]]+ELF64' <<<"$ELF_HEADER" || die "downloaded file is not an ELF64 library"
-grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' <<<"$ELF_HEADER" || die "downloaded library is not x86_64"
-ok "downloaded binary"
-
-section "installing layer"
-cat >"$TMP_DIR/VKIntox.json" <<'JSON'
-{
-  "id": "org.freedesktop.Platform.VulkanLayer.VKIntox",
-  "branch": "26.08",
-  "runtime": "org.freedesktop.Platform",
-  "runtime-version": "26.08",
-  "sdk": "org.freedesktop.Sdk",
-  "build-extension": true,
-  "modules": [{
-    "name": "vkintox",
-    "buildsystem": "simple",
-    "build-commands": [
-      "install -Dm755 libvkintox.so ${FLATPAK_DEST}/lib/libvkintox.so",
-      "install -Dm644 VKIntox.json ${FLATPAK_DEST}/share/vulkan/implicit_layer.d/VKIntox.json"
-    ],
-    "sources": [
-      { "type": "file", "path": "LIBRARY_PATH", "dest-filename": "libvkintox.so" },
-      { "type": "file", "path": "MANIFEST_PATH", "dest-filename": "VKIntox.json" }
-    ]
-  }]
+    SELECTED_TAG="${REL_TAG[$idx]}"
+    SELECTED_ASSET="${REL_ASSET[$idx]}"
+    SELECTED_URL="${REL_URL[$idx]}"
+    SELECTED_DIGEST="${REL_DIGEST[$idx]}"
 }
-JSON
-sed -i \
-  -e "s|LIBRARY_PATH|$LIBRARY|" \
-  -e "s|MANIFEST_PATH|$TMP_DIR/layer-manifest.json|" \
-  "$TMP_DIR/VKIntox.json"
 
-# Produce the same implicit-layer manifest as the project packaging config.
-cat >"$TMP_DIR/layer-manifest.json" <<'JSON'
-{
-  "file_format_version": "1.0.0",
-  "layer": {
-    "name": "VK_LAYER_VKINTOX_post_processing",
-    "type": "GLOBAL",
-    "library_path": "/usr/lib/extensions/vulkan/VKIntox/lib/libvkintox.so",
-    "api_version": "1.3.223",
-    "implementation_version": "1",
-    "description": "a post processing layer with overlay UI",
-    "functions": {
-      "vkGetInstanceProcAddr": "VKIntox_GetInstanceProcAddr",
-      "vkGetDeviceProcAddr": "VKIntox_GetDeviceProcAddr"
-    },
-    "enable_environment": { "ENABLE_VKINTOX": "1" },
-    "disable_environment": { "DISABLE_VKINTOX": "1" }
-  }
+marker_matches() {
+    [[ -f "$MARKER" ]] || return 1
+    local tag asset digest method app
+    tag=$(sed -n 's/^tag=//p' "$MARKER" | head -1)
+    asset=$(sed -n 's/^asset=//p' "$MARKER" | head -1)
+    digest=$(sed -n 's/^digest=//p' "$MARKER" | head -1)
+    method=$(sed -n 's/^method=//p' "$MARKER" | head -1)
+    app=$(sed -n 's/^app_id=//p' "$MARKER" | head -1)
+    [[ "$tag" == "$SELECTED_TAG" && "$asset" == "$SELECTED_ASSET" && "$method" == "$METHOD" ]] || return 1
+    [[ -z "$SELECTED_DIGEST" || "$digest" == "${SELECTED_DIGEST#sha256:}" ]] || return 1
+    if [[ "$METHOD" == "flatpak" ]]; then
+        [[ "$app" == "$APP_ID" ]] || return 1
+    fi
+    return 0
 }
-JSON
 
-mkdir -p "$BUILD_ROOT"
-mkdir -p "$BUILD_ROOT/repo"
-run_progress "preparing flatpak package" flatpak-builder --user --force-clean --disable-rofiles-fuse \
-    --install-deps-from=flathub \
-    --state-dir="$BUILD_ROOT/state" \
-    --repo="$BUILD_ROOT/repo" "$BUILD_ROOT/build" "$TMP_DIR/VKIntox.json"
-if ! flatpak remote-list --user | awk '{print $1}' | grep -qx 'vkintox-local'; then
-    run_progress "adding local remote" flatpak remote-add --user --if-not-exists vkintox-local "$BUILD_ROOT/repo" --no-gpg-verify
-fi
-run_progress "updating local remote" flatpak remote-modify --user --url="file://$BUILD_ROOT/repo" --no-gpg-verify vkintox-local
-# 25.08 and 26.08 can both be installed; a branch-less ref is ambiguous, so
-# remove every installed branch explicitly before installing the new one.
-while read -r ref; do
-    [ -n "$ref" ] || continue
-    run_progress "removing previous layer" flatpak uninstall --user --noninteractive -y "$ref"
-done < <(flatpak list --user --runtime --columns=application,branch 2>/dev/null | awk -v id="$LAYER_ID" '$1==id{print id "//" $2}')
-run_progress "installing layer" flatpak install --user --noninteractive -y vkintox-local \
-    "runtime/$LAYER_ID/x86_64/26.08"
-ok "layer installed"
+installed_pkg_version() {
+    case "$SYSTEM_KIND" in
+        rpm) rpm -q --qf '%{VERSION}' vkintox 2>/dev/null ;;
+        deb) dpkg-query -W -f='${Version}' vkintox 2>/dev/null ;;
+        arch) pacman -Q vkintox 2>/dev/null | awk '{print $2}' ;;
+    esac
+}
 
-section "config dirs"
-APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
-RESHADE_DIR="$APP_CONFIG/reshade"
-SHADERS_DIR="$RESHADE_DIR/Shaders"
-TEXTURES_DIR="$RESHADE_DIR/Textures"
-mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$APP_CONFIG/font"
+write_marker() {
+    mkdir -p "$MARKER_DIR"
+    {
+        printf 'tag=%s\n' "$SELECTED_TAG"
+        printf 'asset=%s\n' "$SELECTED_ASSET"
+        printf 'digest=%s\n' "${SELECTED_DIGEST#sha256:}"
+        printf 'method=%s\n' "$METHOD"
+        printf 'app_id=%s\n' "$APP_ID"
+    } >"$MARKER"
+}
 
-curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version"
-# BASH_SOURCE is unset when the script is piped to bash (curl | bash) or run via
-# bash -c, which is how fish users invoke it; guard so set -u doesn't trip. the
-# licence texts are the only thing still read from beside the script.
-SCRIPT_DIR=""
-if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-fi
-# Faces come from Google Fonts at install time, so the repository does not carry
-# them. The text families are taken whole from the google/fonts repo: the css
-# endpoint splits a text family into unicode-range subsets, which would leave the
-# overlay with latin only. Material Symbols has no repo entry, but its css file
-# is the entire icon font, so that one is resolved there. A face that cannot be
-# fetched is never fatal - the overlay has a fallback for each - because an
-# install that dies over a display face is the worse trade.
+validate_asset() {
+    case "$SYSTEM_KIND" in
+        rpm)
+            command -v rpm >/dev/null 2>&1 || return 0
+            rpm -qp "$ASSET_PATH" >/dev/null 2>&1 || die "the downloaded file is not a valid RPM"
+            ;;
+        deb)
+            command -v dpkg-deb >/dev/null 2>&1 || return 0
+            dpkg-deb --info "$ASSET_PATH" >/dev/null 2>&1 || die "the downloaded file is not a valid deb"
+            ;;
+        *) ;;
+    esac
+}
+
 google_font_url() {
     local family="$1" spec="${2:-}" css
     css=$(curl -fsSL -A "Mozilla/4.0" \
@@ -582,13 +607,10 @@ is_font_file() {
     esac
 }
 
-# an installed face is never refetched: resolving the download urls would cost
-# a network round trip per family on every run
 font_installed() {
     [[ -s "$APP_CONFIG/font/$1" ]] && is_font_file "$APP_CONFIG/font/$1"
 }
 
-# <installed name> <url>...  - the first url that comes back as a font wins
 seed_google_font() {
     local dest="$1"
     shift
@@ -613,26 +635,7 @@ seed_google_license() {
     return 0
 }
 
-# 0.2.0 moved the overlay from the static weights to the variable faces, and the
-# switchover landed on 14 October 2026. a 0.2.0 build from before that still asks
-# for the static names, so the choice is by build date as well as version - the
-# version alone cannot tell those two builds apart.
-SELECTED_VERSION="$SELECTED_VERSION_NAME"
-SELECTED_NUMERIC="${SELECTED_VERSION#v}"; SELECTED_NUMERIC="${SELECTED_NUMERIC%%-*}"; SELECTED_NUMERIC="${SELECTED_NUMERIC%%+*}"
-version_ge() {
-    if [[ "$1" == "$2" ]]; then
-        return 0
-    fi
-    [[ "$(printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort -V | tail -n1)" == "$1" ]]
-}
-
-use_variable_fonts=false
-if version_ge "$SELECTED_NUMERIC" "0.2.0" &&
-    [[ "$SELECTED_BUILD_DATE" =~ ^[0-9]{8}$ && "$SELECTED_BUILD_DATE" > "20261013" ]]; then
-    use_variable_fonts=true
-fi
-
-if [[ "$use_variable_fonts" == true ]]; then
+seed_fonts() {
     font_installed RobotoFlex.ttf || seed_google_font RobotoFlex.ttf "$(repo_font_url robotoflex)" || true
     font_installed GoogleSansFlex.ttf || seed_google_font GoogleSansFlex.ttf "$(repo_font_url googlesansflex)" \
         "$(google_font_url "Google+Sans+Flex")" || true
@@ -645,45 +648,20 @@ if [[ "$use_variable_fonts" == true ]]; then
         cp "$APP_CONFIG/font/MaterialSymbolsRounded.ttf" "$APP_CONFIG/font/MaterialSymbolsRoundedBold.ttf" 2>/dev/null || true
     seed_google_license robotoflex LICENSE-SIL-OFL-1.1.txt
     seed_google_license materialsymbolsrounded LICENSE-Apache-2.0.txt
-else
-    # static weights: font.ttf carries the body, the named files carry the steps a
-    # pre-Flex build looks for by name. these come from the css endpoint, which is
-    # where Google serves the static instances of Google Sans.
-    font_installed GoogleSans-Medium.ttf || seed_google_font GoogleSans-Medium.ttf "$(google_font_url "Google+Sans" "wght@500")" || true
-    font_installed GoogleSans-Regular.ttf || seed_google_font GoogleSans-Regular.ttf "$(google_font_url "Google+Sans" "wght@400")" || true
-    font_installed GoogleSans-Bold.ttf || seed_google_font GoogleSans-Bold.ttf "$(google_font_url "Google+Sans" "wght@700")" || true
-    # Google Sans ships four steps and no 800, so the extra-bold face is the bold
-    # file under the name a pre-Flex build looks for.
-    cp "$APP_CONFIG/font/GoogleSans-Bold.ttf" "$APP_CONFIG/font/GoogleSans-ExtraBold.ttf" 2>/dev/null || true
-    for replacement in GoogleSans-Regular.ttf GoogleSans-Bold.ttf GoogleSans-ExtraBold.ttf; do
-        [[ -s "$APP_CONFIG/font/$replacement" ]] ||
-            cp "$APP_CONFIG/font/GoogleSans-Medium.ttf" "$APP_CONFIG/font/$replacement" 2>/dev/null || true
-    done
-    seed_google_license googlesans LICENSE-SIL-OFL-1.1.txt
-fi
+    [[ -s "$APP_CONFIG/font/RobotoFlex.ttf" ]] && cp "$APP_CONFIG/font/RobotoFlex.ttf" "$APP_CONFIG/font/font.ttf"
+}
 
-# the licence texts ship with the repository; a family's OFL file is not part of
-# the font download
-for licence in LICENSE LICENSE-SIL-OFL-1.1.txt LICENSE-Apache-2.0.txt LICENSE-GoogleSansFlex-OFL.txt; do
-    [[ -f "$SCRIPT_DIR/assets/font/$licence" ]] && cp "$SCRIPT_DIR/assets/font/$licence" "$APP_CONFIG/font/"
-done
+effects_current() {
+    [[ -f "$EFFECTS_MARKER" && -f "$TMP_DIR/EffectPackages.ini" ]] || return 1
+    [[ "$(cat "$EFFECTS_MARKER")" == "$(sha256sum "$TMP_DIR/EffectPackages.ini" | cut -d' ' -f1)" ]]
+}
 
-# the historical filename is what a library that predates Flex still opens
-for variable in RobotoFlex.ttf GoogleSans-Medium.ttf; do
-    [[ -s "$APP_CONFIG/font/$variable" ]] && cp "$APP_CONFIG/font/$variable" "$APP_CONFIG/font/font.ttf"
-done
-[[ -s "$APP_CONFIG/font/font.ttf" ]] || warn "no body face was seeded; the overlay will use its built-in font"
-
-curl -fsSL "$EFFECT_PACKAGES_URL" -o "$TMP_DIR/EffectPackages.ini"
-
-EFFECTS_HASH=$(sha256sum "$TMP_DIR/EffectPackages.ini" | cut -d' ' -f1)
-EFFECTS_MARKER="$RESHADE_DIR/.vkintox_effects_hash"
-if [[ ! -f "$EFFECTS_MARKER" || "$(cat "$EFFECTS_MARKER")" != "$EFFECTS_HASH" ]]; then
+install_effects() {
+    local effects_hash
+    effects_hash=$(sha256sum "$TMP_DIR/EffectPackages.ini" | cut -d' ' -f1)
     say "downloading + extracting packages"
     rm -rf "$SHADERS_DIR" "$TEXTURES_DIR"
     mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR"
-    # the old layout nested these under reshade/packages; drop it so shader
-    # discovery cannot see the same files in two places
     rm -rf "$RESHADE_DIR/packages"
     python3 - "$TMP_DIR" "$SHADERS_DIR" "$TEXTURES_DIR" "$TMP_DIR/EffectPackages.ini" <<'PYEOF'
 import configparser, os, sys, shutil, urllib.request, zipfile
@@ -701,9 +679,7 @@ for section in cfg.sections():
     url = pkg.get("DownloadUrl")
     if not url:
         continue
-    # every package installs into its own directory under Shaders/ and Textures/,
-    # named after its InstallPath subdir or, when it targets the shared root, the
-    # first word of its PackageName
+
     def package_dir(configured, root, fallback):
         path = (configured or "").replace("\\", "/")
         marker = "reshade-shaders/" + root
@@ -715,7 +691,6 @@ for section in cfg.sections():
     fallback_dir = (pkg.get("PackageName", section).split() or [section])[0]
     sub_shader = package_dir(pkg.get("InstallPath"), "Shaders", fallback_dir)
     sub_tex = package_dir(pkg.get("TextureInstallPath"), "Textures", sub_shader)
-
     tgt_shaders = os.path.join(shaders_dir, sub_shader)
     tgt_textures = os.path.join(textures_dir, sub_tex)
     os.makedirs(tgt_shaders, exist_ok=True)
@@ -760,23 +735,221 @@ if failed:
         print(f"    - {problem}")
     raise SystemExit(1)
 PYEOF
-    printf '%s\n' "$EFFECTS_HASH" > "$EFFECTS_MARKER"
-else
-    ok "effects up to date"
+    printf '%s\n' "$effects_hash" >"$EFFECTS_MARKER"
+}
+
+TMP_DIR=$(mktemp -d)
+save_tty
+
+need_cmd curl
+need_cmd jq
+need_cmd uname
+need_cmd sed
+need_cmd sort
+need_cmd tr
+need_cmd grep
+need_cmd awk
+need_cmd mktemp
+
+AUTH_ARGS=()
+if [[ -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}" ]]; then
+    AUTH_ARGS=(-H "Authorization: Bearer ${GITHUB_TOKEN:-$GH_TOKEN}")
 fi
 
-section "enable layer"
-if ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
-    warn "couldn't set ENABLE_VKINTOX; if the app is not installed yet, run:"
-    printf '    flatpak override --user %s --env=ENABLE_VKINTOX=1\n' "$APP_ID"
-fi
-# butter's own GTK ui creates a vulkan instance to render itself when it
-# launches a game under rosemary. forcing the GL renderer keeps the layer out
-# of the ui process, so it only post-processes the game's own devices.
-if [[ "$APP_ID" == "io.github.microlift.butter" ]]; then
-    if ! flatpak override --user "$APP_ID" --env=GSK_RENDERER=gl 2>/dev/null; then
-        warn "couldn't set GSK_RENDERER=gl; if the app is not installed yet, run:"
-        printf '    flatpak override --user %s --env=GSK_RENDERER=gl\n' "$APP_ID"
+section "vkintox setup"
+say "vulkan post-processing layer with an in-game overlay"
+
+if [[ -z "$METHOD" ]]; then
+    select_menu "would you like to install vkintox system-wide, or via flatpak?" "system-wide" "flatpak"
+    if ((SELECTED == 0)); then
+        METHOD=system
+    else
+        METHOD=flatpak
     fi
 fi
-ok "setup finished for $APP_ID"
+
+if [[ "$METHOD" == "system" ]]; then
+    detect_system
+else
+    ASSET_GLOB='*.flatpak'
+    select_flatpak_app
+fi
+
+fetch_releases
+load_releases
+choose_releases
+build_versions
+choose_version
+
+SKIP_LAYER=0
+if ((FORCE == 0)); then
+    if marker_matches; then
+        SKIP_LAYER=1
+    elif [[ "$METHOD" == "system" ]]; then
+        installed_version=$(installed_pkg_version || true)
+        if [[ -n "$installed_version" && "${installed_version%%-*}" == "${SELECTED_TAG#v}" ]]; then
+            SKIP_LAYER=1
+        fi
+    fi
+fi
+
+section "confirm"
+printf "  version: %s\n" "$SELECTED_TAG"
+printf "  package: %s\n" "$SELECTED_ASSET"
+if ((SKIP_LAYER)); then
+    printf "  layer: already installed\n"
+fi
+if [[ "$METHOD" == "flatpak" ]]; then
+    printf "  app: %s\n" "$APP_ID"
+fi
+printf '  %bpress enter to confirm%b\n' "$DIM" "$NC"
+confirm
+ok "confirmed"
+
+ASSET_PATH="$TMP_DIR/$SELECTED_ASSET"
+
+if ((SKIP_LAYER)); then
+    ok "layer is already installed from $SELECTED_TAG"
+    write_marker
+else
+    if [[ "$METHOD" == "system" ]]; then
+        section "sudo"
+        if ((DRY_RUN)); then
+            say "dry run: sudo would be requested"
+        elif ((EUID == 0)); then
+            ok "running as root; no sudo needed"
+        else
+            say "sudo is needed to install the package"
+            sudo -v || die "sudo was not granted"
+            start_sudo
+            ok "sudo ready"
+        fi
+    else
+        section "permissions"
+        say "flatpak installs into your user account; no sudo needed"
+        ok "ready"
+    fi
+
+    if ((DRY_RUN)); then
+        say "dry run: would download $SELECTED_URL"
+    else
+        section "download"
+        run_progress "downloading $SELECTED_ASSET" curl -fL --retry 3 --retry-delay 1 \
+            -o "$ASSET_PATH" "$SELECTED_URL"
+        [[ -s "$ASSET_PATH" ]] || die "the downloaded package is empty"
+        if [[ -n "$SELECTED_DIGEST" ]]; then
+            actual=$(sha256sum "$ASSET_PATH" | cut -d' ' -f1)
+            [[ "$actual" == "${SELECTED_DIGEST#sha256:}" ]] || die "checksum mismatch for $SELECTED_ASSET"
+        fi
+        validate_asset
+    fi
+
+    if [[ "$METHOD" == "system" ]]; then
+        case "$SYSTEM_KIND" in
+            rpm)
+                if [[ "$RPM_FLAVOR" == "suse" ]]; then
+                    INSTALL_CMD=(zypper --non-interactive --no-gpg-checks install "$ASSET_PATH")
+                elif command -v dnf >/dev/null 2>&1; then
+                    INSTALL_CMD=(dnf install -y --nogpgcheck "$ASSET_PATH")
+                else
+                    INSTALL_CMD=(yum install -y --nogpgcheck "$ASSET_PATH")
+                fi
+                ;;
+            deb)
+                INSTALL_CMD=(env DEBIAN_FRONTEND=noninteractive apt-get install -y "$ASSET_PATH")
+                ;;
+            arch)
+                INSTALL_CMD=(pacman -U --noconfirm "$ASSET_PATH")
+                ;;
+        esac
+        if ((EUID != 0)); then
+            INSTALL_CMD=(sudo "${INSTALL_CMD[@]}")
+        fi
+        if ((DRY_RUN)); then
+            say "dry run: would install with: ${INSTALL_CMD[*]}"
+        else
+            section "install"
+            run_progress "installing vkintox $SELECTED_TAG" "${INSTALL_CMD[@]}"
+            ok "installed"
+        fi
+    else
+        FLATPAK_CMD=(flatpak install --user --noninteractive -y "$ASSET_PATH")
+        if ((DRY_RUN)); then
+            say "dry run: would install with: ${FLATPAK_CMD[*]}"
+        else
+            section "install"
+            run_progress "installing vkintox $SELECTED_TAG" "${FLATPAK_CMD[@]}"
+            if ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
+                warn "couldn't set ENABLE_VKINTOX for $APP_ID"
+            fi
+            if [[ "$APP_ID" == "io.github.microlift.butter" ]]; then
+                flatpak override --user "$APP_ID" --env=GSK_RENDERER=gl 2>/dev/null || true
+            fi
+            ok "installed"
+        fi
+    fi
+    if ((DRY_RUN == 0)); then
+        write_marker
+    fi
+fi
+
+if [[ "$METHOD" == "flatpak" ]]; then
+    APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
+else
+    APP_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/VKIntox"
+fi
+RESHADE_DIR="$APP_CONFIG/reshade"
+SHADERS_DIR="$RESHADE_DIR/Shaders"
+TEXTURES_DIR="$RESHADE_DIR/Textures"
+EFFECTS_MARKER="$RESHADE_DIR/.vkintox_effects_hash"
+
+section "config dirs"
+mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$APP_CONFIG/font"
+curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version" 2>/dev/null || true
+seed_fonts
+ok "created config dirs"
+
+section "reshade effects"
+curl -fsSL "$EFFECT_PACKAGES_URL" -o "$TMP_DIR/EffectPackages.ini" 2>/dev/null || true
+if [[ ! -s "$TMP_DIR/EffectPackages.ini" ]]; then
+    warn "couldn't fetch EffectPackages.ini; skipping effects"
+    WANT_EFFECTS=no
+elif effects_current; then
+    ok "effects up to date"
+    WANT_EFFECTS=no
+fi
+
+if [[ -z "$WANT_EFFECTS" ]]; then
+    if [[ -t 0 || -r /dev/tty ]]; then
+        select_menu "fetch ReShade effects and textures?" "yes" "no"
+        if ((SELECTED == 0)); then WANT_EFFECTS=yes; else WANT_EFFECTS=no; fi
+    else
+        WANT_EFFECTS=yes
+    fi
+fi
+
+if [[ "$WANT_EFFECTS" == "yes" ]]; then
+    if effects_current; then
+        ok "effects up to date"
+    elif ((DRY_RUN)); then
+        say "dry run: would download ReShade effects and textures"
+    else
+        need_cmd python3
+        install_effects
+        ok "effects installed"
+    fi
+else
+    say "skipping ReShade effects and textures"
+fi
+
+if ((DRY_RUN)); then
+    finish "dry run complete"
+    say "nothing was installed"
+else
+    finish "vkintox is installed"
+    if [[ "$METHOD" == "flatpak" ]]; then
+        say "launch it with: flatpak run $APP_ID"
+    else
+        say "enable it with: ENABLE_VKINTOX=1 <game>"
+    fi
+fi
