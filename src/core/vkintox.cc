@@ -24,6 +24,7 @@
 #include <signal.h>
 #include <setjmp.h>
 #include <execinfo.h>
+#include <ucontext.h>
 #include <limits>
 
 #include "util.hh"
@@ -636,7 +637,23 @@ namespace VKIntox
     static thread_local volatile sig_atomic_t signalJmpActive = 0;
     static thread_local volatile sig_atomic_t caughtSignal = 0;
 
-    static void crashSignalHandler(int sig)
+    static void writeSignalText(const char* text)
+    {
+        (void)write(2, text, strlen(text));
+    }
+
+    static void writeSignalHex(uintptr_t value)
+    {
+        static constexpr char digits[] = "0123456789abcdef";
+        char buffer[2 + sizeof(uintptr_t) * 2];
+        buffer[0] = '0';
+        buffer[1] = 'x';
+        for (size_t i = 0; i < sizeof(uintptr_t) * 2; ++i)
+            buffer[2 + i] = digits[(value >> ((sizeof(uintptr_t) * 2 - 1 - i) * 4)) & 0xf];
+        (void)write(2, buffer, sizeof(buffer));
+    }
+
+    static void crashSignalHandler(int sig, siginfo_t* info, void* context)
     {
         if (signalJmpActive)
         {
@@ -647,11 +664,19 @@ namespace VKIntox
         const char* sigName = (sig == SIGFPE) ? "SIGFPE"
                             : (sig == SIGABRT) ? "SIGABRT"
                             : (sig == SIGSEGV) ? "SIGSEGV" : "SIGNAL";
-        constexpr const char* prefix = "\nVKIntox: caught ";
-        (void)write(2, prefix, strlen(prefix));
-        (void)write(2, sigName, strlen(sigName));
-        constexpr const char* mid = " — backtrace:\n";
-        (void)write(2, mid, strlen(mid));
+        writeSignalText("\nVKIntox: caught ");
+        writeSignalText(sigName);
+        writeSignalText(" addr=");
+        writeSignalHex(reinterpret_cast<uintptr_t>(info ? info->si_addr : nullptr));
+#if defined(__x86_64__)
+        if (context)
+        {
+            const auto* uc = static_cast<const ucontext_t*>(context);
+            writeSignalText(" rip=");
+            writeSignalHex(static_cast<uintptr_t>(uc->uc_mcontext.gregs[REG_RIP]));
+        }
+#endif
+        writeSignalText(" — backtrace:\n");
         void* frames[32];
         int count = backtrace(frames, 32);
         backtrace_symbols_fd(frames, count, 2);
@@ -670,9 +695,9 @@ namespace VKIntox
     {
         std::call_once(g_crashHandlerOnce, []() {
             struct sigaction sa = {};
-            sa.sa_handler = crashSignalHandler;
-            sa.sa_flags = SA_RESETHAND;  // Auto-reset on delivery so a second
-                                          // signal terminates the process.
+            sa.sa_sigaction = crashSignalHandler;
+            sa.sa_flags = SA_SIGINFO | SA_RESETHAND;  // Auto-reset on delivery so a second
+                                                       // signal terminates the process.
             sigemptyset(&sa.sa_mask);
             sigaction(SIGFPE, &sa, nullptr);
             sigaction(SIGABRT, &sa, nullptr);
@@ -941,6 +966,10 @@ namespace VKIntox
     {
         std::call_once(initConfigsOnceFlag, []()
         {
+            // debug runs get a backtrace even if no ReShade shader is compiled
+            if (Logger::logLevel() <= LogLevel::Debug)
+                installCrashHandlers();
+
             // Ensure config directory exists for later saves
             {
                 std::string baseDir = ConfigSerializer::getBaseConfigDir();
@@ -3133,6 +3162,7 @@ namespace VKIntox
         std::vector<std::shared_ptr<LogicalSwapchain>> presentSwapchains;
         std::vector<uint32_t> presentIndices;
         bool presentHasPassthrough = false;
+        bool rebuiltThisPresent = false;
 
         // REMOVED: No longer need rawDeviceForRealloc/queueForRealloc since we removed QueueWaitIdle
 
@@ -3517,6 +3547,7 @@ namespace VKIntox
 
                 reallocateCommandBuffers(logicalDevice, sc, swapchainDepth);
                 sc->depthReallocPending = false;
+                rebuiltThisPresent = true;
                 Logger::debug(std::string("deferred depth change rebuilt presented swapchain")
                               + (hasDepthState(swapchainDepth) ? " with depth " : " without depth ")
                               + std::to_string(swapchainDepth.extent.width) + "x"
@@ -3630,6 +3661,13 @@ namespace VKIntox
             LogicalSwapchain* logicalSwapchain = presentSwapchains[i].get();
             uint32_t index = presentIndices[i];
 
+            if (rebuiltThisPresent)
+            {
+                Logger::debug("present after depth rebuild: submitting image " + std::to_string(index)
+                              + " swapchain=" + convertToString(pPresentInfo->pSwapchains[i])
+                              + " effects=" + std::to_string(logicalSwapchain->effects.size()));
+            }
+
             // Update effect uniforms only when effects are active (saves CPU+GPU when off).
             // Wrapped in try/catch so a misbehaving effect's per-frame update can
             // never escape into vkQueuePresentKHR (which is noexcept from the
@@ -3725,6 +3763,9 @@ namespace VKIntox
                 return vr;
             }
 
+            if (rebuiltThisPresent)
+                Logger::debug("present after depth rebuild: effect submit done for image " + std::to_string(index));
+
             maybeDumpDepthResolveImage(logicalDevice, logicalSwapchain, index, logicalDevice->queue);
 
             VkSemaphore finalSemaphore;
@@ -3750,12 +3791,19 @@ namespace VKIntox
                 return vr;
             }
 
+            if (rebuiltThisPresent)
+                Logger::debug("present after depth rebuild: overlay submit done for image " + std::to_string(index));
+
             presentSemaphores.push_back(finalSemaphore);
         }
 
         VkPresentInfoKHR presentInfo   = *pPresentInfo;
         presentInfo.waitSemaphoreCount = presentSemaphores.size();
         presentInfo.pWaitSemaphores    = presentSemaphores.data();
+
+        if (rebuiltThisPresent)
+            Logger::debug("present after depth rebuild: final QueuePresentKHR with "
+                          + std::to_string(presentSemaphores.size()) + " semaphore(s)");
 
         VkResult presentResult = logicalDevice->vkd.QueuePresentKHR(queue, &presentInfo);
         reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueuePresentKHR(final)", presentResult);

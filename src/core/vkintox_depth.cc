@@ -1620,8 +1620,12 @@ namespace VKIntox
                          + " — rebuilding descriptor sets and MSAA framebuffers");
         }
 
+        Logger::debug("ensureDepthResolveResources: destroying old resolve resources for swapchain="
+                      + convertToString(logicalSwapchain));
         destroyDepthResolveResources(logicalSwapchain);
+        Logger::debug("ensureDepthResolveResources: initializing new resolve resources");
         initializeDepthResolveLayout(logicalSwapchain, depth);
+        Logger::debug("ensureDepthResolveResources: resolve resources ready");
     }
 
     bool depthMatchesSwapchainExtent(const DepthState& depth, const LogicalSwapchain* sc)
@@ -1839,6 +1843,11 @@ namespace VKIntox
         LogicalSwapchain* logicalSwapchain,
         const DepthState& depth)
     {
+        Logger::debug("reallocateCommandBuffers: begin swapchain=" + convertToString(logicalSwapchain)
+                      + " images=" + std::to_string(logicalSwapchain->imageCount)
+                      + " depth=" + std::to_string(depth.extent.width) + "x" + std::to_string(depth.extent.height)
+                      + " samples=" + convertToString(depth.samples));
+
         // Every buffer this swapchain owns lives in its own pool; the pool may
         // be gone if a passthrough swapchain is being rebuilt, so guard it.
         const VkCommandPool pool = logicalSwapchain->commandPool != VK_NULL_HANDLE
@@ -1861,7 +1870,11 @@ namespace VKIntox
                 logicalSwapchain->commandBuffersNoEffect.data());
         }
 
+        Logger::debug("reallocateCommandBuffers: old command buffers freed");
+
         ensureDepthResolveResources(logicalSwapchain, depth);
+
+        Logger::debug("reallocateCommandBuffers: resolve resources ready");
 
         // Allocate and write effect command buffers
         logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, pool);
@@ -1871,6 +1884,8 @@ namespace VKIntox
                             logicalSwapchain->commandBuffersEffect,
                             depth);
 
+        Logger::debug("reallocateCommandBuffers: effect command buffers written");
+
         // Allocate and write no-effect command buffers
         logicalSwapchain->commandBuffersNoEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, pool);
         writeCommandBuffers(logicalDevice,
@@ -1878,6 +1893,8 @@ namespace VKIntox
                             {logicalSwapchain->defaultTransfer},
                             logicalSwapchain->commandBuffersNoEffect,
                             depth);
+
+        Logger::debug("reallocateCommandBuffers: no-effect command buffers written");
     }
 
 } // namespace VKIntox
