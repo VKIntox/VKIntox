@@ -561,6 +561,110 @@ flatpak_layer_installed() {
     flatpak list --user --runtime --columns=application 2>/dev/null | grep -qx "$LAYER_ID"
 }
 
+configure_roseline_env() {
+    [[ "$APP_ID" == "net.buwryy.Roseline" ]] || return 0
+
+    # Roseline launches Rosemary itself, so a flatpak override on the Roseline
+    # app does not reach the process that loads the layer. Put the variable in
+    # Roseline's Rosemary environment instead, and remove any old override.
+    flatpak override --user --unset-env=ENABLE_VKINTOX "$APP_ID" 2>/dev/null || true
+
+    local settings="$HOME/.var/app/$APP_ID/config/roseline/settings.toml"
+    if [[ ! -f "$settings" ]]; then
+        warn "Roseline settings not found at $settings"
+        say "launch Roseline once, then rerun setup to enable VKIntox"
+        return 0
+    fi
+
+    need_cmd python3
+    if python3 - "$settings" <<'PY'
+import os
+import shutil
+import sys
+import tempfile
+import tomllib
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    text = handle.read()
+
+try:
+    data = tomllib.loads(text)
+except Exception as exc:
+    print(f"invalid TOML: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+environment = data.get("environment", {})
+if not isinstance(environment, dict):
+    print("environment is not a table", file=sys.stderr)
+    raise SystemExit(1)
+
+guest = environment.get("guest", [])
+runner = environment.get("runner", [])
+if not isinstance(guest, list) or not isinstance(runner, list):
+    print("environment guest/runner is not an array", file=sys.stderr)
+    raise SystemExit(1)
+
+runner = [entry for entry in runner if not (isinstance(entry, str) and entry.startswith("ENABLE_VKINTOX="))]
+runner.append("ENABLE_VKINTOX=1")
+
+def toml_string(value):
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+
+def toml_array(values):
+    return "[" + ", ".join(toml_string(str(value)) for value in values) + "]"
+
+section = "[environment]\n"
+section += f"guest = {toml_array(guest)}\n"
+section += f"runner = {toml_array(runner)}\n"
+
+lines = text.splitlines(keepends=True)
+start = None
+for index, line in enumerate(lines):
+    if line.split("#", 1)[0].strip() == "[environment]":
+        start = index
+        break
+
+if start is None:
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += "\n" + section
+else:
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        stripped = lines[index].split("#", 1)[0].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            end = index
+            break
+    text = "".join(lines[:start]) + section + "".join(lines[end:])
+
+try:
+    tomllib.loads(text)
+except Exception as exc:
+    print(f"edited TOML would be invalid: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+shutil.copy2(path, path + ".vkintox.bak")
+directory = os.path.dirname(path) or "."
+fd, temporary = tempfile.mkstemp(prefix=".settings.", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    os.replace(temporary, path)
+except Exception:
+    try:
+        os.unlink(temporary)
+    except OSError:
+        pass
+    raise
+PY
+    then
+        ok "configured ENABLE_VKINTOX in Roseline's Rosemary environment"
+    else
+        warn "couldn't update Roseline's settings.toml"
+    fi
+}
+
 installed_pkg_version() {
     case "$SYSTEM_KIND" in
         rpm) rpm -q --qf '%{VERSION}' vkintox 2>/dev/null ;;
@@ -996,9 +1100,11 @@ else
 fi
 
 # the layer is a global extension, so a matching marker means we skipped the
-# install above; the per-app override still has to be applied for this app.
+# install above; the per-app configuration still has to be applied.
 if [[ "$METHOD" == "flatpak" ]] && ((DRY_RUN == 0)); then
-    if ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
+    if [[ "$APP_ID" == "net.buwryy.Roseline" ]]; then
+        configure_roseline_env
+    elif ! flatpak override --user "$APP_ID" --env=ENABLE_VKINTOX=1 2>/dev/null; then
         warn "couldn't set ENABLE_VKINTOX for $APP_ID"
     fi
     if [[ "$APP_ID" == "io.github.microlift.butter" ]]; then

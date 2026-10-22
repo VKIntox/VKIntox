@@ -3639,14 +3639,35 @@ namespace VKIntox
 
         if (bypassDepthForPresent)
         {
-            // Crucially, don't submit the old command buffer while depth is
-            // invalid.  This is what prevents a resize race from escalating
-            // into VK_ERROR_DEVICE_LOST.  The app's own present remains intact.
-            VkResult passthroughResult = logicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
-            reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueuePresentKHR(depth-disabled passthrough)", passthroughResult);
-            if (passthroughResult == VK_ERROR_DEVICE_LOST)
-                panicLayer(logicalDevice, "Vulkan device lost during depth-disabled passthrough present");
-            return passthroughResult;
+            // The layer serves fake images to the app, so the app's present
+            // alone cannot be passed through: the real swapchain image has not
+            // been written yet. Fall back to the no-effect transfer command
+            // buffers, which copy fake -> real without touching depth. Only
+            // use the direct path if those buffers are unavailable.
+            bool canUseNoEffect = true;
+            for (size_t i = 0; i < presentSwapchains.size(); ++i)
+            {
+                LogicalSwapchain* sc = presentSwapchains[i].get();
+                if (!sc || sc->passthrough)
+                    continue;
+                if (presentIndices[i] >= sc->commandBuffersNoEffect.size())
+                    canUseNoEffect = false;
+            }
+
+            if (canUseNoEffect)
+            {
+                Logger::debug("present: depth unavailable; using no-effect command buffers");
+                presentEffectSnapshot = false;
+                bypassDepthForPresent = false;
+            }
+            else
+            {
+                VkResult passthroughResult = logicalDevice->vkd.QueuePresentKHR(queue, pPresentInfo);
+                reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueuePresentKHR(depth-disabled passthrough)", passthroughResult);
+                if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                    panicLayer(logicalDevice, "Vulkan device lost during depth-disabled passthrough present");
+                return passthroughResult;
+            }
         }
 
         // Reuse static buffers to avoid per-frame heap allocations
@@ -3692,10 +3713,6 @@ namespace VKIntox
                 }
             }
 
-            const auto& commandBuffers = presentEffectSnapshot
-                ? logicalSwapchain->commandBuffersEffect
-                : logicalSwapchain->commandBuffersNoEffect;
-
             // Submit effect command buffer
             VkSubmitInfo submitInfo = {};
             submitInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -3703,7 +3720,7 @@ namespace VKIntox
             submitInfo.pWaitSemaphores    = i == 0 ? pPresentInfo->pWaitSemaphores : nullptr;
             submitInfo.pWaitDstStageMask  = i == 0 ? waitStages.data() : nullptr;
             submitInfo.commandBufferCount = 1;
-            submitInfo.pCommandBuffers    = &commandBuffers[index];
+            submitInfo.pCommandBuffers    = nullptr;
             submitInfo.signalSemaphoreCount = 1;
             submitInfo.pSignalSemaphores    = &logicalSwapchain->semaphores[index];
 
@@ -3714,18 +3731,30 @@ namespace VKIntox
                 // retire the generation these buffers reference
                 scoped_lock submitLock(globalLock);
 
-                // a depth-generation change leaves the recorded buffers pointing
-                // at dying resources; submit nothing until the rebuild re-records
+                // a depth-generation change leaves the effect buffers pointing
+                // at dying resources, but the no-effect transfer buffers do not
+                // touch depth. switch to them instead of presenting an unwritten
+                // real swapchain image.
                 if (logicalDevice->depthTransitionHold || logicalDevice->depthReallocPending
                     || logicalSwapchain->depthReallocPending)
                 {
-                    Logger::debug("present: bypassing layer submit; depth rebuild pending (devicePending="
+                    Logger::debug("present: depth rebuild pending; using no-effect command buffers (devicePending="
                                   + std::to_string(logicalDevice->depthReallocPending)
                                   + " swapchainPending=" + std::to_string(logicalSwapchain->depthReallocPending)
                                   + " hold=" + std::to_string(logicalDevice->depthTransitionHold) + ")");
+                    presentEffectSnapshot = false;
+                }
+
+                const auto& submitCommandBuffers = presentEffectSnapshot
+                    ? logicalSwapchain->commandBuffersEffect
+                    : logicalSwapchain->commandBuffersNoEffect;
+                if (index >= submitCommandBuffers.size())
+                {
+                    Logger::warn("present: command buffer index out of range; skipping layer submit");
                     bypassDepthForPresent = true;
                     break;
                 }
+                submitInfo.pCommandBuffers = &submitCommandBuffers[index];
 
                 // Signal this image's fence so we can safely update its
                 // descriptor sets and rebuild its command buffer in future frames.
