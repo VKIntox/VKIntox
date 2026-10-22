@@ -325,6 +325,9 @@ namespace VKIntox
 
         // frame padding needs the real font metrics, so re-apply now.
         ImGuiM3ApplyToStyle(1.0f);
+        // M3's thumb grows from 8dp to 12dp on hover. Reserve the hover width
+        // so the grown thumb never paints over cards in scrollable views.
+        ImGui::GetStyle().ScrollbarSize = 12.0f * ImGuiM3GetMetrics().density;
 
         initVulkanBackend(swapchainFormat, imageCount);
 

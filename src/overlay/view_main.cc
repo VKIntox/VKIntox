@@ -563,7 +563,6 @@ namespace VKIntox
 
         const float handleReserve = (splitParams && !paramsFolded) ? resizeHandleH + cardSpacing * 2.0f : 0.0f;
         const float listReserve = footerHeight + sheetHeight + handleReserve;
-        const float listScrollbarReserve = ImGui::GetStyle().ScrollbarSize + 4.0f * listMetrics.density;
 
         // The effect list is its own labelled card: toggling and reordering only.
         // A level-1 shadow lifts it off the shell, like an expressive list card.
@@ -672,7 +671,7 @@ namespace VKIntox
             ImGui::PushID(effectName.c_str());
 
             const ImVec2 rowMin = ImGui::GetCursorScreenPos();
-            float rowWidth = ImMax(1.0f, ImGui::GetContentRegionAvail().x - listScrollbarReserve);
+            float rowWidth = ImGui::GetContentRegionAvail().x;
 
             // Dedicated drag handle (left-most): three gray bars
             const float handleSide = ImGui::GetFrameHeight();
@@ -738,7 +737,7 @@ namespace VKIntox
             bool treeOpen = false;
             {
                 const ImVec2 namePos = ImGui::GetCursorScreenPos();
-                const float nameW = ImMax(ImGui::GetContentRegionAvail().x - listScrollbarReserve, 1.0f);
+                const float nameW = ImMax(ImGui::GetContentRegionAvail().x, 1.0f);
                 const float nameH = ImGui::GetFrameHeight();
                 ImGui::InvisibleButton("##name_row", ImVec2(nameW, nameH));
                 const bool nameHovered = ImGui::IsItemHovered();
