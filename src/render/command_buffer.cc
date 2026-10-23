@@ -351,7 +351,8 @@ namespace VKIntox
                              LogicalSwapchain*                              logicalSwapchain,
                              std::vector<std::shared_ptr<VKIntox::Effect>> effects,
                              std::vector<VkCommandBuffer>                   commandBuffers,
-                             const DepthState&                              depthState)
+                             const DepthState&                              depthState,
+                             bool                                           recordDepthResolve)
     {
         VkCommandBufferBeginInfo beginInfo = {};
 
@@ -360,7 +361,8 @@ namespace VKIntox
         beginInfo.flags            = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
         beginInfo.pInheritanceInfo = nullptr;
 
-        const bool hasDepthResolveTarget = hasDepthResolveResources(logicalSwapchain, commandBuffers.size());
+        const bool hasDepthResolveTarget = recordDepthResolve
+            && hasDepthResolveResources(logicalSwapchain, commandBuffers.size());
 
         // Defensive: if the resolve resources exist but their baked source view
         // doesn't match the current depth state (e.g. depth changed but realloc

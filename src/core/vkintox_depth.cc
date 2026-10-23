@@ -906,7 +906,8 @@ namespace VKIntox
     }
 
     void updateDeviceDepthStateLocked(LogicalDevice* logicalDevice, const DepthState& depth, const char* reason);
-    void reallocateCommandBuffers(LogicalDevice* logicalDevice, LogicalSwapchain* logicalSwapchain, const DepthState& depth);
+    bool reallocateCommandBuffers(LogicalDevice* logicalDevice, LogicalSwapchain* logicalSwapchain,
+                                  const DepthState& depth, uint32_t idleTimeoutMs);
 
     void destroyDepthResolveResources(LogicalSwapchain* logicalSwapchain)
     {
@@ -1552,7 +1553,7 @@ namespace VKIntox
         Logger::info("persistent depth storage created: " + std::to_string(extent.width) + "x"
                      + std::to_string(extent.height) + " format=" + std::to_string(format));
     }
-    void ensureDepthResolveResources(LogicalSwapchain* logicalSwapchain, const DepthState& depth)
+    bool ensureDepthResolveResources(LogicalSwapchain* logicalSwapchain, const DepthState& depth)
     {
         // Destroy resolve resources if depth state is no longer valid (e.g.
         // after the depth image was destroyed or the pin was cleared).  This
@@ -1560,7 +1561,7 @@ namespace VKIntox
         if (!hasDepthState(depth) || depth.extent.width == 0 || depth.extent.height == 0)
         {
             destroyDepthResolveResources(logicalSwapchain);
-            return;
+            return true;
         }
 
         const bool isMsaa = depth.samples != VK_SAMPLE_COUNT_1_BIT;
@@ -1609,7 +1610,7 @@ namespace VKIntox
                     && logicalSwapchain->depthResolvePipeline != VK_NULL_HANDLE
                     && logicalSwapchain->depthResolveFramebuffers.size() == logicalSwapchain->imageCount)))
         {
-            return;
+            return true;
         }
 
         if (sourceViewChanged)
@@ -1618,14 +1619,36 @@ namespace VKIntox
                          + convertToString(logicalSwapchain->depthResolveSourceView)
                          + " new=" + convertToString(depth.imageView)
                          + " — rebuilding descriptor sets and MSAA framebuffers");
+
+            // Never tear down resolve resources while the queue can still be
+            // reading them. The app's command buffers carry our resolve
+            // subpass, so layer fences are not enough. A short idle check is
+            // safer than a multi-second present-thread stall; retry next frame
+            // if the queue is still busy.
+            if (!waitQueueIdleBounded(logicalSwapchain->logicalDevice, "depth resolve rebuild", 50))
+            {
+                Logger::warn("depth resolve rebuild deferred; queue is still busy");
+                return false;
+            }
         }
 
-        Logger::debug("ensureDepthResolveResources: destroying old resolve resources for swapchain="
-                      + convertToString(logicalSwapchain));
-        destroyDepthResolveResources(logicalSwapchain);
+        if (sourceViewChanged)
+        {
+            // The app can still have command buffers in flight that reference
+            // the old resolve framebuffers. Retire them instead of destroying
+            // them; the swapchain/device teardown will reclaim them later.
+            Logger::warn("ensureDepthResolveResources: retiring old resolve resources instead of destroying them");
+        }
+        else
+        {
+            Logger::debug("ensureDepthResolveResources: destroying old resolve resources for swapchain="
+                          + convertToString(logicalSwapchain));
+            destroyDepthResolveResources(logicalSwapchain);
+        }
         Logger::debug("ensureDepthResolveResources: initializing new resolve resources");
         initializeDepthResolveLayout(logicalSwapchain, depth);
         Logger::debug("ensureDepthResolveResources: resolve resources ready");
+        return true;
     }
 
     bool depthMatchesSwapchainExtent(const DepthState& depth, const LogicalSwapchain* sc)
@@ -1789,6 +1812,7 @@ namespace VKIntox
             effectiveDepth = DepthState{};
         }
 
+        bool allRebuilt = true;
         for (auto& [swapchainHandle, logicalSwapchain] : swapchainMap)
         {
             if (logicalSwapchain->logicalDevice != logicalDevice)
@@ -1796,12 +1820,16 @@ namespace VKIntox
             if (logicalSwapchain->commandBuffersEffect.empty())
                 continue;
 
-            reallocateCommandBuffers(logicalDevice, logicalSwapchain.get(), effectiveDepth);
+            if (!reallocateCommandBuffers(logicalDevice, logicalSwapchain.get(), effectiveDepth))
+            {
+                allRebuilt = false;
+                continue;
+            }
             VKINTOX_LOG_DEBUG([&](std::string& s) {
                 s = "reallocated command buffers for swapchain " + convertToString(swapchainHandle) + " (deferred depth change)";
             });
         }
-        logicalDevice->depthReallocPending = false;
+        logicalDevice->depthReallocPending = !allRebuilt;
     }
 
     void updateDeviceDepthStateLocked(LogicalDevice* logicalDevice, const DepthState& depth, const char* reason)
@@ -1838,11 +1866,22 @@ namespace VKIntox
     }
 
     // Helper to reallocate and rewrite command buffers for a swapchain
-    void reallocateCommandBuffers(
+    bool reallocateCommandBuffers(
         LogicalDevice* logicalDevice,
         LogicalSwapchain* logicalSwapchain,
-        const DepthState& depth)
+        const DepthState& depth,
+        uint32_t idleTimeoutMs)
     {
+        // freeing a command buffer that the queue may still be executing hangs
+        // the GPU. idle before the free, and leave the old buffers intact if
+        // that cannot be proven within the caller's budget.
+        if (settingsManager.getDepthRebuildMode() == 0
+            && !waitQueueIdleBounded(logicalDevice, "reallocate command buffers", idleTimeoutMs))
+        {
+            Logger::warn("reallocateCommandBuffers: queue busy; keeping old command buffers");
+            return false;
+        }
+
         Logger::debug("reallocateCommandBuffers: begin swapchain=" + convertToString(logicalSwapchain)
                       + " images=" + std::to_string(logicalSwapchain->imageCount)
                       + " depth=" + std::to_string(depth.extent.width) + "x" + std::to_string(depth.extent.height)
@@ -1853,6 +1892,13 @@ namespace VKIntox
         const VkCommandPool pool = logicalSwapchain->commandPool != VK_NULL_HANDLE
             ? logicalSwapchain->commandPool
             : logicalDevice->commandPool;
+
+        // Resolve resources first. If they cannot be rebuilt, the old command
+        // buffers must stay alive: they still reference the old resources.
+        if (!ensureDepthResolveResources(logicalSwapchain, depth))
+            return false;
+
+        Logger::debug("reallocateCommandBuffers: resolve resources ready");
 
         // Free existing command buffers
         if (pool != VK_NULL_HANDLE && !logicalSwapchain->commandBuffersEffect.empty())
@@ -1872,10 +1918,6 @@ namespace VKIntox
 
         Logger::debug("reallocateCommandBuffers: old command buffers freed");
 
-        ensureDepthResolveResources(logicalSwapchain, depth);
-
-        Logger::debug("reallocateCommandBuffers: resolve resources ready");
-
         // Allocate and write effect command buffers
         logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, pool);
         writeCommandBuffers(logicalDevice,
@@ -1892,9 +1934,11 @@ namespace VKIntox
                             logicalSwapchain,
                             {logicalSwapchain->defaultTransfer},
                             logicalSwapchain->commandBuffersNoEffect,
-                            depth);
+                            depth,
+                            false);
 
         Logger::debug("reallocateCommandBuffers: no-effect command buffers written");
+        return true;
     }
 
 } // namespace VKIntox

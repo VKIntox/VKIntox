@@ -142,13 +142,14 @@ namespace VKIntox
                                                     const DepthState& depthState);
     VkImageView getOrCreateTrackedDepthSampleViewLocked(LogicalDevice* logicalDevice, VkImage image, VkFormat format);
     void updateDeviceDepthStateLocked(LogicalDevice* logicalDevice, const DepthState& depth, const char* reason);
-    void reallocateCommandBuffers(LogicalDevice* logicalDevice, LogicalSwapchain* logicalSwapchain, const DepthState& depth);
+    bool reallocateCommandBuffers(LogicalDevice* logicalDevice, LogicalSwapchain* logicalSwapchain,
+                                  const DepthState& depth, uint32_t idleTimeoutMs = 50);
 
     void destroyDepthResolveResources(LogicalSwapchain* logicalSwapchain);
     bool validateDepthStateForResolve(LogicalDevice* logicalDevice, const DepthState& depth);
     void destroyPersistentDepthStorage(LogicalDevice* logicalDevice);
     void ensurePersistentDepthStorage(LogicalDevice* logicalDevice, VkFormat format, const VkExtent3D& extent);
-    void ensureDepthResolveResources(LogicalSwapchain* logicalSwapchain, const DepthState& depth);
+    bool ensureDepthResolveResources(LogicalSwapchain* logicalSwapchain, const DepthState& depth);
     bool depthMatchesSwapchainExtent(const DepthState& depth, const LogicalSwapchain* sc);
     // wipes scope tracking, the best candidate and any pending copy; the hold
     // lifts on the first observation from the new generation
@@ -163,10 +164,6 @@ namespace VKIntox
     bool depthRebuildFencesReady(LogicalDevice* logicalDevice, const LogicalSwapchain* sc);
     DepthState getDepthState(LogicalDevice* logicalDevice);
     void updateDeviceDepthStateLocked(LogicalDevice* logicalDevice, const DepthState& depth, const char* reason);
-    void reallocateCommandBuffers(
-        LogicalDevice* logicalDevice,
-        LogicalSwapchain* logicalSwapchain,
-        const DepthState& depth);
 
 } // namespace VKIntox
 

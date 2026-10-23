@@ -18,7 +18,8 @@ namespace VKIntox
                              LogicalSwapchain*                              logicalSwapchain,
                              std::vector<std::shared_ptr<VKIntox::Effect>> effects,
                              std::vector<VkCommandBuffer>                   commandBuffers,
-                             const DepthState&                              depthState);
+                             const DepthState&                              depthState,
+                             bool                                           recordDepthResolve = true);
 
     void recordDepthResolveSnapshot(LogicalDevice*            logicalDevice,
                                     LogicalSwapchain*         logicalSwapchain,

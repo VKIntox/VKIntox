@@ -7,7 +7,7 @@ namespace VKIntox
 {
     void destroyDepthResolveResources(LogicalSwapchain* logicalSwapchain);
 
-    void LogicalSwapchain::destroy()
+    bool LogicalSwapchain::destroy()
     {
         if (imageCount > 0)
         {
@@ -18,7 +18,7 @@ namespace VKIntox
             if (!waitQueueIdleBounded(logicalDevice, "swapchain destroy"))
             {
                 Logger::warn("[DESTROY-TRACE] swapchain destroy idle timed out; leaving this swapchain's resources alone");
-                return;
+                return false;
             }
 
             // destroy the pool before the effects: that frees this swapchain's
@@ -106,11 +106,13 @@ namespace VKIntox
             // Destroy image views for overlay
             for (auto& view : imageViews)
             {
-                logicalDevice->vkd.DestroyImageView(logicalDevice->device, view, nullptr);
+                if (view != VK_NULL_HANDLE)
+                    logicalDevice->vkd.DestroyImageView(logicalDevice->device, view, nullptr);
             }
             imageViews.clear();
 
             // Note: ImGui overlay is now at device level, not destroyed here
         }
+        return true;
     }
 } // namespace VKIntox

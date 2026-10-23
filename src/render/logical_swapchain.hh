@@ -92,7 +92,7 @@ namespace VKIntox
         bool                                  depthReallocPending = false;
         bool                                  rebuildEffectsOnNextPresent = false;
 
-        void destroy();
+        bool destroy();
         void reloadEffects(Config* config);
     };
 } // namespace VKIntox

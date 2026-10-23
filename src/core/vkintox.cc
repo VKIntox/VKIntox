@@ -1411,11 +1411,13 @@ namespace VKIntox
     {
         LogicalDevice* logicalDevice = logicalSwapchain->logicalDevice;
 
-        // the caller has already established that this swapchain's in-flight
-        // effect submissions are done (depthRebuildFencesReady), so there is no
-        // QueueWaitIdle here: freeing command buffers or destroying effect
-        // resources while the GPU still references them is what the fence check
-        // exists to prevent, and a global wait would stall the present thread.
+        // a reload destroys the old effects and frees their command buffers;
+        // both can still be executing, so take the idle before touching either.
+        if (!waitQueueIdleBounded(logicalDevice, "effect reload", 2000))
+        {
+            Logger::warn("reloadEffectsForSwapchain: queue busy; keeping existing effects");
+            return;
+        }
 
         // Clear effects (command buffers will be freed by reallocateCommandBuffers)
         logicalSwapchain->effects.clear();
@@ -1455,9 +1457,10 @@ namespace VKIntox
 
         // Free old command buffers and allocate/write new ones
         DepthState depth = getDepthState(logicalDevice);
-        reallocateCommandBuffers(logicalDevice, logicalSwapchain, depth);
-
-        Logger::info("effects reloaded successfully");
+        if (!reallocateCommandBuffers(logicalDevice, logicalSwapchain, depth, 2000))
+            Logger::err("reloadEffectsForSwapchain: command buffers were not rebuilt");
+        else
+            Logger::info("effects reloaded successfully");
     }
 
     // Reload effects for all swapchains belonging to a device
@@ -2565,7 +2568,8 @@ namespace VKIntox
                             logicalSwapchain,
                             {logicalSwapchain->defaultTransfer},
                             logicalSwapchain->commandBuffersNoEffect,
-                            depth);
+                            depth,
+                            false);
 
         for (unsigned int i = 0; i < logicalSwapchain->imageCount; i++)
         {
@@ -3516,8 +3520,12 @@ namespace VKIntox
                     // old full-reload path idled the queue here too; fast mode is
                     // the opt-in for skipping it. This idle is bounded: a stuck
                     // queue must not park the present thread under globalLock.
+                    // Keep this very short: this runs on the present thread under
+                    // globalLock, and a several-second wait can deadlock the app's
+                    // render thread during a swapchain/quality rebuild. If the
+                    // queue is still busy, bypass this frame and retry on the next.
                     const bool idleOk = settingsManager.getDepthRebuildMode() != 0
-                        || waitQueueIdleBounded(logicalDevice, "safe depth rebuild");
+                        || waitQueueIdleBounded(logicalDevice, "safe depth rebuild", 50);
 
                     if (idleOk)
                     {
@@ -3569,7 +3577,13 @@ namespace VKIntox
                     logicalDevice->activeDepthState = swapchainDepth;
                 }
 
-                reallocateCommandBuffers(logicalDevice, sc, swapchainDepth);
+                if (!reallocateCommandBuffers(logicalDevice, sc, swapchainDepth))
+                {
+                    // old buffers stay intact; keep the request armed and use
+                    // the depth-free transfer buffers this frame
+                    bypassDepthForPresent = true;
+                    continue;
+                }
                 sc->depthReallocPending = false;
                 rebuiltThisPresent = true;
                 Logger::debug(std::string("deferred depth change rebuilt presented swapchain")
@@ -3633,8 +3647,12 @@ namespace VKIntox
                         {
                             if (depthRebuildFencesReady(logicalDevice, sc))
                             {
+                                if (!reallocateCommandBuffers(logicalDevice, sc, candidate))
+                                {
+                                    scheduleDepthRetryLocked(logicalDevice, true);
+                                    break;
+                                }
                                 logicalDevice->activeDepthState = candidate;
-                                reallocateCommandBuffers(logicalDevice, sc, candidate);
                                 logicalDevice->depthReallocPending = false;
                                 for (auto& [_, swapchain] : swapchainMap)
                                     if (swapchain && swapchain->logicalDevice == logicalDevice
@@ -3916,15 +3934,32 @@ namespace VKIntox
         // we need to delete the infos of the oldswapchain
 
         Logger::trace("vkDestroySwapchainKHR " + convertToString(swapchain));
+        auto devIt = deviceMap.find(GetKey(device));
+        if (devIt != deviceMap.end() && devIt->second)
+        {
+            // The app can render on a different queue than the layer's present
+            // queue. A queue-scoped idle is not enough to make swapchain image
+            // views safe to destroy; idle the whole device first.
+            Logger::debug("vkDestroySwapchainKHR: device idle before teardown");
+            auto deviceWaitIdle = reinterpret_cast<PFN_vkDeviceWaitIdle>(
+                devIt->second->vkd.GetDeviceProcAddr(device, "vkDeviceWaitIdle"));
+            if (deviceWaitIdle)
+                deviceWaitIdle(device);
+        }
+        bool layerTeardownIdled = true;
         {
             auto it = swapchainMap.find(swapchain);
             if (it != swapchainMap.end() && it->second)
-                it->second->destroy();
+                layerTeardownIdled = it->second->destroy();
             swapchainMap.erase(swapchain);
         }
-        auto devIt = deviceMap.find(GetKey(device));
         if (devIt != deviceMap.end() && devIt->second)
-            devIt->second->vkd.DestroySwapchainKHR(device, swapchain, pAllocator);
+        {
+            if (layerTeardownIdled)
+                devIt->second->vkd.DestroySwapchainKHR(device, swapchain, pAllocator);
+            else
+                Logger::warn("vkDestroySwapchainKHR: deferring real swapchain destroy; layer teardown could not idle the queue");
+        }
         Logger::trace("vkDestroySwapchainKHR done " + convertToString(swapchain));
     }
 
