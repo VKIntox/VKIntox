@@ -186,7 +186,7 @@ wayland_syncobj_gate_lib = static_library('wayland_syncobj_gate',
 # suppress events when overlay has input blocked. Needs default visibility
 # for the wl_proxy_add_listener symbol override.
 wayland_interpose_lib = static_library('wayland_interpose',
-    'input/wayland_interpose.cc', 'input/wayland_interpose_patch.cc',
+    'input/wayland_interpose.cc',
     link_with: [wayland_syncobj_gate_lib],
     dependencies: [wayland_client_dep],
     c_args: ['-fvisibility=default'],
@@ -325,25 +325,6 @@ wayland_syncobj_gate_tests = executable('vkintox-wayland-syncobj-gate-tests',
     dependencies : [threads_dep],
     include_directories : [core_inc, input_inc, source_inc])
 test('wayland syncobj gate', wayland_syncobj_gate_tests)
-
-# The marshal patcher parses live ELF state; reading one dynamic-section
-# pointer with the wrong convention took the whole client down once. The
-# fixture carries the shape the patcher hooks (an exported marshal entry
-# called through a jump slot), so the test does not depend on how a distro
-# built its wayland.
-wayland_patch_fixture = shared_library('vkintox-wayland-patch-fixture',
-    'tests/wayland_patch_fixture.cc',
-    name_prefix: 'libwayland-client.so.',
-    name_suffix: 'patch-test',
-    cpp_args: ['-fsemantic-interposition'],
-    link_args: ['-Wl,-z,now'])
-wayland_interpose_patch_tests = executable('vkintox-wayland-interpose-patch-tests',
-    'tests/wayland_interpose_patch_test.cc',
-    'input/wayland_interpose_patch.cc',
-    'core/logger.cc',
-    dependencies : [threads_dep, wayland_client_dep.partial_dependency(compile_args: true, includes: true)],
-    include_directories : [core_inc, input_inc, source_inc])
-test('wayland interpose patch', wayland_interpose_patch_tests, args: [wayland_patch_fixture])
 
 compile_cache_tests = executable('vkintox-compile-cache-tests',
     'effects/compile_cache_test.cc',
