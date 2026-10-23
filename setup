@@ -94,6 +94,13 @@ need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "missing $1 — install it first"
 }
 
+valid_flatpak_app_id() {
+    local id="$1"
+    local LC_ALL=C
+    ((${#id} <= 255)) || return 1
+    [[ "$id" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){1,}\.[A-Za-z_-][A-Za-z0-9_-]*$ ]]
+}
+
 # Uninstalling removes the layer and the repo it was served from, and nothing
 # else. Shader packages, profiles and the effect list are the user's own work:
 # a reinstall picks them straight back up, so there is no reason to destroy them.
@@ -167,6 +174,9 @@ else
     APP_ID=""
 fi
 [[ "$MODE" =~ ^(sober|flatpak|system)$ ]] || { usage; die "unknown mode: $MODE"; }
+if [[ -n "$APP_ID" ]] && ! valid_flatpak_app_id "$APP_ID"; then
+    die "invalid flatpak app id: '$APP_ID' (use an id from: flatpak list --app --columns=application)"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"

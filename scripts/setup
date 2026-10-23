@@ -303,10 +303,32 @@ detect_system() {
     esac
 }
 
+valid_flatpak_app_id() {
+    local id="$1"
+    local LC_ALL=C
+    ((${#id} <= 255)) || return 1
+    [[ "$id" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){1,}\.[A-Za-z_-][A-Za-z0-9_-]*$ ]]
+}
+
+require_flatpak_app_id() {
+    local id="${1:-}"
+    valid_flatpak_app_id "$id" ||
+        die "invalid flatpak app id: '$id' (use an id from: flatpak list --app --columns=application)"
+}
+
+flatpak_app_installed() {
+    local id
+    while IFS= read -r id; do
+        [[ "$id" == "$1" ]] && return 0
+    done < <(LC_ALL=C flatpak list --app --columns=application 2>/dev/null)
+    return 1
+}
+
 select_flatpak_app() {
     need_cmd flatpak
     if [[ -n "$APP_ID" ]]; then
-        flatpak list --app --columns=application 2>/dev/null | grep -qx "$APP_ID" ||
+        require_flatpak_app_id "$APP_ID"
+        flatpak_app_installed "$APP_ID" ||
             die "flatpak app $APP_ID is not installed"
         return 0
     fi
@@ -353,6 +375,7 @@ select_flatpak_app() {
 
     select_menu "which flatpak app should use vkintox?" "${order_labels[@]}"
     APP_ID="${order_ids[$SELECTED]}"
+    require_flatpak_app_id "$APP_ID"
 }
 
 fetch_releases() {
@@ -1134,6 +1157,9 @@ if [[ "$METHOD" == "flatpak" ]] && ((DRY_RUN == 0)); then
 fi
 
 if [[ "$METHOD" == "flatpak" ]]; then
+    require_flatpak_app_id "$APP_ID"
+    flatpak_app_installed "$APP_ID" ||
+        die "flatpak app $APP_ID is no longer installed"
     APP_CONFIG="$HOME/.var/app/$APP_ID/config/VKIntox"
 else
     APP_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/VKIntox"
