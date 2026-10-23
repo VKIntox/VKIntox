@@ -9,7 +9,7 @@ LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
 RELEASES_URL="${VKINTOX_RELEASES_URL:-https://api.github.com/repos/$REPO/releases?per_page=100}"
 EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/main/assets/EffectPackages.ini}"
 MARKER_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/VKIntox"
-MARKER="$MARKER_DIR/install-state"
+MARKER=""
 
 METHOD=""
 WANT_VERSION=""
@@ -557,6 +557,8 @@ choose_version() {
     SELECTED_DIGEST="${REL_DIGEST[$idx]}"
 }
 
+marker_path() { printf '%s/install-state-%s' "$MARKER_DIR" "$METHOD"; }
+
 marker_matches() {
     [[ -f "$MARKER" ]] || return 1
     local tag asset digest method
@@ -762,6 +764,8 @@ run_uninstall() {
             METHOD=flatpak
         fi
     fi
+
+    MARKER="$(marker_path)"
 
     section "confirm"
     if [[ "$METHOD" == "flatpak" ]]; then
@@ -1002,6 +1006,7 @@ else
     ASSET_GLOB='*.flatpak'
     select_flatpak_app
 fi
+MARKER="$(marker_path)"
 
 fetch_releases
 load_releases
@@ -1101,7 +1106,7 @@ else
             ok "installed"
         fi
     else
-        FLATPAK_CMD=(flatpak install --user --noninteractive -y --or-update "$ASSET_PATH")
+        FLATPAK_CMD=(flatpak install --user --noninteractive -y --reinstall "$ASSET_PATH")
         if ((DRY_RUN)); then
             say "dry run: would install with: ${FLATPAK_CMD[*]}"
         else
