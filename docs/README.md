@@ -126,11 +126,6 @@ vkintox intercepts vulkan swapchain calls as a layer between the game and the dr
 
 **flatpak runtime branch:** the flatpak layer is built for `org.freedesktop.Platform` 26.08. apps on other freedesktop branches or on GNOME/KDE runtimes will not load it.
 
-> [!IMPORTANT]
-> Sober's homescreen stability remains poor. Either 1) Switch to Roséline or 2) Join games with browser instead
-> This, unfortunately, is mostly a Roblox-sided issue, and/or isn't in my hands, 
-> as this doesn't happen on macOS builds, but strangely happens on Android APK builds (Sober)
-
 ### troubleshooting
 
 **logs and diagnostics.** logs save to `/path/to/config/VKIntox/vkintox.log`, and the `about` tab reports the embedded version. for sober debug output:
