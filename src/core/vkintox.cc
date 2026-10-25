@@ -629,12 +629,13 @@ namespace VKIntox
     // siglongjmp trampoline that the compiler path arms.
     //
     // The trampoline is thread-local: only the thread that armed it can be
-    // recovered. Signals delivered to other threads fall through to the
-    // default handler (which terminates the process — that's correct, since
-    // we have no recovery context for them).
+    // recovered. Outside that guard, preserve the application's signal
+    // handling: emulators such as FEX use SIGSEGV for normal execution.
     static thread_local sigjmp_buf signalJmpBuf;
     static thread_local volatile sig_atomic_t signalJmpActive = 0;
     static thread_local volatile sig_atomic_t caughtSignal = 0;
+    static struct sigaction previousCrashActions[NSIG] = {};
+    static volatile sig_atomic_t previousCrashActionConsumed[NSIG] = {};
 
     static void writeSignalText(const char* text)
     {
@@ -658,6 +659,24 @@ namespace VKIntox
         {
             caughtSignal = sig;
             siglongjmp(signalJmpBuf, 1);
+        }
+        const auto& previous = previousCrashActions[sig];
+        if (!previousCrashActionConsumed[sig])
+        {
+            if (previous.sa_handler == SIG_IGN)
+                return;
+            if (previous.sa_handler != SIG_DFL)
+            {
+                // Implement the previous handler's one-shot disposition without
+                // resetting our compiler guard on every handled JIT fault.
+                if (previous.sa_flags & SA_RESETHAND)
+                    previousCrashActionConsumed[sig] = 1;
+                if (previous.sa_flags & SA_SIGINFO)
+                    previous.sa_sigaction(sig, info, context);
+                else
+                    previous.sa_handler(sig);
+                return;
+            }
         }
         // Async-signal-safe backtrace dump, then default disposition.
         const char* sigName = (sig == SIGFPE) ? "SIGFPE"
@@ -693,14 +712,18 @@ namespace VKIntox
     static void installCrashHandlers()
     {
         std::call_once(g_crashHandlerOnce, []() {
-            struct sigaction sa = {};
-            sa.sa_sigaction = crashSignalHandler;
-            sa.sa_flags = SA_SIGINFO | SA_RESETHAND;  // Auto-reset on delivery so a second
-                                                       // signal terminates the process.
-            sigemptyset(&sa.sa_mask);
-            sigaction(SIGFPE, &sa, nullptr);
-            sigaction(SIGABRT, &sa, nullptr);
-            sigaction(SIGSEGV, &sa, nullptr);
+            for (int sig : {SIGFPE, SIGABRT, SIGSEGV})
+            {
+                auto& previous = previousCrashActions[sig];
+                if (sigaction(sig, nullptr, &previous) != 0)
+                    continue;
+                struct sigaction sa = {};
+                sa.sa_sigaction = crashSignalHandler;
+                sa.sa_mask = previous.sa_mask;
+                sa.sa_flags = SA_SIGINFO | (previous.sa_flags &
+                    (SA_ONSTACK | SA_NODEFER | SA_RESTART));
+                sigaction(sig, &sa, nullptr);
+            }
         });
     }
 

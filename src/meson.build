@@ -289,13 +289,20 @@ vk_handle_tests = executable('vkintox-vk-handle-tests',
     include_directories : [core_inc, render_inc, source_inc])
 test('vk handle ordering', vk_handle_tests)
 
+libdl_dep = meson.get_compiler('cpp').find_library('dl', required : false)
+signal_chain_tests = executable('vkintox-signal-chain-tests',
+    'tests/signal_chain_test.cc',
+    dependencies : [libdl_dep])
+foreach handler : ['simple', 'siginfo', 'ignored']
+    test('signal chaining ' + handler, signal_chain_tests, args: [vkintox_lib.full_path(), handler])
+endforeach
+
 # X11 input blocking: the pointer grab follows the cursor while the keyboard grab
 # only engages when the overlay consumes keys (a grab transition makes Wine drop
 # the game's cursor capture), and held keys/buttons are handed to the game across
 # each grab, or the game keeps holding whatever was down. Drives the layer's real
 # blocker against a stand-in window, so it needs a display and synthesises input:
 # opt in with VKINTOX_X11_INPUT_TEST=1.
-libdl_dep = meson.get_compiler('cpp').find_library('dl', required : false)
 x11_input_handoff_tests = executable('vkintox-x11-input-handoff-tests',
     'tests/x11_input_handoff_test.cc',
     dependencies : [x11_dep, xtst_dep, libdl_dep],
