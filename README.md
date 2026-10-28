@@ -19,17 +19,11 @@
 
 
 <p align="center">
-  <table>
-    <tr>
-      <td valign="top" style="padding-right: 8px;">
-        <img src="assets/showcase_screenshot1.png" width="460" alt="VKIntox running on Roblox via Sober.">
-      </td>
-      <td valign="top" align="center">
-        <img src="assets/showcase_screenshot2.png" width="380" alt="The About menu."><br><br>
-        <img src="assets/showcase_screenshot3.png" width="380" alt="The Settings menu, showcasing depth resolve settings.">
-      </td>
-    </tr>
-  </table>
+  <img src="assets/showcase_screenshot1.png" width="100%" alt="VKIntox running on Roblox via Sober.">
+</p>
+<p align="center">
+  <img src="assets/showcase_screenshot2.png" width="49%" alt="The About menu.">
+  <img src="assets/showcase_screenshot3.png" width="49%" alt="The Settings menu, showcasing depth resolve settings.">
 </p>
 
 VKIntox is a Vulkan PostFX layer with ReShade `.fx` shader support, that has developed proper depth resolving.
