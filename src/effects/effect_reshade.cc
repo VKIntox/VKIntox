@@ -122,8 +122,7 @@ namespace VKIntox
         }
 
         bool isReshadeUniformLogEnabled()
-        {
-            static const bool enabled = [] {
+        {            static const bool enabled = [] {
                 const char* value = std::getenv("VKINTOX_DEBUG_LOG_RESHADE_UI_UNIFORMS");
                 return value != nullptr && value[0] != '\0' && value[0] != '0';
             }();
@@ -294,7 +293,6 @@ namespace VKIntox
                 return;
             }
         }
-
         bool extractUniformValueBytes(const EffectParam* param,
                                       const reshadefx::uniform_info& uniform,
                                       uint8_t (&bytes)[64],
@@ -1416,7 +1414,6 @@ namespace VKIntox
             uiParamCache[uniform.name] = paramOpt ? *paramOpt : nullptr;
         }
         uiParamCacheGeneration = effectRegistry->parameterGeneration();
-
         uniformIsSource.assign(module.uniforms.size(), false);
         uniformShadows.assign(module.uniforms.size(), {});
         uniformTouched.assign(module.uniforms.size(), 0);
@@ -1443,7 +1440,6 @@ namespace VKIntox
                 EffectParam* registryParam = nullptr;
                 if (auto it = uiParamCache.find(uniform.name); it != uiParamCache.end())
                     registryParam = it->second;
-
                 uint8_t bytes[64];
                 uint32_t written = 0;
                 std::vector<uint8_t>* shadow = nullptr;
@@ -2345,7 +2341,6 @@ namespace VKIntox
             Logger::err("shader produced empty SPIR-V: " + effectName);
             throw std::runtime_error("shader produced empty SPIR-V: " + effectName);
         }
-
         if (bakedUniformCodegen)
             hasBakeableUniforms = !module.spec_constants.empty();
         else

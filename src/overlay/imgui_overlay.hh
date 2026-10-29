@@ -150,14 +150,12 @@ namespace VKIntox
 
         // Trigger debounced reload (for config switch)
         void markDirty() { paramsDirty = true; lastChangeTime = std::chrono::steady_clock::now(); }
-
         void noteParamEdit(const std::string& effectName)
         {
             paramsDirty = true;
             lastChangeTime = std::chrono::steady_clock::now();
             editedEffectNames.insert(effectName);
-        }
-        bool hasLiveEditActivity() const
+        }        bool hasLiveEditActivity() const
         {
             return paramsDirty || !editedEffectNames.empty();
         }
@@ -406,6 +404,7 @@ namespace VKIntox
         std::string pendingShaderProfilePath;
         bool pendingShaderProfile = false;
         std::set<std::string> editedEffectNames;
+        
         std::string activeShaderProfileName;
         std::string activeShaderProfilePath;
         std::vector<std::string> shaderProfiles;
