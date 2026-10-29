@@ -1421,7 +1421,8 @@ namespace VKIntox
                 {
                     auto reshadeEffect = std::make_shared<ReshadeEffect>(
                         logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                        firstImages, secondImages, &effectRegistry, effectStrings[i], effectPath, customDefs);
+                        firstImages, secondImages, &effectRegistry, effectStrings[i], effectPath, customDefs,
+                        effectRegistry.effectUniformsBaked(effectStrings[i]));
                     logicalSwapchain->effects.push_back(reshadeEffect);
                     if (reshadeEffect->getOutputWrites() == 0)
                     {
@@ -1534,6 +1535,182 @@ namespace VKIntox
             // only flush once the idle completed; a stuck queue means the
             // releases have to wait for a later safe point, never run now
             if (waitQueueIdleBounded(logicalDevice, "effect reload flush"))
+                DeferredDestroyQueue::instance().flush();
+        }
+    }
+
+    void updateArmedUniformSwaps(LogicalDevice* logicalDevice, ImGuiOverlay* overlay)
+    {
+        if (!logicalDevice || !overlay || !logicalDevice->imguiOverlay)
+            return;
+
+        bool liveActivity = overlay->hasLiveEditActivity();
+
+        bool blocked = logicalDevice->pendingChainReload || logicalDevice->depthTransitionHold
+            || logicalDevice->depthReallocPending;
+
+        if (!logicalDevice->uniformSwapArmed && !blocked)
+        {
+            const std::set<std::string>& edited = overlay->getEditedEffectNames();            if (liveActivity)
+            {
+                bool needLive = false;
+                for (const auto& iter_swap : swapchainMap)
+                {
+                    const std::shared_ptr<LogicalSwapchain>& sc = iter_swap.second;
+                    if (!sc || sc->logicalDevice != logicalDevice || sc->passthrough)
+                        continue;
+                    for (auto& effect : sc->effects)
+                        if (auto* reshade = dynamic_cast<ReshadeEffect*>(effect.get());
+                            reshade && reshade->isUniformCodegenBaked() && reshade->hasBakeableUniformValues()
+                            && edited.count(reshade->getEffectName()))
+                        {
+                            needLive = true;
+                            break;
+                        }
+                    if (needLive)
+                        break;
+                }
+                if (needLive)
+                {
+                    logicalDevice->uniformSwapArmed = true;
+                    logicalDevice->uniformSwapToLive = true;
+                    logicalDevice->uniformSwapEffects.assign(edited.begin(), edited.end());
+                }
+            }
+            else if (!edited.empty())
+            {
+                bool needBake = false;
+                for (const auto& iter_swap : swapchainMap)
+                {
+                    const std::shared_ptr<LogicalSwapchain>& sc = iter_swap.second;
+                    if (!sc || sc->logicalDevice != logicalDevice || sc->passthrough)
+                        continue;
+                    for (auto& effect : sc->effects)
+                        if (auto* reshade = dynamic_cast<ReshadeEffect*>(effect.get());
+                            reshade && !reshade->isUniformCodegenBaked() && reshade->hasBakeableUniformValues()
+                            && edited.count(reshade->getEffectName()))
+                        {
+                            needBake = true;
+                            break;
+                        }
+                    if (needBake)
+                        break;
+                }
+                if (needBake)
+                {
+                    logicalDevice->uniformSwapArmed = true;
+                    logicalDevice->uniformSwapToLive = false;
+                    logicalDevice->uniformSwapEffects.assign(edited.begin(), edited.end());
+                }
+                else
+                {
+                    overlay->clearEditedEffectNames();
+                }
+            }
+            return;
+        }
+
+        if (!logicalDevice->uniformSwapArmed)
+            return;
+
+        for (const auto& iter_swap : swapchainMap)
+        {
+            const std::shared_ptr<LogicalSwapchain>& sc = iter_swap.second;
+            if (sc && sc->logicalDevice == logicalDevice && !sc->fakeImages.empty()
+                && !depthRebuildFencesReady(logicalDevice, sc.get()))
+                return;
+        }
+
+        const bool toLive = logicalDevice->uniformSwapToLive;
+        bool rebuiltSomething = false;
+        std::string rebuiltNames;
+        for (const auto& iter_swap : swapchainMap)
+        {
+            const std::shared_ptr<LogicalSwapchain>& sc = iter_swap.second;
+            if (!sc || sc->logicalDevice != logicalDevice || sc->passthrough || sc->fakeImages.empty())
+                continue;
+            LogicalSwapchain* swap = sc.get();
+
+            bool replacedAny = false;
+            for (size_t i = 0; i < swap->effects.size(); ++i)
+            {
+                const std::shared_ptr<Effect>& effect = swap->effects[i];
+                ReshadeEffect* reshade = dynamic_cast<ReshadeEffect*>(effect.get());
+                if (!reshade || !reshade->hasBakeableUniformValues())
+                    continue;
+                if (reshade->isUniformCodegenBaked() == toLive)
+                    continue;
+                if (std::find(logicalDevice->uniformSwapEffects.begin(), logicalDevice->uniformSwapEffects.end(),
+                              reshade->getEffectName()) == logicalDevice->uniformSwapEffects.end())
+                    continue;
+
+                effectRegistry.setEffectUniformsBaked(reshade->getEffectName(), toLive);
+
+                installCrashHandlers();
+                if (sigsetjmp(signalJmpBuf, 1) != 0)
+                {
+                    signalJmpActive = 0;
+                    Logger::err("compiler signal while rebuilding uniform binding for "
+                                + reshade->getEffectName());
+                    effectRegistry.setEffectError(reshade->getEffectName(), "signal during rebuild");
+                    continue;
+                }
+                signalJmpActive = 1;
+                try
+                {
+                    const std::string effectName = reshade->getEffectName();
+                    auto rebuilt = std::make_shared<ReshadeEffect>(
+                        logicalDevice,
+                        swap->format,
+                        swap->imageExtent,
+                        reshade->chainInputImages(),
+                        reshade->chainOutputImages(),
+                        &effectRegistry,
+                        effectName,
+                        effectRegistry.getEffectFilePath(effectName),
+                        effectRegistry.getPreprocessorDefs(effectName),
+                        toLive);
+                    swap->effects[i] = rebuilt;
+                    replacedAny = true;
+                    if (!rebuiltNames.empty())
+                        rebuiltNames += ", ";
+                    rebuiltNames += effectName;
+                }
+                catch (const std::exception& e)
+                {
+                    Logger::err("uniform swap rebuild failed for " + reshade->getEffectName() + ": " + e.what());
+                    effectRegistry.setEffectError(reshade->getEffectName(), e.what());
+                }
+                catch (...)
+                {
+                    Logger::err("uniform swap rebuild failed for " + reshade->getEffectName());
+                    effectRegistry.setEffectError(reshade->getEffectName(), "unknown error during rebuild");
+                }
+                signalJmpActive = 0;
+            }
+
+            if (!replacedAny)
+                continue;
+
+            rebuiltSomething = true;
+            DepthState depth = getDepthState(logicalDevice);
+            if (!reallocateCommandBuffers(logicalDevice, swap, depth, 2000))
+            {
+                Logger::warn("uniform swap: command buffers busy; retry on next present");
+                return;
+            }
+            Logger::info("uniform swap " + std::string(toLive ? "-> live" : "-> baked") + ": " + rebuiltNames);
+        }
+
+        logicalDevice->uniformSwapArmed = false;
+        logicalDevice->uniformSwapEffects.clear();
+
+        if (!toLive)
+            overlay->clearEditedEffectNames();
+
+        if (rebuiltSomething)
+        {
+            if (waitQueueIdleBounded(logicalDevice, "uniform swap release", 50))
                 DeferredDestroyQueue::instance().flush();
         }
     }
@@ -3303,6 +3480,7 @@ namespace VKIntox
                 }
             }
 
+            updateArmedUniformSwaps(deviceForSettings, deviceForSettings->imguiOverlay.get());
             if (!initLogged)
             {
                 Logger::info("hot-reload initialized, config: " + config->getConfigFilePath());

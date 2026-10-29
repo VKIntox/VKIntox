@@ -87,13 +87,27 @@ namespace VKIntox
             return defaultValue;
         }
 
-        RuntimeCodegenPolicy selectRuntimeCodegenPolicy(const LogicalDevice* logicalDevice)
+        RuntimeCodegenPolicy selectRuntimeCodegenPolicy(const LogicalDevice* logicalDevice, bool bakedUniformCodegen)
         {
             RuntimeCodegenPolicy policy;
             const bool isNvidiaGpu = (logicalDevice != nullptr) && logicalDevice->isNvidiaGpu;
             policy.useUniformSpecConstants = !isNvidiaGpu;
             policy.emitDebugInfo = !isNvidiaGpu;
             policy.disableComputePipelineOptimization = isNvidiaGpu;
+
+            const char* overrideValue = std::getenv("VKINTOX_UNIFORM_SPEC_CONSTANTS");
+            if (overrideValue && *overrideValue)
+            {
+                if (overrideValue[0] == '1')
+                    policy.useUniformSpecConstants = true;
+                else if (overrideValue[0] == '0')
+                    policy.useUniformSpecConstants = false;
+                else
+                    Logger::warn(std::string("Invalid VKINTOX_UNIFORM_SPEC_CONSTANTS value '") + overrideValue +
+                                 "'. Expected 0 or 1.");
+            }
+
+            policy.useUniformSpecConstants = policy.useUniformSpecConstants && bakedUniformCodegen;
 
             bool hasLocalSizeIdOverride = false;
             policy.useLocalSizeId = getLocalSizeIdEnabledOverride(hasLocalSizeIdOverride, !isNvidiaGpu);
@@ -412,7 +426,8 @@ namespace VKIntox
                                  EffectRegistry*      effectRegistry,
                                  std::string          effectName,
                                  std::string          effectPath,
-                                 std::vector<PreprocessorDefinition> customDefs)
+                                 std::vector<PreprocessorDefinition> customDefs,
+                                 bool                 bakedUniformCodegen)
     {
         Logger::debug("in creating ReshadeEffect");
 
@@ -425,6 +440,7 @@ namespace VKIntox
         this->effectName            = effectName;
         this->effectPath            = effectPath;
         this->customPreprocessorDefs = customDefs;
+        this->bakedUniformCodegen    = bakedUniformCodegen;
         inputOutputFormatUNORM = convertToUNORM(format);
         inputOutputFormatSRGB  = convertToSRGB(format);
 
@@ -2255,7 +2271,7 @@ namespace VKIntox
         if (!errors.empty())
             Logger::err(errors);
 
-        const RuntimeCodegenPolicy runtimePolicy = selectRuntimeCodegenPolicy(logicalDevice);
+        const RuntimeCodegenPolicy runtimePolicy = selectRuntimeCodegenPolicy(logicalDevice, bakedUniformCodegen);
         disableComputePipelineOptimization = runtimePolicy.disableComputePipelineOptimization;
         Logger::debug("runtime codegen policy: local_size_id=" + std::to_string(runtimePolicy.useLocalSizeId ? 1 : 0) +
                       " uniform_spec_constants=" + std::to_string(runtimePolicy.useUniformSpecConstants ? 1 : 0) +
@@ -2324,6 +2340,16 @@ namespace VKIntox
             Logger::err("shader produced empty SPIR-V: " + effectName);
             throw std::runtime_error("shader produced empty SPIR-V: " + effectName);
         }
+
+        if (bakedUniformCodegen)
+            hasBakeableUniforms = !module.spec_constants.empty();
+        else
+            hasBakeableUniforms = std::any_of(module.uniforms.begin(), module.uniforms.end(), [](const reshadefx::uniform_info& u) {
+                return !u.name.empty() && u.offset != 0xFFFFFFFFu &&
+                       std::none_of(u.annotations.begin(), u.annotations.end(), [](const auto& a) {
+                           return a.name == "source";
+                       });
+            });
 
         VkShaderModuleCreateInfo shaderCreateInfo;
         shaderCreateInfo.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;

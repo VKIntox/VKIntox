@@ -37,7 +37,8 @@ namespace VKIntox
                       EffectRegistry*      effectRegistry,
                       std::string          effectName,
                       std::string          effectPath = "",  // Optional: explicit path to .fx file
-                      std::vector<PreprocessorDefinition> customDefs = {});  // Custom preprocessor definitions
+                      std::vector<PreprocessorDefinition> customDefs = {},  // Custom preprocessor definitions
+                      bool bakedUniformCodegen = true);
         void virtual applyEffect(uint32_t imageIndex, VkCommandBuffer commandBuffer) override;
         void virtual updateEffect() override;
         void virtual useDepthImage(uint32_t imageIndex, VkImageView depthImageView, VkImageLayout depthImageLayout) override;
@@ -57,6 +58,12 @@ namespace VKIntox
         // per-member loops this replaced were crashing the NVIDIA driver.
         std::set<VkImageView> collectOwnedImageViews() const;
         std::set<VkImage>     collectOwnedImages() const;
+
+        const std::vector<VkImage>& chainInputImages() const { return inputImages; }
+        const std::vector<VkImage>& chainOutputImages() const { return outputImages; }
+        bool isUniformCodegenBaked() const { return bakedUniformCodegen; }
+        bool hasBakeableUniformValues() const { return hasBakeableUniforms; }
+        const std::string& getEffectName() const { return effectName; }
 
     private:
         LogicalDevice*           logicalDevice;
@@ -132,6 +139,8 @@ namespace VKIntox
         void*                    stagingBufferMapped = nullptr;  // Persistent map (HOST_COHERENT)
         VkDescriptorSet          bufferDescriptorSet = VK_NULL_HANDLE;
         bool                     disableComputePipelineOptimization = false;
+        bool                     bakedUniformCodegen = true;
+        bool                     hasBakeableUniforms = false;
 
         std::vector<std::shared_ptr<ReshadeUniform>> uniforms;
         // registry params resolved at build time; valid only while the registry

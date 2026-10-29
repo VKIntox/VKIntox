@@ -836,8 +836,7 @@ namespace VKIntox
                         if (editor)
                             editor->resetToDefault(*param);
                     }
-                    paramsDirty = true;
-                    lastChangeTime = std::chrono::steady_clock::now();
+                    noteParamEdit(effectName);
                 }
 
 
@@ -990,9 +989,8 @@ namespace VKIntox
                     ImGui::BeginChild("##inline_params", ImVec2(0, 0), paramsFlags, paramsWindowFlags);
                     if (renderEffectParams(effectName))
                     {
-                        paramsDirty = true;
+                        noteParamEdit(effectName);
                         profileDirty = true;
-                        lastChangeTime = std::chrono::steady_clock::now();
                     }
                     ImGui::EndChild();
                     if (!settled)
@@ -1251,9 +1249,8 @@ namespace VKIntox
                                           ImGuiChildFlags_AlwaysUseWindowPadding);
                         if (renderEffectParams(effectName))
                         {
-                            paramsDirty = true;
+                            noteParamEdit(effectName);
                             profileDirty = true;
-                            lastChangeTime = std::chrono::steady_clock::now();
                         }
                         ImGui::EndChild();
                         ImGui::PopStyleVar();
