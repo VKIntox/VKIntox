@@ -175,6 +175,10 @@ namespace VKIntox
         bool pendingChainReload = false;
         std::vector<std::string> pendingChainEffects;
 
+        bool uniformSwapArmed = false;
+        bool uniformSwapToLive = false;
+        std::vector<std::string> uniformSwapEffects;
+
         // Persistent overlay state that survives swapchain recreation
         std::unique_ptr<OverlayPersistentState> overlayPersistentState;
 

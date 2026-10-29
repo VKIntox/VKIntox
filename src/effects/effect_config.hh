@@ -38,6 +38,7 @@ namespace VKIntox
         std::string compileError;  // Empty if compiled successfully, error message if failed
         std::filesystem::file_time_type fileModTime{};  // Last modification time of .fx file when parsed
         bool hasFailed() const { return !compileError.empty(); }
+        bool uniformsBaked = true;
     };
 
 } // namespace VKIntox

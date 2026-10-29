@@ -116,6 +116,9 @@ namespace VKIntox
         // replace parameters. cached param pointers must not outlive a bump.
         uint64_t parameterGeneration() const { return paramGeneration.load(std::memory_order_acquire); }
 
+        bool effectUniformsBaked(const std::string& effectName) const;
+        void setEffectUniformsBaked(const std::string& effectName, bool baked);
+
         // Check if effects have been initialized from config (first load complete)
         bool isInitializedFromConfig() const { return initializedFromConfig; }
 

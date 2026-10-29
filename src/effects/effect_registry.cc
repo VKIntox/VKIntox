@@ -208,9 +208,7 @@ namespace VKIntox
         std::lock_guard<std::mutex> lock(mutex);
         this->rootConfig = config;
         effects.clear();
-        paramGeneration.fetch_add(1, std::memory_order_release);
-
-        std::vector<std::string> effectNames = config->getOption<std::vector<std::string>>("effects");
+        paramGeneration.fetch_add(1, std::memory_order_release);        std::vector<std::string> effectNames = config->getOption<std::vector<std::string>>("effects");
         std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects");
 
         // Build set for quick lookup
@@ -447,6 +445,26 @@ namespace VKIntox
             return std::nullopt;
 
         return findParam(**effect, paramName);
+    }
+
+    bool EffectRegistry::effectUniformsBaked(const std::string& effectName) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (const auto& effect : effects)
+            if (effect.name == effectName)
+                return effect.uniformsBaked;
+        return true;
+    }
+
+    void EffectRegistry::setEffectUniformsBaked(const std::string& effectName, bool baked)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (auto& effect : effects)
+            if (effect.name == effectName)
+            {
+                effect.uniformsBaked = baked;
+                return;
+            }
     }
 
     std::vector<EffectParam*> EffectRegistry::getParametersForEffect(const std::string& effectName)
