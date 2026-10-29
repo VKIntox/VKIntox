@@ -3,6 +3,7 @@
 
 #include <string>
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 
 #include "config_serializer.hh"
@@ -114,6 +115,9 @@ namespace VKIntox
         }
         int getDepthRebuildMode() const
         {
+            int latched = hotDepthRebuildMode.load(std::memory_order_acquire);
+            if (latched >= 0)
+                return latched;
             std::lock_guard<std::mutex> lock(mutex);
             return std::clamp(settings.depthRebuildMode, 0, 1);
         }
@@ -129,6 +133,9 @@ namespace VKIntox
         }
         int getDepthCaptureMethod() const
         {
+            int latched = hotDepthCaptureMethod.load(std::memory_order_acquire);
+            if (latched >= 0)
+                return latched;
             std::lock_guard<std::mutex> lock(mutex);
             return std::clamp(settings.depthCaptureMethod, 0, 2);
         }
@@ -231,8 +238,11 @@ namespace VKIntox
         }
         void setDepthRebuildMode(int value)
         {
-            std::lock_guard<std::mutex> lock(mutex);
-            settings.depthRebuildMode = std::clamp(value, 0, 1);
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                settings.depthRebuildMode = std::clamp(value, 0, 1);
+            }
+            publishHotSettings();
         }
         void setDepthManualPin(const std::string& value)
         {
@@ -246,8 +256,11 @@ namespace VKIntox
         }
         void setDepthCaptureMethod(int value)
         {
-            std::lock_guard<std::mutex> lock(mutex);
-            settings.depthCaptureMethod = std::clamp(value, 0, 2);
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                settings.depthCaptureMethod = std::clamp(value, 0, 2);
+            }
+            publishHotSettings();
         }
         void setDepthSourceChannel(int value)
         {
@@ -278,9 +291,18 @@ namespace VKIntox
         }
 
     private:
+        void publishHotSettings()
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            hotDepthRebuildMode.store(std::clamp(settings.depthRebuildMode, 0, 1), std::memory_order_release);
+            hotDepthCaptureMethod.store(std::clamp(settings.depthCaptureMethod, 0, 2), std::memory_order_release);
+        }
+
         mutable std::mutex mutex;
         VkBasaltSettings settings;
         bool initialized = false;
+        std::atomic<int> hotDepthRebuildMode{-1};
+        std::atomic<int> hotDepthCaptureMethod{-1};
     };
 
     // Global settings manager instance (like effectRegistry)

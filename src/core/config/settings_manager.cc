@@ -8,12 +8,15 @@ namespace VKIntox
 
     void SettingsManager::initialize()
     {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (initialized)
-            return;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (initialized)
+                return;
 
-        settings = ConfigSerializer::loadSettings();
-        initialized = true;
+            settings = ConfigSerializer::loadSettings();
+            initialized = true;
+        }
+        publishHotSettings();
         Logger::info("SettingsManager initialized");
     }
 
