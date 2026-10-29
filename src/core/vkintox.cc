@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <memory>
+#include <atomic>
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
@@ -121,6 +122,27 @@ namespace VKIntox
     std::unordered_map<void*, uint32_t>                                   instanceVersionMap;
     std::unordered_map<void*, std::shared_ptr<LogicalDevice>>             deviceMap;
     std::unordered_map<VkSwapchainKHR, std::shared_ptr<LogicalSwapchain>> swapchainMap;
+
+    static std::atomic<std::shared_ptr<const std::unordered_map<void*, std::shared_ptr<LogicalDevice>>>> deviceDirectorySnapshot;
+    void republishDeviceDirectoryLocked()
+    {
+        auto fresh = std::make_shared<const std::unordered_map<void*, std::shared_ptr<LogicalDevice>>>(deviceMap);
+        deviceDirectorySnapshot.store(std::move(fresh), std::memory_order_release);
+    }
+    std::shared_ptr<LogicalDevice> lookupLogicalDeviceFast(void* key)
+    {
+        if (const auto snapshot = deviceDirectorySnapshot.load(std::memory_order_acquire))
+        {
+            if (auto it = snapshot->find(key); it != snapshot->end() && it->second)
+                return it->second;
+            return nullptr;
+        }
+        scoped_lock l(globalLock);
+        auto it = deviceMap.find(key);
+        if (it == deviceMap.end())
+            return nullptr;
+        return it->second;
+    }
 
     // Cache: VkRenderPass → depth attachment's finalLayout.
     // Populated at CreateRenderPass time. Used by v3 deferred copy to
@@ -2062,6 +2084,7 @@ namespace VKIntox
         }
 
         deviceMap[GetKey(*pDevice)] = logicalDevice;
+        republishDeviceDirectoryLocked();
 
         return VK_SUCCESS;
     }
@@ -2159,6 +2182,7 @@ namespace VKIntox
             deviceLostDevices.erase(logicalDevice);
         }
         deviceMap.erase(GetKey(device));
+        republishDeviceDirectoryLocked();
     }
 
     // Extent of a live, non-passthrough swapchain for this device, i.e. the
@@ -4582,10 +4606,8 @@ namespace VKIntox
         }
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdBeginRenderPass(commandBuffer, pRenderPassBegin, contents);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdBeginRenderPass(commandBuffer, pRenderPassBegin, contents);
             return;
         }
 
@@ -4618,10 +4640,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdBeginRenderPass2(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdBeginRenderPass2(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
             return;
         }
 
@@ -4654,10 +4674,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdBeginRenderPass2KHR(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdBeginRenderPass2KHR(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
             return;
         }
 
@@ -4703,10 +4721,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdBeginRendering(commandBuffer, pRenderingInfo);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdBeginRendering(commandBuffer, pRenderingInfo);
             return;
         }
 
@@ -4761,10 +4777,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdBeginRenderingKHR(commandBuffer, pRenderingInfo);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdBeginRenderingKHR(commandBuffer, pRenderingInfo);
             return;
         }
 
@@ -4820,10 +4834,8 @@ namespace VKIntox
         VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCmdEndRenderPass cb=" + convertToString(commandBuffer); });
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdEndRenderPass(commandBuffer);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdEndRenderPass(commandBuffer);
             return;
         }
 
@@ -4876,10 +4888,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdEndRenderPass2(commandBuffer, pSubpassEndInfo);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdEndRenderPass2(commandBuffer, pSubpassEndInfo);
             return;
         }
 
@@ -4930,10 +4940,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdEndRenderPass2KHR(commandBuffer, pSubpassEndInfo);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdEndRenderPass2KHR(commandBuffer, pSubpassEndInfo);
             return;
         }
 
@@ -4984,10 +4992,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdEndRendering(commandBuffer);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdEndRendering(commandBuffer);
             return;
         }
 
@@ -5038,10 +5044,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdEndRenderingKHR(commandBuffer);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdEndRenderingKHR(commandBuffer);
             return;
         }
 
@@ -5098,10 +5102,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdCopyImage(commandBuffer, srcImage, srcImageLayout, dstImage, dstImageLayout, regionCount, pRegions);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdCopyImage(commandBuffer, srcImage, srcImageLayout, dstImage, dstImageLayout, regionCount, pRegions);
             return;
         }
 
@@ -5127,10 +5129,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdExecuteCommands(commandBuffer, commandBufferCount, pCommandBuffers);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdExecuteCommands(commandBuffer, commandBufferCount, pCommandBuffers);
             return;
         }
 
@@ -5160,10 +5160,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdBlitImage(commandBuffer, srcImage, srcImageLayout, dstImage, dstImageLayout, regionCount, pRegions, filter);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdBlitImage(commandBuffer, srcImage, srcImageLayout, dstImage, dstImageLayout, regionCount, pRegions, filter);
             return;
         }
 
@@ -5197,10 +5195,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdClearAttachments(commandBuffer, attachmentCount, pAttachments, rectCount, pRects);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdClearAttachments(commandBuffer, attachmentCount, pAttachments, rectCount, pRects);
             return;
         }
 
@@ -5262,10 +5258,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdClearDepthStencilImage(commandBuffer, image, imageLayout, pDepthStencil, rangeCount, pRanges);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdClearDepthStencilImage(commandBuffer, image, imageLayout, pDepthStencil, rangeCount, pRanges);
             return;
         }
 
@@ -5307,10 +5301,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdDraw(commandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdDraw(commandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
             return;
         }
 
@@ -5338,10 +5330,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
             return;
         }
 
@@ -5368,10 +5358,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdDrawIndirect(commandBuffer, buffer, offset, drawCount, stride);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdDrawIndirect(commandBuffer, buffer, offset, drawCount, stride);
             return;
         }
 
@@ -5398,10 +5386,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdDrawIndexedIndirect(commandBuffer, buffer, offset, drawCount, stride);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdDrawIndexedIndirect(commandBuffer, buffer, offset, drawCount, stride);
             return;
         }
 
@@ -5430,10 +5416,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdDrawIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdDrawIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
             return;
         }
 
@@ -5462,10 +5446,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdDrawIndirectCountKHR(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdDrawIndirectCountKHR(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
             return;
         }
 
@@ -5494,10 +5476,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdDrawIndexedIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdDrawIndexedIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
             return;
         }
 
@@ -5526,10 +5506,8 @@ namespace VKIntox
     {
         if (!VKIntox::depthCaptureActive())
         {
-            scoped_lock l(globalLock);
-            auto devIt = deviceMap.find(GetKey(commandBuffer));
-            if (devIt != deviceMap.end())
-                devIt->second->vkd.CmdDrawIndexedIndirectCountKHR(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            if (std::shared_ptr<LogicalDevice> logicalDevice = lookupLogicalDeviceFast(GetKey(commandBuffer)))
+                logicalDevice->vkd.CmdDrawIndexedIndirectCountKHR(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
             return;
         }
 
