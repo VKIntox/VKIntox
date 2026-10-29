@@ -139,6 +139,10 @@ namespace VKIntox
         std::unordered_map<std::string, EffectParam*> uiParamCache;
         uint64_t uiParamCacheGeneration = 0;
 
+        std::vector<bool> uniformIsSource;
+        std::vector<std::vector<uint8_t>> uniformShadows;
+        std::vector<uint8_t> uniformTouched;
+
         void          buildUiParamCache();
         void          createReshadeModule();
         VkFormat      convertReshadeFormat(reshadefx::texture_format texFormat);

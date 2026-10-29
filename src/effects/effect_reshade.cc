@@ -109,10 +109,11 @@ namespace VKIntox
 
         bool isReshadeUniformLogEnabled()
         {
-            const char* value = std::getenv("VKINTOX_DEBUG_LOG_RESHADE_UI_UNIFORMS");
-            if (value == nullptr || *value == '\0')
-                return false;
-            return value[0] != '0';
+            static const bool enabled = [] {
+                const char* value = std::getenv("VKINTOX_DEBUG_LOG_RESHADE_UI_UNIFORMS");
+                return value != nullptr && value[0] != '\0' && value[0] != '0';
+            }();
+            return enabled;
         }
 
         bool shouldLogReshadeUiUniform(const std::string& effectName, const std::string& uniformName)
@@ -277,6 +278,107 @@ namespace VKIntox
                 const VkBool32 value = p->value ? VK_TRUE : VK_FALSE;
                 std::memcpy(dst, &value, sizeof(VkBool32));
                 return;
+            }
+        }
+
+        bool extractUniformValueBytes(const EffectParam* param,
+                                      const reshadefx::uniform_info& uniform,
+                                      uint8_t (&bytes)[64],
+                                      uint32_t& written)
+        {
+            if (param != nullptr)
+            {
+                const uint32_t components = std::min<uint32_t>(uniform.type.components(), 4u);
+
+                if (const auto* p = dynamic_cast<const FloatParam*>(param))
+                {
+                    std::memcpy(bytes, &p->value, sizeof(float));
+                    written = sizeof(float);
+                    return true;
+                }
+                if (const auto* p = dynamic_cast<const FloatVecParam*>(param))
+                {
+                    const uint32_t count = std::min<uint32_t>(p->componentCount, components);
+                    std::memcpy(bytes, p->value, count * sizeof(float));
+                    written = count * sizeof(float);
+                    return true;
+                }
+                if (const auto* p = dynamic_cast<const IntParam*>(param))
+                {
+                    const int32_t value = p->value;
+                    std::memcpy(bytes, &value, sizeof(int32_t));
+                    written = sizeof(int32_t);
+                    return true;
+                }
+                if (const auto* p = dynamic_cast<const IntVecParam*>(param))
+                {
+                    const uint32_t count = std::min<uint32_t>(p->componentCount, components);
+                    std::memcpy(bytes, p->value, count * sizeof(int32_t));
+                    written = count * sizeof(int32_t);
+                    return true;
+                }
+                if (const auto* p = dynamic_cast<const UintParam*>(param))
+                {
+                    const uint32_t value = p->value;
+                    std::memcpy(bytes, &value, sizeof(uint32_t));
+                    written = sizeof(uint32_t);
+                    return true;
+                }
+                if (const auto* p = dynamic_cast<const UintVecParam*>(param))
+                {
+                    const uint32_t count = std::min<uint32_t>(p->componentCount, components);
+                    std::memcpy(bytes, p->value, count * sizeof(uint32_t));
+                    written = count * sizeof(uint32_t);
+                    return true;
+                }
+                if (const auto* p = dynamic_cast<const BoolParam*>(param))
+                {
+                    const VkBool32 value = p->value ? VK_TRUE : VK_FALSE;
+                    std::memcpy(bytes, &value, sizeof(VkBool32));
+                    written = sizeof(VkBool32);
+                    return true;
+                }
+                return false;
+            }
+
+            if (uniform.offset == 0xFFFFFFFFu || !uniform.has_initializer_value)
+            {
+                written = 0;
+                return true;
+            }
+
+            const uint32_t componentCount = std::min<uint32_t>(uniform.type.components(), 16u);
+            if (componentCount == 0)
+            {
+                written = 0;
+                return true;
+            }
+
+            switch (uniform.type.base)
+            {
+                case reshadefx::type::t_float:
+                    std::memcpy(bytes, uniform.initializer_value.as_float, componentCount * sizeof(float));
+                    written = componentCount * sizeof(float);
+                    return true;
+                case reshadefx::type::t_bool:
+                {
+                    VkBool32 values[16] = {};
+                    for (uint32_t i = 0; i < componentCount; ++i)
+                        values[i] = uniform.initializer_value.as_uint[i] != 0 ? VK_TRUE : VK_FALSE;
+                    std::memcpy(bytes, values, componentCount * sizeof(VkBool32));
+                    written = componentCount * sizeof(VkBool32);
+                    return true;
+                }
+                case reshadefx::type::t_int:
+                    std::memcpy(bytes, uniform.initializer_value.as_int, componentCount * sizeof(int32_t));
+                    written = componentCount * sizeof(int32_t);
+                    return true;
+                case reshadefx::type::t_uint:
+                    std::memcpy(bytes, uniform.initializer_value.as_uint, componentCount * sizeof(uint32_t));
+                    written = componentCount * sizeof(uint32_t);
+                    return true;
+                default:
+                    return false;
             }
         }
     }
@@ -1298,6 +1400,12 @@ namespace VKIntox
             uiParamCache[uniform.name] = paramOpt ? *paramOpt : nullptr;
         }
         uiParamCacheGeneration = effectRegistry->parameterGeneration();
+
+        uniformIsSource.assign(module.uniforms.size(), false);
+        uniformShadows.assign(module.uniforms.size(), {});
+        uniformTouched.assign(module.uniforms.size(), 0);
+        for (size_t i = 0; i < module.uniforms.size(); ++i)
+            uniformIsSource[i] = hasSourceAnnotation(module.uniforms[i]) ? 1 : 0;
     }
 
     void ReshadeEffect::updateEffect()
@@ -1307,9 +1415,11 @@ namespace VKIntox
 
         if (stagingBufferMapped)
         {
-            for (const auto& uniform : module.uniforms)
+            const size_t uniformCount = module.uniforms.size();
+            for (size_t uniformIndex = 0; uniformIndex < uniformCount; ++uniformIndex)
             {
-                if (hasSourceAnnotation(uniform))
+                const auto& uniform = module.uniforms[uniformIndex];
+                if (uniformIndex < uniformIsSource.size() && uniformIsSource[uniformIndex])
                     continue;
                 if (uniform.name.empty())
                     continue;
@@ -1318,13 +1428,40 @@ namespace VKIntox
                 if (auto it = uiParamCache.find(uniform.name); it != uiParamCache.end())
                     registryParam = it->second;
 
-                if (registryParam)
+                uint8_t bytes[64];
+                uint32_t written = 0;
+                std::vector<uint8_t>* shadow = nullptr;
+                uint8_t* touched = nullptr;
+                if (uniformIndex < uniformShadows.size() && uniformIndex < uniformTouched.size())
                 {
-                    maybeLogReshadeUiUniformWrite(effectName, uniform.name, *registryParam);
-                    writeConfiguredUniformValue(stagingBufferMapped, uniform, registryParam);
+                    shadow = &uniformShadows[uniformIndex];
+                    touched = &uniformTouched[uniformIndex];
                 }
-                else
-                    writeDefaultUniformValue(stagingBufferMapped, uniform);
+
+                bool shouldWrite = true;
+                if (shadow && touched && *touched
+                    && extractUniformValueBytes(registryParam, uniform, bytes, written)
+                    && shadow->size() == written
+                    && std::memcmp(shadow->data(), bytes, written) == 0)
+                    shouldWrite = false;
+
+                if (shouldWrite)
+                {
+                    if (registryParam)
+                    {
+                        maybeLogReshadeUiUniformWrite(effectName, uniform.name, *registryParam);
+                        writeConfiguredUniformValue(stagingBufferMapped, uniform, registryParam);
+                    }
+                    else
+                        writeDefaultUniformValue(stagingBufferMapped, uniform);
+
+                    if (touched && extractUniformValueBytes(registryParam, uniform, bytes, written)
+                        && shadow->size() == written)
+                    {
+                        shadow->assign(bytes, bytes + written);
+                        *touched = 1;
+                    }
+                }
             }
 
             for (auto& uniform : uniforms)
