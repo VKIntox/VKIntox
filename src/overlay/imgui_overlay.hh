@@ -219,6 +219,7 @@ namespace VKIntox
         // Samples frame time, FPS and GPU stats. Called every overlay frame, not
         // just while the Diagnostics tab is open, so the tab has real history.
         void sampleDiagnostics();
+        void saveDiagnosticsCsv();
         void renderAboutView();
         void renderAdvancedView();  // Depth buffer switching (Advanced tab)
         // Sub-views: pages pushed inside a tab. They slide in over the dock (which

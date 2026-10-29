@@ -1840,6 +1840,7 @@ namespace VKIntox
 
     VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height)
     {
+        sampleDiagnostics();
         // Shell appear/disappear. The clock lives on steady_clock so it runs even
         // on frames where ImGui hasn't ticked yet. Same curve and rise as the
         // dialogs, reversed on hide, so the overlay opens and closes like a popup.
