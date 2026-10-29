@@ -136,8 +136,7 @@ namespace VKIntox
             if (auto it = snapshot->find(key); it != snapshot->end() && it->second)
                 return it->second;
             return nullptr;
-        }
-        scoped_lock l(globalLock);
+        }        scoped_lock l(globalLock);
         auto it = deviceMap.find(key);
         if (it == deviceMap.end())
             return nullptr;
@@ -158,6 +157,7 @@ namespace VKIntox
 
     static std::mutex deviceLossLock;
     static std::unordered_set<LogicalDevice*> deviceLostDevices;
+    static void* primaryInstanceDispatchKey = nullptr;
 
     template<typename DispatchableType>
     void* GetKey(DispatchableType inst)
@@ -1538,20 +1538,20 @@ namespace VKIntox
                 DeferredDestroyQueue::instance().flush();
         }
     }
-
     void updateArmedUniformSwaps(LogicalDevice* logicalDevice, ImGuiOverlay* overlay)
     {
         if (!logicalDevice || !overlay || !logicalDevice->imguiOverlay)
             return;
 
         bool liveActivity = overlay->hasLiveEditActivity();
-
         bool blocked = logicalDevice->pendingChainReload || logicalDevice->depthTransitionHold
             || logicalDevice->depthReallocPending;
 
         if (!logicalDevice->uniformSwapArmed && !blocked)
         {
-            const std::set<std::string>& edited = overlay->getEditedEffectNames();            if (liveActivity)
+            const std::set<std::string>& edited = overlay->getEditedEffectNames();
+
+            if (liveActivity)
             {
                 bool needLive = false;
                 for (const auto& iter_swap : swapchainMap)
@@ -1612,7 +1612,6 @@ namespace VKIntox
 
         if (!logicalDevice->uniformSwapArmed)
             return;
-
         for (const auto& iter_swap : swapchainMap)
         {
             const std::shared_ptr<LogicalSwapchain>& sc = iter_swap.second;
@@ -1643,7 +1642,6 @@ namespace VKIntox
                 if (std::find(logicalDevice->uniformSwapEffects.begin(), logicalDevice->uniformSwapEffects.end(),
                               reshade->getEffectName()) == logicalDevice->uniformSwapEffects.end())
                     continue;
-
                 effectRegistry.setEffectUniformsBaked(reshade->getEffectName(), toLive);
 
                 installCrashHandlers();
@@ -1709,10 +1707,8 @@ namespace VKIntox
             overlay->clearEditedEffectNames();
 
         if (rebuiltSomething)
-        {
             if (waitQueueIdleBounded(logicalDevice, "uniform swap release", 50))
                 DeferredDestroyQueue::instance().flush();
-        }
     }
 
     // Build and update overlay state for rendering
@@ -1860,9 +1856,11 @@ namespace VKIntox
         // store the table by key
         {
             scoped_lock l(globalLock);
-            instanceDispatchMap[GetKey(*pInstance)] = dispatchTable;
-            instanceMap[GetKey(*pInstance)]         = *pInstance;
-            instanceVersionMap[GetKey(*pInstance)]  = modifiedCreateInfo.pApplicationInfo->apiVersion;
+            void* instanceKey = GetKey(*pInstance);
+            instanceDispatchMap[instanceKey] = dispatchTable;
+            instanceMap[instanceKey]         = *pInstance;
+            instanceVersionMap[instanceKey]  = modifiedCreateInfo.pApplicationInfo->apiVersion;            if (primaryInstanceDispatchKey == nullptr)
+                primaryInstanceDispatchKey = const_cast<void*>(instanceKey);
         }
 
         return ret;
@@ -1888,6 +1886,8 @@ namespace VKIntox
 
         dispatchTable.DestroyInstance(instance, pAllocator);
 
+        if (primaryInstanceDispatchKey && primaryInstanceDispatchKey == GetKey(instance))
+            primaryInstanceDispatchKey = nullptr;
         instanceDispatchMap.erase(GetKey(instance));
         instanceMap.erase(GetKey(instance));
         instanceVersionMap.erase(GetKey(instance));
@@ -2259,7 +2259,8 @@ namespace VKIntox
             Logger::err("Did not find a graphics queue! VKIntox requires a graphics-capable queue.");
             // Still register the device so destruction works, but effects won't function
         }
-
+        logicalDevice->primaryInstance = primaryInstanceDispatchKey == nullptr
+            || primaryInstanceDispatchKey == GetKey(physicalDevice);
         deviceMap[GetKey(*pDevice)] = logicalDevice;
         republishDeviceDirectoryLocked();
 
@@ -2920,7 +2921,6 @@ namespace VKIntox
                 panicLayer(logicalDevice, "Vulkan device lost during QueueSubmit passthrough");
             return passthroughResult;
         }
-
         if (captureDepth.samples != VK_SAMPLE_COUNT_1_BIT
             && settingsManager.getDepthCaptureMethod() >= 1
             && settingsManager.getDepthResolveMode() == 1)
@@ -3490,7 +3490,6 @@ namespace VKIntox
                     deviceForSettings->pendingChainEffects.clear();
                 }
             }
-
             updateArmedUniformSwaps(deviceForSettings, deviceForSettings->imguiOverlay.get());
             if (!initLogged)
             {

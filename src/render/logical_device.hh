@@ -174,7 +174,6 @@ namespace VKIntox
         // QueueWaitIdle that used to stall the present thread on every toggle.
         bool pendingChainReload = false;
         std::vector<std::string> pendingChainEffects;
-
         bool uniformSwapArmed = false;
         bool uniformSwapToLive = false;
         std::vector<std::string> uniformSwapEffects;
@@ -191,6 +190,7 @@ namespace VKIntox
         // Cleared only by DestroyDevice — the user must restart the game to
         // re-enable effects after a panic.
         std::atomic<bool> softDisabled{false};
+        bool primaryInstance = true;
     };
 } // namespace VKIntox
 
