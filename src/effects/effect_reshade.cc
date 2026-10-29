@@ -2334,6 +2334,11 @@ namespace VKIntox
             Logger::err("shader has no techniques: " + effectName);
             throw std::runtime_error("shader has no techniques: " + effectName);
         }
+        else if (module.techniques.size() > 1)
+        {
+            Logger::warn("shader declares " + std::to_string(module.techniques.size()) +
+                         " techniques; only '" + module.techniques[0].name + "' runs: " + effectName);
+        }
 
         if (module.spirv.empty())
         {
