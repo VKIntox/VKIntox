@@ -1910,7 +1910,7 @@ namespace VKIntox
         static float avgFrameTimeMs = 8.0f;  // Seed at ~120 FPS
         VkFence fence = commandBufferFences[imageIndex];
         uint64_t timeoutNs = static_cast<uint64_t>(
-            std::clamp(avgFrameTimeMs * 4.0f, 2.0f, 50.0f) * 1'000'000.0f);
+            std::clamp(avgFrameTimeMs * 4.0f, 2.0f, 12.0f) * 1'000'000.0f);
         VkResult fenceResult = logicalDevice->vkd.WaitForFences(logicalDevice->device, 1, &fence, VK_TRUE, timeoutNs);
         if (fenceResult == VK_TIMEOUT)
         {
