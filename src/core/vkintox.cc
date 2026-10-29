@@ -1610,8 +1610,7 @@ namespace VKIntox
             layerCreateInfo = (VkLayerInstanceCreateInfo*) layerCreateInfo->pNext;
         }
 
-        Logger::trace("vkCreateInstance");
-
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateInstance"; });
         if (layerCreateInfo == nullptr)
         {
             // No loader instance create info
@@ -1677,13 +1676,12 @@ namespace VKIntox
 
         scoped_lock l(globalLock);
 
-        Logger::trace("vkDestroyInstance");
-
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkDestroyInstance"; });
         auto it = instanceDispatchMap.find(GetKey(instance));
         if (it == instanceDispatchMap.end())
         {
             // Not created through this layer; nothing we can safely do
-            Logger::trace("vkDestroyInstance: instance not tracked by this layer, skipping");
+            VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkDestroyInstance: instance not tracked by this layer, skipping"; });
             return;
         }
 
@@ -1702,7 +1700,7 @@ namespace VKIntox
                                               VkDevice*                    pDevice)
     {
         scoped_lock l(globalLock);
-        Logger::trace("vkCreateDevice");
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateDevice"; });
         VkLayerDeviceCreateInfo* layerCreateInfo = (VkLayerDeviceCreateInfo*) pCreateInfo->pNext;
 
         // step through the chain of pNext until we get to the link info
@@ -2075,8 +2073,7 @@ namespace VKIntox
 
         scoped_lock l(globalLock);
 
-        Logger::trace("vkDestroyDevice");
-
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkDestroyDevice"; });
         // Last chance to release anything still queued: once the device below is
         // destroyed, calling Vulkan against it is undefined behaviour, so the
         // queue is drained while the handle is still valid. Swapchain destruction
@@ -2183,8 +2180,7 @@ namespace VKIntox
     {
         scoped_lock l(globalLock);
 
-        Logger::trace("vkCreateSwapchainKHR");
-
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateSwapchainKHR"; });
         LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
         if (logicalDevice == nullptr)
             return VK_ERROR_DEVICE_LOST;
@@ -2326,8 +2322,10 @@ namespace VKIntox
             Logger::err("vkCreateSwapchainKHR failed: " + std::to_string(result));
         }
 
-        Logger::trace("vkCreateSwapchainKHR result=" + std::to_string(result)
-                      + " handle=" + convertToString(swapchain ? *swapchain : VK_NULL_HANDLE));
+        VKINTOX_LOG_TRACE([&](std::string& s) {
+            s = "vkCreateSwapchainKHR result=" + std::to_string(result)
+                      + " handle=" + convertToString(swapchain ? *swapchain : VK_NULL_HANDLE);
+        });
         return result;
     }
 
@@ -2339,7 +2337,7 @@ namespace VKIntox
         scoped_lock l(globalLock);
         if (pCount == nullptr)
             return VK_ERROR_INITIALIZATION_FAILED;
-        Logger::trace("vkGetSwapchainImagesKHR " + std::to_string(*pCount));
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkGetSwapchainImagesKHR " + std::to_string(*pCount); });
 
         LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
         if (logicalDevice == nullptr)
@@ -2575,8 +2573,7 @@ namespace VKIntox
         {
             Logger::debug(std::to_string(i) + " written commandbuffer " + convertToString(logicalSwapchain->commandBuffersEffect[i]));
         }
-        Logger::trace("vkGetSwapchainImagesKHR");
-
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkGetSwapchainImagesKHR"; });
         logicalSwapchain->defaultTransfer = std::make_shared<TransferEffect>(
             logicalDevice,
             logicalSwapchain->format,
@@ -2653,17 +2650,21 @@ namespace VKIntox
                                                        const VkSubmitInfo* pSubmits,
                                                        VkFence fence)
     {
-        Logger::trace("vkQueueSubmit queue=" + convertToString(queue)
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkQueueSubmit queue=" + convertToString(queue)
                       + " submits=" + std::to_string(submitCount)
-                      + " fence=" + convertToString(fence));
-        for (uint32_t i = 0; pSubmits && i < submitCount; ++i)
+                      + " fence=" + convertToString(fence); });
+        if (pSubmits && Logger::isLevelEnabled(LogLevel::Trace))
         {
-            const VkSubmitInfo& submit = pSubmits[i];
-            Logger::trace("  submit[" + std::to_string(i) + "] waits=" + std::to_string(submit.waitSemaphoreCount)
+            for (uint32_t i = 0; i < submitCount; ++i)
+            {
+                const VkSubmitInfo& submit = pSubmits[i];
+                std::string details = "  submit[" + std::to_string(i) + "] waits=" + std::to_string(submit.waitSemaphoreCount)
                           + " signals=" + std::to_string(submit.signalSemaphoreCount)
                           + " commandBuffers=" + std::to_string(submit.commandBufferCount)
                           + (submit.commandBufferCount && submit.pCommandBuffers
-                                 ? " firstCB=" + convertToString(submit.pCommandBuffers[0]) : ""));
+                                 ? " firstCB=" + convertToString(submit.pCommandBuffers[0]) : "");
+                Logger::trace(details);
+            }
         }
 
         LogicalDevice* logicalDevice = nullptr;
@@ -3033,7 +3034,7 @@ namespace VKIntox
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPresentInfo)
     {
-        if (pPresentInfo)
+        if (pPresentInfo && Logger::isLevelEnabled(LogLevel::Trace))
         {
             Logger::trace("vkQueuePresentKHR queue=" + convertToString(queue)
                           + " swapchains=" + std::to_string(pPresentInfo->swapchainCount)
@@ -3956,7 +3957,7 @@ namespace VKIntox
         scoped_lock l(globalLock);
         // we need to delete the infos of the oldswapchain
 
-        Logger::trace("vkDestroySwapchainKHR " + convertToString(swapchain));
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkDestroySwapchainKHR " + convertToString(swapchain); });
         auto devIt = deviceMap.find(GetKey(device));
         if (devIt != deviceMap.end() && devIt->second)
         {
@@ -3983,7 +3984,7 @@ namespace VKIntox
             else
                 Logger::warn("vkDestroySwapchainKHR: deferring real swapchain destroy; layer teardown could not idle the queue");
         }
-        Logger::trace("vkDestroySwapchainKHR done " + convertToString(swapchain));
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkDestroySwapchainKHR done " + convertToString(swapchain); });
     }
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_CreateRenderPass(VkDevice device,
@@ -4314,7 +4315,7 @@ namespace VKIntox
                                                            const VkAllocationCallbacks* pAllocator,
                                                            VkImageView* view)
     {
-        if (pCreateInfo)
+        if (pCreateInfo && Logger::isLevelEnabled(LogLevel::Trace))
         {
             Logger::trace("vkCreateImageView image=" + convertToString(pCreateInfo->image)
                           + " format=" + convertToString(pCreateInfo->format)
@@ -4423,7 +4424,7 @@ namespace VKIntox
     {
         if (!imageView)
             return;
-        Logger::trace("vkDestroyImageView view=" + convertToString(imageView));
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkDestroyImageView view=" + convertToString(imageView); });
 
         if (!VKIntox::depthCaptureActive())
         {
@@ -4487,7 +4488,7 @@ namespace VKIntox
                                                              const VkAllocationCallbacks* pAllocator,
                                                              VkFramebuffer* pFramebuffer)
     {
-        if (pCreateInfo)
+        if (pCreateInfo && Logger::isLevelEnabled(LogLevel::Trace))
         {
             Logger::trace("vkCreateFramebuffer renderPass=" + convertToString(pCreateInfo->renderPass)
                           + " attachments=" + std::to_string(pCreateInfo->attachmentCount)
@@ -4547,7 +4548,7 @@ namespace VKIntox
     {
         if (!framebuffer)
             return;
-        Logger::trace("vkDestroyFramebuffer framebuffer=" + convertToString(framebuffer));
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkDestroyFramebuffer framebuffer=" + convertToString(framebuffer); });
 
         if (!VKIntox::depthCaptureActive())
         {
@@ -4573,7 +4574,7 @@ namespace VKIntox
                                                           const VkRenderPassBeginInfo* pRenderPassBegin,
                                                           VkSubpassContents contents)
     {
-        if (pRenderPassBegin)
+        if (pRenderPassBegin && Logger::isLevelEnabled(LogLevel::Trace))
         {
             Logger::trace("vkCmdBeginRenderPass cb=" + convertToString(commandBuffer)
                           + " renderPass=" + convertToString(pRenderPassBegin->renderPass)
@@ -4816,7 +4817,7 @@ namespace VKIntox
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdEndRenderPass(VkCommandBuffer commandBuffer)
     {
-        Logger::trace("vkCmdEndRenderPass cb=" + convertToString(commandBuffer));
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCmdEndRenderPass cb=" + convertToString(commandBuffer); });
         if (!VKIntox::depthCaptureActive())
         {
             scoped_lock l(globalLock);
@@ -5701,8 +5702,7 @@ namespace VKIntox
     {
         scoped_lock l(globalLock);
 
-        Logger::trace("vkCreateWaylandSurfaceKHR");
-
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateWaylandSurfaceKHR"; });
         // Capture the wl_display and wl_surface for Wayland input
         if (pCreateInfo && pCreateInfo->display)
             setWaylandDisplay(pCreateInfo->display);
@@ -5727,7 +5727,7 @@ namespace VKIntox
     {
         scoped_lock l(globalLock);
 
-        Logger::trace("vkCreateXlibSurfaceKHR");
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateXlibSurfaceKHR"; });
         if (pCreateInfo && pCreateInfo->window)
             setX11Window((unsigned long)pCreateInfo->window);
 
@@ -5748,7 +5748,7 @@ namespace VKIntox
     {
         scoped_lock l(globalLock);
 
-        Logger::trace("vkCreateXcbSurfaceKHR");
+        VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateXcbSurfaceKHR"; });
         if (pCreateInfo && pCreateInfo->window)
             setX11Window((unsigned long)pCreateInfo->window);
 
