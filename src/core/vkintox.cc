@@ -2921,6 +2921,17 @@ namespace VKIntox
             return passthroughResult;
         }
 
+        if (captureDepth.samples != VK_SAMPLE_COUNT_1_BIT
+            && settingsManager.getDepthCaptureMethod() >= 1
+            && settingsManager.getDepthResolveMode() == 1)
+        {
+            VkResult passthroughResult = logicalDevice->vkd.QueueSubmit(queue, submitCount, pSubmits, fence);
+            reportDeviceLostDiagnostics(logicalDevice, queue, "vkQueueSubmit(sample-zero msaa passthrough)", passthroughResult);
+            if (passthroughResult == VK_ERROR_DEVICE_LOST)
+                panicLayer(logicalDevice, "Vulkan device lost during sample-zero msaa passthrough");
+            return passthroughResult;
+        }
+
         // Validate the tracked maps under globalLock, but drop it before any
         // panic: panicLayer() -> flush() is not allowed under globalLock.
         bool depthValid = false;

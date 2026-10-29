@@ -208,7 +208,9 @@ namespace VKIntox
         std::lock_guard<std::mutex> lock(mutex);
         this->rootConfig = config;
         effects.clear();
-        paramGeneration.fetch_add(1, std::memory_order_release);        std::vector<std::string> effectNames = config->getOption<std::vector<std::string>>("effects");
+        paramGeneration.fetch_add(1, std::memory_order_release);
+
+        std::vector<std::string> effectNames = config->getOption<std::vector<std::string>>("effects");
         std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects");
 
         // Build set for quick lookup
