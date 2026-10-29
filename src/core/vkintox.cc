@@ -1859,7 +1859,8 @@ namespace VKIntox
             void* instanceKey = GetKey(*pInstance);
             instanceDispatchMap[instanceKey] = dispatchTable;
             instanceMap[instanceKey]         = *pInstance;
-            instanceVersionMap[instanceKey]  = modifiedCreateInfo.pApplicationInfo->apiVersion;            if (primaryInstanceDispatchKey == nullptr)
+            instanceVersionMap[instanceKey]  = modifiedCreateInfo.pApplicationInfo->apiVersion;
+            if (primaryInstanceDispatchKey == nullptr)
                 primaryInstanceDispatchKey = const_cast<void*>(instanceKey);
         }
 
@@ -2332,9 +2333,14 @@ namespace VKIntox
                 logicalDevice->vkd.DestroyCommandPool(device, pool, pAllocator);
         });
 
-        // Clean up Wayland input resources (no-op if not initialized)
-        cleanupWaylandKeyboard();
-        cleanupWaylandMouse();
+        // Clean up Wayland input resources only when the last tracked device of
+        // the process is destroyed: a secondary device tearing down (an
+        // embedded page closing) must not kill the input the game still uses.
+        if (deviceMap.empty())
+        {
+            cleanupWaylandKeyboard();
+            cleanupWaylandMouse();
+        }
 
         if (logicalDevice->commandPool != VK_NULL_HANDLE)
         {
@@ -2383,9 +2389,29 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateSwapchainKHR"; });
-        LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
-        if (logicalDevice == nullptr)
+        auto devIt = deviceMap.find(GetKey(device));
+        if (devIt == deviceMap.end() || !devIt->second)
             return VK_ERROR_DEVICE_LOST;
+        LogicalDevice* logicalDevice = devIt->second.get();
+
+        if (!logicalDevice->primaryInstance)
+        {
+            VkSwapchainCreateInfoKHR forwardCreateInfo = *pCreateInfo;
+            VkResult result = logicalDevice->vkd.CreateSwapchainKHR(device, &forwardCreateInfo, pAllocator, swapchain);
+            if (result != VK_SUCCESS || swapchain == nullptr)
+                return result;
+
+            auto logicalSwapchain = std::make_shared<LogicalSwapchain>();
+            logicalSwapchain->logicalDevice       = logicalDevice;
+            logicalSwapchain->swapchainCreateInfo = forwardCreateInfo;
+            logicalSwapchain->passthrough         = true;
+            logicalSwapchain->format              = forwardCreateInfo.imageFormat;
+            logicalSwapchain->imageCount          = 0;
+            logicalSwapchain->useMutableFormat    = false;
+            swapchainMap[(VkSwapchainKHR)(uintptr_t)*swapchain] = logicalSwapchain;
+            Logger::info("swapchain of a secondary-instance device: served real images, presents pass through");
+            return result;
+        }
 
         VkSwapchainCreateInfoKHR modifiedCreateInfo = *pCreateInfo;
 
@@ -2468,7 +2494,6 @@ namespace VKIntox
         logicalSwapchain->useMutableFormat    = useMutableFormat;
 
         VkResult result = logicalDevice->vkd.CreateSwapchainKHR(device, &modifiedCreateInfo, pAllocator, swapchain);
-
         if (result == VK_SUCCESS && swapchain != nullptr && *swapchain != VK_NULL_HANDLE)
         {
             // NOW check if this handle already existed (recreation scenario)
@@ -5869,11 +5894,13 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateWaylandSurfaceKHR"; });
-        // Capture the wl_display and wl_surface for Wayland input
-        if (pCreateInfo && pCreateInfo->display)
-            setWaylandDisplay(pCreateInfo->display);
-        if (pCreateInfo && pCreateInfo->surface)
-            setWaylandSurface(pCreateInfo->surface);
+        if (primaryInstanceDispatchKey && primaryInstanceDispatchKey == GetKey(instance))
+        {
+            if (pCreateInfo && pCreateInfo->display)
+                setWaylandDisplay(pCreateInfo->display);
+            if (pCreateInfo && pCreateInfo->surface)
+                setWaylandSurface(pCreateInfo->surface);
+        }
 
         // Forward to the real implementation via the next layer
         auto nextFunc = (PFN_vkCreateWaylandSurfaceKHR)
@@ -5894,7 +5921,8 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateXlibSurfaceKHR"; });
-        if (pCreateInfo && pCreateInfo->window)
+        if (primaryInstanceDispatchKey && primaryInstanceDispatchKey == GetKey(instance)
+            && pCreateInfo && pCreateInfo->window)
             setX11Window((unsigned long)pCreateInfo->window);
 
         auto nextFunc = (PFN_vkCreateXlibSurfaceKHR)
@@ -5915,7 +5943,8 @@ namespace VKIntox
         scoped_lock l(globalLock);
 
         VKINTOX_LOG_TRACE([&](std::string& s) { s = "vkCreateXcbSurfaceKHR"; });
-        if (pCreateInfo && pCreateInfo->window)
+        if (primaryInstanceDispatchKey && primaryInstanceDispatchKey == GetKey(instance)
+            && pCreateInfo && pCreateInfo->window)
             setX11Window((unsigned long)pCreateInfo->window);
 
         auto nextFunc = (PFN_vkCreateXcbSurfaceKHR)
