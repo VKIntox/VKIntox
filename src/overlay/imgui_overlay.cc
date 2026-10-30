@@ -3,7 +3,6 @@
 #include "vk_handle.hh"
 #include "effects/effect_registry.hh"
 #include "settings_manager.hh"
-#include "reshade_parser.hh"
 #include "logger.hh"
 #include "util.hh"
 #include "mouse_input.hh"
@@ -15,11 +14,9 @@
 #include "shader_sources.hh"
 #include "image.hh"
 #include "memory.hh"
-#include "renderpass.hh"
 #include "shader.hh"
 #include "graphics_pipeline.hh"
 #include "descriptor_set.hh"
-#include "framebuffer.hh"
 #include "overlay/vkintox_icon_png.hh"
 #include "stb_image.h"
 #include "wayland_display.hh"
@@ -29,7 +26,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <fstream>
 #include <filesystem>
 #include <memory>
