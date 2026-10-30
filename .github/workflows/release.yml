@@ -167,7 +167,8 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          pacman -S --noconfirm --needed base-devel meson ninja pkgconf gcc glslang \
+          export CC=clang CXX=clang++
+          pacman -S --noconfirm --needed base-devel meson ninja pkgconf clang glslang \
             vulkan-headers spirv-headers vulkan-icd-loader libx11 libxi libxtst wayland \
             wayland-protocols libxkbcommon glib2 xz
           packaging/scripts/make-source-tarball.sh "$VERSION" build
@@ -222,16 +223,17 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$DISTRO" = "fedora" ]; then
-            dnf install -y rpm-build meson ninja-build gcc-c++ pkgconf-pkg-config glslang \
+            dnf install -y rpm-build meson ninja-build clang pkgconf-pkg-config glslang \
               vulkan-headers spirv-headers-devel libX11-devel libXi-devel libXtst-devel \
               wayland-devel wayland-protocols-devel libxkbcommon-devel glib2-devel xz make
           else
             rpm -e --nodeps busybox-gawk >/dev/null 2>&1 || true
-            zypper --non-interactive install --no-recommends --force-resolution rpm-build meson ninja gcc-c++ \
+            zypper --non-interactive install --no-recommends --force-resolution rpm-build meson ninja clang \
               pkgconf-pkg-config glslang-devel vulkan-headers spirv-headers libX11-devel \
               libXi-devel libXtst-devel wayland-devel wayland-protocols-devel \
               libxkbcommon-devel glib2-devel xz make gawk
           fi
+          export CC=clang CXX=clang++
 
           packaging/scripts/make-source-tarball.sh "$VERSION" build
           mkdir -p rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
@@ -271,9 +273,10 @@ jobs:
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get install -y --no-install-recommends \
-            build-essential debhelper dpkg-dev fakeroot meson ninja-build pkg-config g++ \
+            build-essential debhelper dpkg-dev fakeroot meson ninja-build pkg-config clang \
             glslang-tools libvulkan-dev spirv-headers libx11-dev libxi-dev libxtst-dev libwayland-dev \
             libxkbcommon-dev wayland-protocols libgio-2.0-dev xz-utils
+          export CC=clang CXX=clang++
 
           packaging/scripts/make-source-tarball.sh "$VERSION" build
           mkdir -p "$RUNNER_TEMP/deb-build"

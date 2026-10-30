@@ -38,14 +38,6 @@ static void expect(bool condition, const char* what)
     }
 }
 
-static std::string hex(uint32_t argb)
-{
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "#%02x%02x%02x", (unsigned)(argb & 0xFF), (unsigned)((argb >> 8) & 0xFF),
-                  (unsigned)((argb >> 16) & 0xFF));
-    return buf;
-}
-
 static std::string roleHex(ImGuiM3Role role)
 {
     const ImVec4 c = ImGuiM3Color(role);
@@ -68,22 +60,6 @@ static void testBaselines()
     expect(cp.a2.tone(40) != 0 && cp.a3.tone(40) != 0, "secondary and tertiary palettes resolve");
     expect(cp.n1.tone(6) != 0 && cp.n1.tone(98) != 0 && cp.n2.tone(80) != 0,
            "neutral palettes resolve light and dark surface tones");
-}
-
-// The shipped preset must match material-web byte for byte, since that is what
-// users see in every Material screenshot.
-static void testPresetMatchesReference()
-{
-    ImGuiM3SetThemeFile(nullptr);
-    // The shipped preset is deliberately pink-based Expressive.
-    expect(ImGuiM3GetVariant() == ImGuiM3Variant_Expressive, "preset defaults to Expressive");
-    expect(ImGuiM3IsDark(), "preset defaults to dark");
-    expect(roleHex(ImGuiM3Role_Surface) != roleHex(ImGuiM3Role_Primary), "preset separates surface and primary");
-    expect(roleHex(ImGuiM3Role_SurfaceContainerHigh) != roleHex(ImGuiM3Role_Surface), "preset has surface containers");
-    expect(roleHex(ImGuiM3Role_Primary) != roleHex(ImGuiM3Role_Surface), "preset has an accent/surface split");
-    expect(roleHex(ImGuiM3Role_OnPrimary) != roleHex(ImGuiM3Role_Primary), "preset has readable on-primary text");
-    expect(roleHex(ImGuiM3Role_Error) != roleHex(ImGuiM3Role_Surface), "preset has an error role");
-    expect(roleHex(ImGuiM3Role_Outline) != roleHex(ImGuiM3Role_Surface), "preset has an outline role");
 }
 
 // --- 2. The .colors file ----------------------------------------------------

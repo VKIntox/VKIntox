@@ -29,7 +29,7 @@
         {
           default = self.packages.${system}.vkintox;
 
-          vkintox = pkgs.stdenv.mkDerivation {
+          vkintox = pkgs.clangStdenv.mkDerivation {
             pname = "vkintox";
             version = pkgs.lib.removePrefix "v" (pkgs.lib.strings.trim (builtins.readFile "${self}/VERSION"));
 

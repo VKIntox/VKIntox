@@ -166,7 +166,6 @@ namespace VKIntox
         ImGui::Spacing();
         ImGui::M3CardBegin("set_appearance", "Appearance", Icon::PaletteUtf8);
 
-        const float d = ImGuiM3GetMetrics().density;
         // the three theme pages, as one connected pill row
         {
             static const char* const themePills[] = { "Colors", "Blur", "Shape and metrics", "Navigation bar" };
