@@ -6,7 +6,6 @@
 #include "input_blocker.hh"
 #include "wayland_display.hh"
 
-#include <fstream>
 #include <filesystem>
 #include <chrono>
 #include <numeric>
@@ -529,42 +528,6 @@ namespace VKIntox
         }
     }
 
-    void ImGuiOverlay::saveDiagnosticsCsv()
-    {
-        std::error_code ec;
-        const std::string baseDir = ConfigSerializer::getBaseConfigDir();
-        if (baseDir.empty())
-        {
-            pushToast(LogLevel::Warn, "Diagnostics could not resolve the config directory.");
-            return;
-        }
-        const std::filesystem::path dir = std::filesystem::path(baseDir) / "diagnostics";
-        std::filesystem::create_directories(dir, ec);
-
-        std::time_t t = std::time(nullptr);
-        std::tm tmLocal{};
-        localtime_r(&t, &tmLocal);
-        char stamp[32];
-        std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmLocal);
-
-        const std::filesystem::path file = dir / (std::string("framestats-") + stamp + ".csv");
-        std::ofstream out(file);
-        if (!out)
-        {
-            pushToast(LogLevel::Error, "Could not write the diagnostics CSV.");
-            return;
-        }
-        out << "frame_index,frame_time_ms\n";
-        const size_t count = frameTimeHistory.size();
-        for (size_t i = 0; i < count; ++i)
-            out << i << ',' << frameTimeHistory.get(i) << '\n';
-        out.flush();
-        if (!out)
-            pushToast(LogLevel::Error, "The diagnostics CSV write failed partway.");
-        else
-            pushToast(LogLevel::Info, "Saved " + std::to_string(count) + " frames to " + file.string());
-    }
-
     void ImGuiOverlay::renderDiagnosticsView()
     {        // Pushed page: the crumb leads back to Settings, where it lives now.
         if (UI::BreadcrumbBar("Go back", Icon::ChevronLeftUtf8))
@@ -592,9 +555,6 @@ namespace VKIntox
             UI::PushSupport();
             ImGui::TextDisabled("(1%% low: %.0f   ·   0.1%% low: %.0f)", fps1Low, fps01Low);
             UI::PopSupport();
-            ImGui::SameLine();
-            if (ImGui::M3Button("Save frame stats", ImGuiM3Button_Outlined, ImVec2(0.0f, 0.0f)))
-                saveDiagnosticsCsv();
         }
         ImGui::Spacing();
         drawGraph("Frame Time", "##frametime", frameTimeHistory, 0.0f, 50.0f, "%.1f ms", UI::GraphColor(0));
