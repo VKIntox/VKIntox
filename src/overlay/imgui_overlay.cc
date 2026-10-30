@@ -603,7 +603,7 @@ namespace VKIntox
             ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
             ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
 
-            char label[32];
+            char label[40];
             snprintf(label, sizeof(label), "##vkintoxToast%zu", i);
             const bool open = ImGui::Begin(label, nullptr, flags);
 

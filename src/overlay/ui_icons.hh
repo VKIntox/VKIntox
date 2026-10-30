@@ -11,7 +11,7 @@
 // tens of MB and a slow startup. Add a name here and to GlyphRanges when a new
 // icon is needed; no subset has to be regenerated.
 //
-//   fonttools varLib.instancer 'MaterialSymbolsRounded[FILL,GRAD,opsz,wght].ttf' \
+//   fonttools varLib.instancer 'MaterialSymbolsRounded[FILL,GRAD,opsz,wght].ttf'
 //       wght=400 FILL=0 GRAD=0 opsz=24 -o assets/font/MaterialSymbolsRounded.ttf
 
 #include "vendor/imgui/imgui_m3.h"

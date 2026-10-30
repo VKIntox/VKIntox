@@ -596,7 +596,7 @@ namespace VKIntox
                     if (added)
                     {
                         const int dupCount = duplicateCountFor(e.type);
-                        char dupText[8];
+                        char dupText[12];
                         std::snprintf(dupText, sizeof(dupText), "%d", dupCount);
                         // smaller than the row so the circles keep a vertical margin
                         const float stepSize = 30.0f * d;
