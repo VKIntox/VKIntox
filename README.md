@@ -12,7 +12,7 @@
   <a href="https://discord.gg/HrUrzXAxPV">
     <img src="https://img.shields.io/badge/discord-server-5865f2?style=flat-square&logo=discord&logoColor=white" alt="discord server">
   </a>
-  <a href="https://github.com/VKIntox/VKIntoxactions/workflows/ci.yml">
+  <a href="https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml">
     <img src="https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI">
   </a>
 </p>
