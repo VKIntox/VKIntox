@@ -19,7 +19,7 @@ namespace VKIntox
     class ReshadeUniform
     {
     public:
-        void virtual update(void* mapedBuffer) = 0;
+        void virtual update(void* mappedBuffer) = 0;
         virtual ~ReshadeUniform(){};
 
     protected:
@@ -33,7 +33,7 @@ namespace VKIntox
     {
     public:
         FrameTimeUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~FrameTimeUniform();
 
     private:
@@ -44,7 +44,7 @@ namespace VKIntox
     {
     public:
         FrameCountUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~FrameCountUniform();
 
     private:
@@ -55,7 +55,7 @@ namespace VKIntox
     {
     public:
         DateUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~DateUniform();
     };
 
@@ -63,7 +63,7 @@ namespace VKIntox
     {
     public:
         TimerUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~TimerUniform();
 
     private:
@@ -74,7 +74,7 @@ namespace VKIntox
     {
     public:
         PingPongUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~PingPongUniform();
 
     private:
@@ -92,7 +92,7 @@ namespace VKIntox
     {
     public:
         RandomUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~RandomUniform();
 
     private:
@@ -104,7 +104,7 @@ namespace VKIntox
     {
     public:
         KeyUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~KeyUniform();
     };
 
@@ -112,7 +112,7 @@ namespace VKIntox
     {
     public:
         MouseButtonUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~MouseButtonUniform();
     };
 
@@ -120,7 +120,7 @@ namespace VKIntox
     {
     public:
         MousePointUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~MousePointUniform();
     };
 
@@ -128,7 +128,7 @@ namespace VKIntox
     {
     public:
         MouseDeltaUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         virtual ~MouseDeltaUniform();
     };
 
@@ -136,7 +136,7 @@ namespace VKIntox
     {
     public:
         DepthUniform(reshadefx::uniform_info uniformInfo);
-        void virtual update(void* mapedBuffer) override;
+        void virtual update(void* mappedBuffer) override;
         void setDepthAvailable(bool available) { depthAvailable = available; }
         virtual ~DepthUniform();
 

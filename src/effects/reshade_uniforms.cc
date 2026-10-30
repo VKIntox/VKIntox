@@ -104,13 +104,13 @@ namespace VKIntox
         offset    = uniformInfo.offset;
         size      = uniformInfo.size;
     }
-    void FrameTimeUniform::update(void* mapedBuffer)
+    void FrameTimeUniform::update(void* mappedBuffer)
     {
         auto                                     currentFrame = std::chrono::high_resolution_clock::now();
         std::chrono::duration<float, std::milli> duration     = currentFrame - lastFrame;
         lastFrame                                             = currentFrame;
         float frametime                                       = duration.count();
-        std::memcpy((uint8_t*) mapedBuffer + offset, &(frametime), sizeof(float));
+        std::memcpy((uint8_t*) mappedBuffer + offset, &(frametime), sizeof(float));
     }
     FrameTimeUniform::~FrameTimeUniform()
     {
@@ -127,9 +127,9 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void FrameCountUniform::update(void* mapedBuffer)
+    void FrameCountUniform::update(void* mappedBuffer)
     {
-        std::memcpy((uint8_t*) mapedBuffer + offset, &(count), sizeof(int32_t));
+        std::memcpy((uint8_t*) mappedBuffer + offset, &(count), sizeof(int32_t));
         count++;
     }
     FrameCountUniform::~FrameCountUniform()
@@ -147,7 +147,7 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void DateUniform::update(void* mapedBuffer)
+    void DateUniform::update(void* mappedBuffer)
     {
         // Date only changes once per second — cache the result and only
         // recompute when the second changes. Saves ~234 localtime_r calls/sec
@@ -169,7 +169,7 @@ namespace VKIntox
             cachedDate[3] = static_cast<float>((currentTimeBuf.tm_hour * 60 + currentTimeBuf.tm_min) * 60 + currentTimeBuf.tm_sec);
         }
 
-        std::memcpy((uint8_t*) mapedBuffer + offset, cachedDate, sizeof(float) * 4);
+        std::memcpy((uint8_t*) mappedBuffer + offset, cachedDate, sizeof(float) * 4);
     }
     DateUniform::~DateUniform()
     {
@@ -187,12 +187,12 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void TimerUniform::update(void* mapedBuffer)
+    void TimerUniform::update(void* mappedBuffer)
     {
         auto                                     currentFrame = std::chrono::high_resolution_clock::now();
         std::chrono::duration<float, std::milli> duration     = currentFrame - start;
         float                                    timer        = duration.count();
-        std::memcpy((uint8_t*) mapedBuffer + offset, &(timer), sizeof(float));
+        std::memcpy((uint8_t*) mappedBuffer + offset, &(timer), sizeof(float));
     }
     TimerUniform::~TimerUniform()
     {
@@ -240,7 +240,7 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void PingPongUniform::update(void* mapedBuffer)
+    void PingPongUniform::update(void* mappedBuffer)
     {
         auto currentFrame = std::chrono::high_resolution_clock::now();
 
@@ -267,7 +267,7 @@ namespace VKIntox
                 currentValue[0] = min, currentValue[1] = 1.0f;
             }
         }
-        std::memcpy((uint8_t*) mapedBuffer + offset, currentValue, sizeof(float) * 2);
+        std::memcpy((uint8_t*) mappedBuffer + offset, currentValue, sizeof(float) * 2);
     }
     PingPongUniform::~PingPongUniform()
     {
@@ -296,12 +296,12 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void RandomUniform::update(void* mapedBuffer)
+    void RandomUniform::update(void* mappedBuffer)
     {
         if (min > max) std::swap(min, max);
         std::uniform_int_distribution<int32_t> dist(min, max);
         int32_t value = dist(tlRng);
-        std::memcpy((uint8_t*) mapedBuffer + offset, &(value), sizeof(int32_t));
+        std::memcpy((uint8_t*) mappedBuffer + offset, &(value), sizeof(int32_t));
     }
     RandomUniform::~RandomUniform()
     {
@@ -318,10 +318,10 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void KeyUniform::update(void* mapedBuffer)
+    void KeyUniform::update(void* mappedBuffer)
     {
         VkBool32 keyDown = VK_FALSE; // TODO
-        std::memcpy((uint8_t*) mapedBuffer + offset, &(keyDown), sizeof(VkBool32));
+        std::memcpy((uint8_t*) mappedBuffer + offset, &(keyDown), sizeof(VkBool32));
     }
     KeyUniform::~KeyUniform()
     {
@@ -338,10 +338,10 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void MouseButtonUniform::update(void* mapedBuffer)
+    void MouseButtonUniform::update(void* mappedBuffer)
     {
         VkBool32 keyDown = VK_FALSE; // TODO
-        std::memcpy((uint8_t*) mapedBuffer + offset, &(keyDown), sizeof(VkBool32));
+        std::memcpy((uint8_t*) mappedBuffer + offset, &(keyDown), sizeof(VkBool32));
     }
     MouseButtonUniform::~MouseButtonUniform()
     {
@@ -358,10 +358,10 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void MousePointUniform::update(void* mapedBuffer)
+    void MousePointUniform::update(void* mappedBuffer)
     {
         float point[2] = {0.0f, 0.0f}; // TODO
-        std::memcpy((uint8_t*) mapedBuffer + offset, point, sizeof(float) * 2);
+        std::memcpy((uint8_t*) mappedBuffer + offset, point, sizeof(float) * 2);
     }
     MousePointUniform::~MousePointUniform()
     {
@@ -378,10 +378,10 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void MouseDeltaUniform::update(void* mapedBuffer)
+    void MouseDeltaUniform::update(void* mappedBuffer)
     {
         float delta[2] = {0.0f, 0.0f}; // TODO
-        std::memcpy((uint8_t*) mapedBuffer + offset, delta, sizeof(float) * 2);
+        std::memcpy((uint8_t*) mappedBuffer + offset, delta, sizeof(float) * 2);
     }
     MouseDeltaUniform::~MouseDeltaUniform()
     {
@@ -398,10 +398,10 @@ namespace VKIntox
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
     }
-    void DepthUniform::update(void* mapedBuffer)
+    void DepthUniform::update(void* mappedBuffer)
     {
         VkBool32 hasDepth = depthAvailable ? VK_TRUE : VK_FALSE;
-        std::memcpy((uint8_t*) mapedBuffer + offset, &(hasDepth), sizeof(VkBool32));
+        std::memcpy((uint8_t*) mappedBuffer + offset, &(hasDepth), sizeof(VkBool32));
     }
     DepthUniform::~DepthUniform()
     {
