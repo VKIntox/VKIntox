@@ -2346,10 +2346,6 @@ namespace VKIntox
         gatherDepthInfo();
         applyDepthPinRequests();
 
-        // Frame time, FPS and GPU stats are sampled from launch, not from the
-        // first time the Diagnostics tab happens to be opened.
-        sampleDiagnostics();
-
         // Bottom navigation dock: a pill bar under the content. The active
         // destination shows its label; the rest show only their icon. Its height
         // comes off the content region below.
