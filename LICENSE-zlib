@@ -1,12 +1,3 @@
-zlib license — inherited vkBasalt code
-======================================
-
-vkBasalt (https://github.com/DadSchoorse/vkBasalt), copyright 2019-2022
-Georg Lehmann, was licensed under the zlib license. code inherited
-unchanged from it keeps that license, given below. everything else in
-VKIntox, including modified versions of inherited code, is GPL-3.0-or-later —
-see LICENSE. submodules keep their own licenses.
-
 Copyright (c) 2019 - 2022 Georg Lehmann
 
 This software is provided 'as-is', without any express or implied
