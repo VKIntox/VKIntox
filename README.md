@@ -7,13 +7,41 @@
 <p align="center">Linux-first Vulkan PostFX layer with actually functioning depth effects, and lots more features...</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.2-b23a48?style=flat-square" alt="version">
-  <img src="https://img.shields.io/badge/license-zlib-6c7a57?style=flat-square" alt="license">
+  <a href="https://github.com/VKIntox/VKIntox/releases/latest">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="Release" src="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+    </picture>
+  </a>
+  <a href="https://github.com/VKIntox/VKIntox/blob/main/LICENSE">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/license/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="License" src="https://shieldcn.dev/github/license/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+    </picture>
+  </a>
+  <a href="https://github.com/VKIntox/VKIntox/stargazers">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/stars/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="GitHub Stars" src="https://shieldcn.dev/github/stars/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+    </picture>
+  </a>
+  <a href="https://github.com/VKIntox/VKIntox/network">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/forks/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="GitHub Forks" src="https://shieldcn.dev/github/forks/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+    </picture>
+  </a>
   <a href="https://discord.gg/HrUrzXAxPV">
-    <img src="https://img.shields.io/badge/discord-server-5865f2?style=flat-square&logo=discord&logoColor=white" alt="discord server">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/discord/members/HrUrzXAxPV.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="Discord Members" src="https://shieldcn.dev/discord/members/HrUrzXAxPV.svg?variant=secondary&size=sm&mode=light">
+    </picture>
   </a>
   <a href="https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml">
-    <img src="https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="CI" src="https://shieldcn.dev/github/ci/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+    </picture>
   </a>
 </p>
 
