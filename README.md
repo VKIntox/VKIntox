@@ -78,6 +78,14 @@ enable with `ENABLE_VKINTOX=1 /path/to/game-executable`.
 - Flatpak installs assume your game is built with the 26.08 FreeDesktop SDK. If that's not the case, the game will ignore VKIntox and won't load it. For that, locally build maybe?
 - Wine games are not widely tested, but are confirmed functioning well enough
 
+## Star history
+
+<p align="center">
+  <a href="https://star-history.com/#VKIntox/VKIntox&Timeline">
+    <img src="https://api.star-history.com/svg?repos=VKIntox/VKIntox&type=Timeline" alt="star history chart">
+  </a>
+</p>
+
 ## Credits
 
 vkShade and vkBasalt for the base of VKIntox, daaboulex for the Wayland overlay, crosire for the ReShade compilers, and Dear ImGui for making the in-game overlay possible.
