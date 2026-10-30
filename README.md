@@ -116,10 +116,10 @@ enable with `ENABLE_VKINTOX=1 /path/to/game-executable`.
 
 ## Credits
 
-vkShade and vkBasalt for the base of VKIntox, daaboulex for the Wayland overlay, crosire for the ReShade compilers, and Dear ImGui for making the in-game overlay possible.
+[vkShade](https://github.com/slobodaapl/vkShade) and [vkBasalt](https://github.com/DadSchoorse/vkBasalt) for the base of VKIntox, daaboulex for the Wayland overlay, crosire for the ReShade compilers, and Dear ImGui for making the in-game overlay possible.
 
 ## License
 
-Licensed under the zlib license, with submodules having their own licenses.
+All original VKIntox code/modifications are licensed under [**GPL-3.0-or-later**](LICENSE). Code inherited from [vkBasalt](https://github.com/DadSchoorse/vkBasalt), [vkBasalt_overlay](https://github.com/Boux/vkBasalt_overlay) and [vkDaedalus](https://github.com/Daaboulex/vkDaedalus) are licensed under [the zlib license](LICENSE-zlib). Modified versions of inherited code fall GPL-3.0-or-later. Submodules may have their own separate licenses and/or terms.
 
 <p align="center">made with ♡ by <a href="https://github.com/buwryme">buwryme</a>. join the <a href="https://discord.gg/HrUrzXAxPV">discord server!</a></p>
