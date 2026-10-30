@@ -19,12 +19,14 @@
       <img alt="Release" src="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
     </picture>
   </a>
-  <a href="https://github.com/VKIntox/VKIntox/blob/main/LICENSE">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/license/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
-        <img alt="License" src="https://shieldcn.dev/github/license/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light&nocache=1">
-      </picture>
-    </a>
+  <a href="https://github.com/VKIntox/VKIntox#License">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" 
+              srcset="https://shieldcn.dev/badge/license-GPL--3.0%20%7C%20Zlib.svg?variant=secondary&size=sm&mode=dark&logo=lu:scale">
+      <img alt="License: GPL-3.0 | Zlib" 
+           src="https://shieldcn.dev/badge/license-GPL--3.0%20%7C%20Zlib.svg?variant=secondary&size=sm&mode=light&logo=lu:scale&nocache=1">
+    </picture>
+  </a>
   <a href="https://github.com/VKIntox/VKIntox/stargazers">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/stars/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
@@ -126,6 +128,6 @@ enable with `ENABLE_VKINTOX=1 /path/to/game-executable`.
 
 ## License
 
-All original VKIntox code/modifications are licensed under [**GPL-3.0-or-later**](LICENSE). Code inherited from [vkBasalt](https://github.com/DadSchoorse/vkBasalt), [vkBasalt_overlay](https://github.com/Boux/vkBasalt_overlay) and [vkDaedalus](https://github.com/Daaboulex/vkDaedalus) are licensed under [the zlib license](LICENSE-zlib). Modified versions of inherited code fall GPL-3.0-or-later. Submodules may have their own separate licenses and/or terms.
+All original VKIntox code/modifications are licensed under [**GPL-3.0-or-later**](LICENSE). Code inherited from [vkBasalt](https://github.com/DadSchoorse/vkBasalt), [vkBasalt_overlay](https://github.com/Boux/vkBasalt_overlay) and [vkDaedalus](https://github.com/Daaboulex/vkDaedalus) are licensed under [**the Zlib license**](LICENSE-zlib). Modified versions of inherited code fall under GPL-3.0-or-later. Submodules may have their own separate licenses and/or terms.
 
 <p align="center">made with ♡ by <a href="https://github.com/buwryme">buwryme</a>. join the <a href="https://discord.gg/HrUrzXAxPV">discord server!</a></p>
