@@ -7,6 +7,12 @@
 <p align="center">Linux-first Vulkan PostFX layer with actually functioning depth effects, and lots more features...</p>
 
 <p align="center">
+  <a href="https://github.com/VKIntox/VKIntox/blob/main/VERSION">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/version-v0.2.2.svg?variant=secondary&size=sm&mode=dark&logo=git">
+      <img alt="Version" src="https://shieldcn.dev/badge/version-v0.2.2.svg?variant=secondary&size=sm&mode=light&logo=git">
+    </picture>
+  </a>
   <a href="https://github.com/VKIntox/VKIntox/releases/latest">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
@@ -14,11 +20,11 @@
     </picture>
   </a>
   <a href="https://github.com/VKIntox/VKIntox/blob/main/LICENSE">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/license/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
-      <img alt="License" src="https://shieldcn.dev/github/license/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
-    </picture>
-  </a>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/license/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+        <img alt="License" src="https://shieldcn.dev/github/license/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light&nocache=1">
+      </picture>
+    </a>
   <a href="https://github.com/VKIntox/VKIntox/stargazers">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/stars/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
