@@ -8,7 +8,7 @@ URL:            https://github.com/VKIntox/VKIntox
 Source0:        %{name}-%{version}.tar.xz
 
 BuildRequires:  meson
-BuildRequires:  gcc-c++
+BuildRequires:  clang
 BuildRequires:  pkgconf-pkg-config
 BuildRequires:  vulkan-headers
 BuildRequires:  libX11-devel

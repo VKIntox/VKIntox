@@ -7,7 +7,7 @@ Build-Depends:
  meson,
  ninja-build,
  pkg-config,
- g++,
+ clang,
  glslang-tools,
  libvulkan-dev,
  spirv-headers,
