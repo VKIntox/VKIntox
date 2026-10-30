@@ -7,7 +7,7 @@
 <p align="center">Linux-first Vulkan PostFX layer with actually functioning depth effects, and lots more features...</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.1-b23a48?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-0.2.2-b23a48?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/license-zlib-6c7a57?style=flat-square" alt="license">
   <a href="https://discord.gg/HrUrzXAxPV">
     <img src="https://img.shields.io/badge/discord-server-5865f2?style=flat-square&logo=discord&logoColor=white" alt="discord server">
