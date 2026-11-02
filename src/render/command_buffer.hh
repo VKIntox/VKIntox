@@ -3,11 +3,11 @@
 #include <vector>
 #include <memory>
 
-#include "vulkan_include.hh"
+#include "render/device/vulkan_include.hh"
 
-#include "logical_device.hh"
+#include "render/device/logical_device.hh"
 
-#include "effects/effect.hh"
+#include "effects/runtime/effect.hh"
 namespace VKIntox
 {
     struct LogicalSwapchain;

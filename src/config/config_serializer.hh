@@ -1,0 +1,244 @@
+#ifndef CONFIG_SERIALIZER_HPP_INCLUDED
+#define CONFIG_SERIALIZER_HPP_INCLUDED
+
+#include <string>
+#include <vector>
+#include <map>
+
+#include "effects/runtime/effect_config.hh"
+
+namespace VKIntox
+{
+    // Serialized parameter format for config files
+    struct ConfigParam
+    {
+        std::string effectName;
+        std::string paramName;
+        std::string value;
+    };
+
+    struct ShaderProfileInstance
+    {
+        std::string name;
+        std::string type;  // ReShade filename or built-in id
+        bool enabled = true;
+    };
+
+    struct ShaderProfileData
+    {
+        std::vector<ConfigParam> params;
+        bool hasTechniques = false;
+        std::vector<std::string> techniques;
+        std::vector<std::string> techniqueSorting;
+        bool hasEffectList = false;
+        std::vector<std::string> effects;
+        std::vector<std::string> disabledEffects;
+        // [VKINTOX] section seen: VKIntox wrote this profile, so the
+        // instance list is the exact stack and merges nothing
+        bool owned = false;
+        std::vector<ShaderProfileInstance> instances;
+    };
+
+    // global VKIntox settings (from VKIntox.conf); construct through
+    // DefaultConfig::appSettings so these members are never left uninitialised.
+    struct VkBasaltSettings
+    {
+        int maxEffects;
+        bool overlayBlockInput;
+        // Route file pickers and other integrations through the XDG desktop
+        // portals when the session provides them, instead of the in-overlay
+        // fallbacks. Off is for sessions with no portal service.
+        bool usePortalIntegration;
+        // Navigation bar: 0 = top, 1 = bottom. Style: 0 = dock, 1 = pill row.
+        int navPosition;
+        int navStyle;
+        std::string toggleKey;
+        std::string reloadKey;
+        std::string overlayKey;
+        bool enableOnLaunch;
+        bool depthCapture;
+        bool autoApply;  // Auto-apply changes without clicking Apply
+        int autoApplyDelay;  // ms delay before auto-applying changes
+        bool showDebugWindow;  // Show debug window with raw effect registry data
+        // Split effect parameters into their own tabbed card at the bottom
+        // (default) or keep them inline in the effect list (all-in-one card).
+        bool separateEffectParams;
+        // Depth buffer resolve mode for MSAA sources (Advanced tab).
+        // 0 = auto (prefer average, fall back to sample-zero),
+        // 1 = sample-zero, 2 = average. Only applied when supported by the device.
+        int depthResolveMode;
+        // How a depth change rebuilds the resolve path and command buffers
+        // (Advanced tab). 0 = safe: idle the queue first, so nothing in flight
+        // references the targets being freed. 1 = fast: rebuild behind the
+        // layer's own submit fences without idling; quicker to react, but a
+        // driver can fault if the app still references an old resolve target.
+        int depthRebuildMode;
+        // Optional manual depth buffer pin (Advanced tab). When non-empty, the
+        // layer pins depth capture to this tracked image view key instead of
+        // using the best-candidate heuristic. "" = auto-promotion.
+        std::string depthManualPin;
+        // Workaround for transient multisampled depth attachments (Advanced tab).
+        // When true, VKIntox injects its own depth resolve attachment so the
+        // resolved depth survives past the render pass for effects to sample.
+        bool depthTransientWorkaround;
+        // Depth capture method for persistent storage path (Advanced tab).
+        // 0 = off (use legacy per-swapchain resolve only),
+        // 1 = Option A: RenderPassEnd hook (recommended, blit inline at CmdEndRenderPass),
+        // 2 = Option B: QueueSubmit interception (robust fallback, inject blit at submit).
+        int depthCaptureMethod;
+
+        // --- Alternative depth buffer handling ---
+        // Depth source channel/mode selection (Advanced tab).
+        // Comprehensive support for deferred rendering depth encodings:
+        //   0 = Luminance/Red (standard Vulkan depth from R channel)
+        //   1 = Alpha (alpha-encoded depth)
+        //   2 = Packed RGB (depth distributed across RGB channels)
+        //   3 = Logarithmic (log-encoded depth, needs linearization)
+        //   4 = View-space Z (raw view-space Z value)
+        //   5 = Normalized Device Coordinates / NDC
+        //   6 = Reversed-Z (inverted depth range for precision)
+        int depthSourceChannel;
+        // Invert depth values after reading from source.
+        // When enabled, depth = 1.0 - depth (flips near/far planes).
+        bool depthInvert;
+        // Mirror the depth image vertically (uv.y -> 1 - uv.y) for upside-down
+        // renderers such as macOS builds running under Darling.
+        bool depthFlip;
+        // Mirror the depth image horizontally (uv.x -> 1 - uv.x).
+        bool depthFlop;
+    };
+
+    // Shader Manager configuration (from shader_manager.conf)
+    struct ShaderManagerConfig
+    {
+        std::vector<std::string> parentDirectories;       // User-added parent dirs to scan
+        std::vector<std::string> discoveredShaderPaths;   // Auto-discovered Shaders/ dirs
+        std::vector<std::string> discoveredTexturePaths;  // Auto-discovered Textures/ dirs
+    };
+
+    class ConfigSerializer
+    {
+    public:
+        // Save a game-specific config to ~/.config/VKIntox/configs/<name>.conf
+        // effects: all effects in the list (enabled + disabled)
+        // disabledEffects: effects that are unchecked (won't be rendered)
+        // params: all effect parameters
+        // effectPaths: map of effect name to shader file path (for ReShade effects with custom names)
+        // preprocessorDefs: preprocessor definitions to save (format: effectName#MACRO = value)
+        static bool saveConfig(
+            const std::string& configName,
+            const std::vector<std::string>& effects,
+            const std::vector<std::string>& disabledEffects,
+            const std::vector<ConfigParam>& params,
+            const std::map<std::string, std::string>& effectPaths = {},
+            const std::vector<PreprocessorDefinition>& preprocessorDefs = {});
+
+        // Get the base config directory path (~/.config/VKIntox/)
+        static std::string getBaseConfigDir();
+
+        // Get the configs directory path (~/.config/VKIntox/configs/)
+        static std::string getConfigsDir();
+
+        // List available config files
+        static std::vector<std::string> listConfigs();
+
+        // Delete a config file
+        static bool deleteConfig(const std::string& configName);
+
+        // Default config management
+        static bool setDefaultConfig(const std::string& configName);
+        static std::string getDefaultConfig();
+        static std::string getDefaultConfigPath();
+
+        // Global settings management (VKIntox.conf)
+        static VkBasaltSettings loadSettings();
+        static bool saveSettings(const VkBasaltSettings& settings);
+
+        // Shader Manager config (shader_manager.conf)
+        static ShaderManagerConfig loadShaderManagerConfig();
+        static bool saveShaderManagerConfig(const ShaderManagerConfig& config);
+
+        // Ensure VKIntox.conf exists with defaults (call early at startup)
+        static void ensureConfigExists();
+
+        // Write the running layer version to <config>/version. Keeps the config
+        // dir identifiable when the setup script did not seed it, and refreshes
+        // a stale file after an upgrade.
+        static bool ensureVersionFile();
+
+        // Merge a legacy reshade/packages/ tree into reshade/ once, keeping any
+        // file already present. Call early at startup, before shader discovery.
+        static void migrateLegacyReshadePackages();
+
+        // Expand shader root directories to include their subdirectories, so a
+        // shader can include a header that lives inside another package's folder.
+        static std::vector<std::string> expandShaderIncludePaths(const std::vector<std::string>& roots);
+
+        // Detect the game executable name from /proc/self/exe
+        static std::string detectGameName();
+
+        // Check if a per-game config exists and return the game name if so.
+        // Returns empty string if no per-game config was found.
+        static std::string autoDetectConfig();
+
+        // --- Per-app profile system ---
+
+        // Get the fixed config path for a game: configs/<gameName>.conf
+        static std::string getProfilePath(const std::string& gameName);
+
+        // Ensure the default profile for a game exists (creates with empty
+        // effects list if missing). Returns the profile path.
+        static std::string ensureGameProfile(const std::string& gameName);
+
+        static std::string getShaderProfilePath(const std::string& gameName, const std::string& profileName);
+
+        // Hidden sidecar beside a shader profile holding VKIntox-only state:
+        // the ordered instance list and values for disabled effects. ReShade
+        // never reads it, so the .ini stays cross-compatible.
+        static std::string getShaderProfileSidecarPath(const std::string& path);
+
+        static std::vector<std::string> listShaderProfilesForGame(const std::string& gameName);
+        static bool setLastShaderProfile(const std::string& gameName, const std::string& profileName);
+        static std::string getLastShaderProfile(const std::string& gameName);
+        static bool createShaderProfile(const std::string& gameName, const std::string& profileName,
+                                        const std::string& copyFromProfile = "");
+        static bool deleteShaderProfile(const std::string& gameName, const std::string& profileName);
+
+        // A usable preset name: non-empty, no path separators, no '@' (the
+        // game/profile separator) and no control bytes.
+        static bool isValidShaderProfileName(const std::string& name);
+
+        // Rename a preset in place, keeping its game-specific or imported-global
+        // kind, carrying its sidecar, and repointing the game's last-used file.
+        // Refuses an invalid or already-taken name and rolls back a partial
+        // rename, so on failure every file is exactly where it started.
+        static bool renameShaderProfile(const std::string& gameName, const std::string& oldName,
+                                        const std::string& newName);
+
+        // Copy an external ReShade preset into configs/shaders as a global
+        // (game-agnostic) <name>.ini. never overwrites: an existing name gets a
+        // numeric suffix. returns the imported profile name, or empty on failure.
+        static std::string importShaderProfile(const std::string& sourcePath);
+        static bool saveShaderProfile(const std::string& path, const std::vector<ConfigParam>& params,
+                                      const std::vector<std::string>& effects = {},
+                                      const std::vector<std::string>& disabledEffects = {},
+                                      const std::map<std::string, std::string>& effectPaths = {},
+                                      const std::vector<std::string>& enabledTechniques = {},
+                                      const std::vector<std::string>& techniqueSorting = {},
+                                      const std::vector<ConfigParam>& disabledEffectParams = {});
+        static std::vector<ConfigParam> loadShaderProfile(const std::string& path);
+        static ShaderProfileData loadShaderProfileData(const std::string& path);
+
+        // Save directly to a profile path (bypasses config name lookup)
+        static bool saveToPath(
+            const std::string& filePath,
+            const std::vector<std::string>& effects,
+            const std::vector<std::string>& disabledEffects,
+            const std::vector<ConfigParam>& params,
+            const std::map<std::string, std::string>& effectPaths = {},
+            const std::vector<PreprocessorDefinition>& preprocessorDefs = {});
+    };
+
+} // namespace VKIntox
+
+#endif // CONFIG_SERIALIZER_HPP_INCLUDED

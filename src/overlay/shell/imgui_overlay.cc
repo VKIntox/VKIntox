@@ -1,0 +1,2676 @@
+#include "overlay/shell/imgui_overlay.hh"
+
+#include "render/device/vk_handle.hh"
+#include "effects/runtime/effect_registry.hh"
+#include "config/settings_manager.hh"
+#include "util/logger.hh"
+#include "util/util.hh"
+#include "input/common/mouse_input.hh"
+#include "input/common/keyboard_input.hh"
+#include "input/common/input_blocker.hh"
+#include "config/config_serializer.hh"
+#include "config/default_config.hh"
+#include "util/async_writer.hh"
+#include "effects/compiler/shader_sources.hh"
+#include "render/resources/image.hh"
+#include "render/device/memory.hh"
+#include "render/pipeline/shader.hh"
+#include "render/pipeline/graphics_pipeline.hh"
+#include "render/resources/descriptor_set.hh"
+#include "overlay/theme/vkintox_icon_png.hh"
+#include "vendor/stb/stb_image.h"
+#include "input/wayland/wayland_display.hh"
+#include "input/wayland/wayland_pointer_constraints.hh"
+#include "input/wayland/wayland_input_common.hh"
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <fstream>
+#include <filesystem>
+#include <memory>
+
+#include "vendor/imgui/imgui.h"
+#include "vendor/imgui/imgui_internal.h"
+#include "vendor/imgui/imgui_m3.h"
+#include "overlay/theme/ui_theme.hh"
+#include "overlay/theme/ui_icons.hh"
+#include "overlay/shell/ui_dialog.hh"
+#include "vendor/imgui/backends/imgui_impl_vulkan.h"
+
+namespace VKIntox
+{
+    namespace
+    {
+        // compact like a macOS titlebar: just enough for the brand row.
+        float OverlayTitleBarHeight()
+        {
+            return 44.0f * ImGuiM3GetMetrics().density;
+        }
+
+        void overlayTitleHeightConstraint(ImGuiSizeCallbackData* data)
+        {
+            data->DesiredSize.y = std::max(data->DesiredSize.y, OverlayTitleBarHeight() + 1.0f);
+        }
+
+        // Backdrop blur tuning. Capture at half resolution, then run a separable
+        // Gaussian with a fixed 9-tap kernel. Each "pass" is a horizontal draw
+        // followed by a vertical draw, so the ping-pong always lands back in
+        // image[0] and the sampled texture never depends on the pass parity.
+        constexpr uint32_t kBlurDownsample = 2;
+        constexpr float    kBlurSigma = 2.0f;
+
+        // Shell appear/disappear. Same clock, rise and bezier as the M3 dialogs
+        // so the overlay opens and closes the way every popup does.
+        constexpr float kShellAnimSeconds = 0.28f;
+        constexpr float kShellAnimDropDp  = 100.0f;
+        constexpr float kShellBezX1 = 0.05f, kShellBezY1 = 0.90f;
+        constexpr float kShellBezX2 = 0.10f, kShellBezY2 = 1.06f;
+
+        // Matches the push_constant block in overlay_blur.frag.glsl exactly.
+        struct BlurPushConstants
+        {
+            float directionX;
+            float directionY;
+            float sigma;
+            float padding;  // matches the shader's std430 padding
+        };
+    }
+
+    // No-op dummy for Vulkan functions ImGui requests but VKIntox doesn't intercept.
+    // ImGui's LoadFunctions treats nullptr returns as failures, so we need a valid pointer.
+    static void VKAPI_CALL dummyVulkanFunc() {}
+
+    // Function loader using VKIntox's dispatch tables
+    static PFN_vkVoidFunction imguiVulkanLoaderDummy(const char* function_name, void* user_data)
+    {
+        LogicalDevice* device = static_cast<LogicalDevice*>(user_data);
+
+        // Device functions from VKIntox's dispatch table
+        #define CHECK_FUNC(name) if (strcmp(function_name, "vk" #name) == 0) return (PFN_vkVoidFunction)device->vkd.name
+
+        CHECK_FUNC(AllocateCommandBuffers);
+        CHECK_FUNC(AllocateDescriptorSets);
+        CHECK_FUNC(AllocateMemory);
+        CHECK_FUNC(BeginCommandBuffer);
+        CHECK_FUNC(BindBufferMemory);
+        CHECK_FUNC(BindImageMemory);
+        CHECK_FUNC(CmdBeginRenderPass);
+        CHECK_FUNC(CmdBindDescriptorSets);
+        CHECK_FUNC(CmdBindIndexBuffer);
+        CHECK_FUNC(CmdBindPipeline);
+        CHECK_FUNC(CmdBindVertexBuffers);
+        CHECK_FUNC(CmdCopyBufferToImage);
+        CHECK_FUNC(CmdDrawIndexed);
+        CHECK_FUNC(CmdEndRenderPass);
+        CHECK_FUNC(CmdPipelineBarrier);
+        CHECK_FUNC(CmdPushConstants);
+        CHECK_FUNC(CmdSetScissor);
+        CHECK_FUNC(CmdSetViewport);
+        CHECK_FUNC(CreateBuffer);
+        CHECK_FUNC(CreateCommandPool);
+        CHECK_FUNC(CreateDescriptorPool);
+        CHECK_FUNC(CreateDescriptorSetLayout);
+        CHECK_FUNC(CreateFence);
+        CHECK_FUNC(CreateFramebuffer);
+        CHECK_FUNC(CreateGraphicsPipelines);
+        CHECK_FUNC(CreateImage);
+        CHECK_FUNC(CreateImageView);
+        CHECK_FUNC(CreatePipelineLayout);
+        CHECK_FUNC(CreateRenderPass);
+        CHECK_FUNC(CreateSampler);
+        CHECK_FUNC(CreateSemaphore);
+        CHECK_FUNC(CreateShaderModule);
+        CHECK_FUNC(CreateSwapchainKHR);
+        CHECK_FUNC(DestroyBuffer);
+        CHECK_FUNC(DestroyCommandPool);
+        CHECK_FUNC(DestroyDescriptorPool);
+        CHECK_FUNC(DestroyDescriptorSetLayout);
+        CHECK_FUNC(DestroyFence);
+        CHECK_FUNC(DestroyFramebuffer);
+        CHECK_FUNC(DestroyImage);
+        CHECK_FUNC(DestroyImageView);
+        CHECK_FUNC(DestroyPipeline);
+        CHECK_FUNC(DestroyPipelineLayout);
+        CHECK_FUNC(DestroyRenderPass);
+        CHECK_FUNC(DestroySampler);
+        CHECK_FUNC(DestroySemaphore);
+        CHECK_FUNC(DestroyShaderModule);
+        CHECK_FUNC(DestroySwapchainKHR);
+        CHECK_FUNC(EndCommandBuffer);
+        CHECK_FUNC(FlushMappedMemoryRanges);
+        CHECK_FUNC(FreeCommandBuffers);
+        CHECK_FUNC(FreeDescriptorSets);
+        CHECK_FUNC(FreeMemory);
+        CHECK_FUNC(GetBufferMemoryRequirements);
+        CHECK_FUNC(GetDeviceQueue);
+        CHECK_FUNC(GetImageMemoryRequirements);
+        CHECK_FUNC(GetSwapchainImagesKHR);
+        CHECK_FUNC(MapMemory);
+        CHECK_FUNC(QueueSubmit);
+        CHECK_FUNC(QueueWaitIdle);
+        CHECK_FUNC(ResetCommandPool);
+        CHECK_FUNC(ResetFences);
+        CHECK_FUNC(UnmapMemory);
+        CHECK_FUNC(UpdateDescriptorSets);
+        CHECK_FUNC(WaitForFences);
+        // Not in the layer's dispatch table; resolve it directly.
+        if (strcmp(function_name, "vkGetFenceStatus") == 0)
+            return (PFN_vkVoidFunction)device->vkd.GetDeviceProcAddr(device->device, "vkGetFenceStatus");
+        #undef CHECK_FUNC
+
+        // Instance functions from VKIntox's dispatch
+        #define CHECK_IFUNC(name) if (strcmp(function_name, "vk" #name) == 0) return (PFN_vkVoidFunction)device->vki.name
+        CHECK_IFUNC(GetPhysicalDeviceMemoryProperties);
+        CHECK_IFUNC(GetPhysicalDeviceProperties);
+        CHECK_IFUNC(GetPhysicalDeviceQueueFamilyProperties);
+        #undef CHECK_IFUNC
+
+        // Return a no-op dummy for unknown functions. ImGui's LoadFunctions treats
+        // nullptr as a load failure, so we must return a valid function pointer.
+        // These functions are never actually called by ImGui in our usage.
+        return (PFN_vkVoidFunction)dummyVulkanFunc;
+    }
+
+    ImGuiOverlay::ImGuiOverlay(LogicalDevice* device, VkFormat swapchainFormat, uint32_t imageCount, OverlayPersistentState* persistentState)
+        : logicalDevice(device), pPersistentState(persistentState)
+    {
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        // imconfig disables ImGui's default shell handler, so TextLinkOpenURL
+        // would silently do nothing. route it through our xdg-open helper.
+        ImGui::GetPlatformIO().Platform_OpenInShellFn = [](ImGuiContext*, const char* url) -> bool
+        {
+            return openInShell(url);
+        };
+        ImGuiIO& io = ImGui::GetIO();
+        io.IniFilename = nullptr;
+        io.ConfigWindowsMoveFromTitleBarOnly = true;
+
+        std::string iniPath = ConfigSerializer::getBaseConfigDir() + "/imgui.ini";
+        std::ifstream iniFile(iniPath);
+        std::string iniContent((std::istreambuf_iterator<char>(iniFile)),
+                                std::istreambuf_iterator<char>());
+
+        if (!iniContent.empty())
+            ImGui::LoadIniSettingsFromDisk(iniPath.c_str());
+
+        // the whole skin lives in vendor/imgui/imgui_m3.{h,cc}: the token set,
+        // the `.colors` file, live reload, and the M3 widget painting. here we
+        // seed the shipped defaults and then point it at a file.
+        ImGuiM3SetThemePreset(DefaultConfig::kThemeSource, DefaultConfig::kThemeVariant,
+                              DefaultConfig::kThemeContrast, DefaultConfig::kThemeDark);
+        ImGuiM3GetBlurSettings() = DefaultConfig::blurSettings();
+        ImGuiM3GetBackgroundObject() = DefaultConfig::backgroundObject();
+        ImGuiM3SetThemeFile(ImGuiM3DefaultThemeFilePath());
+        if (const char* themePath = ImGuiM3GetThemeFile())
+            Logger::info("ImGui: Material 3 Expressive theme from " + std::string(themePath));
+
+        // flatpak sandboxes each have their own config dir, and setup only seeds the
+        // app it ran for. so look in ours, then in every sandbox's.
+        std::string baseConfigDir = ConfigSerializer::getBaseConfigDir();
+        std::vector<std::string> fontDirs = {baseConfigDir + "/font"};
+        if (const char* home = std::getenv("HOME"))
+        {
+            const std::string varApp = std::string(home) + "/.var/app";
+            std::error_code ec;
+            if (std::filesystem::is_directory(varApp, ec))
+            {
+                for (const auto& entry : std::filesystem::directory_iterator(varApp, ec))
+                {
+                    if (!entry.is_directory())
+                        continue;
+                    std::string dir = entry.path().string() + "/config/VKIntox/font";
+                    if (dir != fontDirs.front())
+                        fontDirs.push_back(std::move(dir));
+                }
+            }
+        }
+
+        auto findFont = [&](const std::string& filename) -> std::string
+        {
+            for (const auto& dir : fontDirs)
+            {
+                std::string path = dir + "/" + filename;
+                if (std::ifstream(path).good())
+                    return path;
+            }
+            return "";
+        };
+
+        const std::string gsPath = findFont("GoogleSansFlex.ttf");
+        const std::string rfPath = findFont("RobotoFlex.ttf");
+        const std::string legacyPath = findFont("font.ttf");
+        const std::string bodyPath = !rfPath.empty() ? rfPath : (!gsPath.empty() ? gsPath : legacyPath);
+        const std::string docPath  = !gsPath.empty() ? gsPath : bodyPath;
+
+        // M3 body-medium: 14sp, regular weight. everything else steps from here.
+        constexpr float kBodyMediumSize = 14.0f;
+
+        // Material Symbols: merged into every text face for inline codepoints,
+        // plus a standalone 24px face for M3Icon and the nav.
+        const std::string iconFontPath = findFont("MaterialSymbolsRounded.ttf");
+        const bool haveIconFont = !iconFontPath.empty();
+
+        // OpenType 4-char axis tags.
+        constexpr ImU32 kTagWght = 0x77676874u; // 'wght'
+        constexpr ImU32 kTagROND = 0x524F4E44u; // 'ROND'
+        constexpr ImU32 kTagOpsz = 0x6F70737Au; // 'opsz'
+
+        // One variable file per role: pin the axes we need instead of shipping a
+        // static file per weight. ROND=100 gives the rounded document cut.
+        auto addFace = [&](const std::string& path, float wght, bool rounded, float opsz) -> ImFont*
+        {
+            if (path.empty())
+                return nullptr;
+            ImFontConfig cfg;
+            cfg.SizePixels = kBodyMediumSize;
+            cfg.OversampleH = 2;
+            cfg.OversampleV = 1;
+            cfg.PixelSnapH = true;
+            int n = 0;
+            cfg.VariationAxisTags[n] = kTagWght; cfg.VariationAxisValues[n++] = wght;
+            cfg.VariationAxisTags[n] = kTagOpsz; cfg.VariationAxisValues[n++] = opsz;
+            if (rounded) { cfg.VariationAxisTags[n] = kTagROND; cfg.VariationAxisValues[n++] = 100.0f; }
+            cfg.VariationAxisCount = n;
+            ImFont* face = io.Fonts->AddFontFromFileTTF(path.c_str(), kBodyMediumSize, &cfg);
+            if (face && haveIconFont)
+                ImGuiM3MergeIconFont(iconFontPath.c_str(), kBodyMediumSize, Icon::GlyphRanges());
+            return face;
+        };
+
+        if (!bodyPath.empty())
+        {
+            io.Fonts->Clear();
+
+            // body text: Roboto Flex; titles/display: Google Sans Flex (rounded).
+            ImFont* regular   = addFace(bodyPath, 400.0f, false, 14.0f);
+            ImFont* medium    = addFace(bodyPath, 500.0f, false, 14.0f);
+            ImFont* bodyBold  = addFace(bodyPath, 700.0f, false, 14.0f);
+            ImFont* bold      = addFace(docPath,  650.0f, true,  18.0f);
+            ImFont* extraBold = addFace(docPath,  700.0f, true,  32.0f);
+            ImGuiM3SetTextFonts(regular, medium, bold, extraBold);
+            ImGuiM3SetBodyBoldFont(bodyBold);
+            Logger::info("ImGui: body=Roboto Flex, document=Google Sans Flex (variable) from " + bodyPath);
+        }
+        else
+        {
+            // No theme families: keep the padding-based layout valid by installing
+            // the built-in face rather than leaving the atlas empty.
+            io.Fonts->Clear();
+            io.Fonts->AddFontDefault();
+            Logger::warn("ImGui: variable fonts not found - using the default font");
+        }
+
+        if (haveIconFont)
+        {
+            if (ImGuiM3LoadIconFont(iconFontPath.c_str(), 24.0f, Icon::GlyphRanges()))
+                Logger::info("ImGui: loaded Material Symbols icon font");
+            else
+                Logger::warn("ImGui: Material Symbols font could not be parsed");
+
+            // heavier face for the dock's weight morph; optional.
+            const std::string iconBoldPath = findFont("MaterialSymbolsRoundedBold.ttf");
+            if (!iconBoldPath.empty())
+                ImGuiM3LoadIconFontBold(iconBoldPath.c_str(), 24.0f, Icon::GlyphRanges());
+        }
+        else
+        {
+            Logger::warn("ImGui: Material Symbols font not found - icons disabled");
+        }
+
+        // frame padding needs the real font metrics, so re-apply now.
+        ImGuiM3ApplyToStyle(1.0f);
+        // M3's thumb grows from 8dp to 12dp on hover. Reserve the hover width
+        // so the grown thumb never paints over cards in scrollable views.
+        ImGui::GetStyle().ScrollbarSize = 12.0f * ImGuiM3GetMetrics().density;
+
+        initVulkanBackend(swapchainFormat, imageCount);
+
+        // Restore UI preferences from persistent state
+        if (pPersistentState)
+            visible = pPersistentState->visible;
+        // start settled: no animation for the state the overlay boots into
+        shellAnimTarget = visible;
+        shellAlpha = visible ? 1.0f : 0.0f;
+        setInputBlocked(visible);
+
+        initialized = true;
+        Logger::info("ImGui overlay initialized");
+    }
+
+
+    ImGuiOverlay::~ImGuiOverlay()
+    {
+        if (!initialized) return;
+
+        // Auto-save profile on shutdown (before GPU cleanup)
+        if ((profileDirty || paramsDirty) && (!activeProfilePath.empty() || !activeShaderProfilePath.empty()))
+            autoSaveProfile();
+
+        // the auto-save is queued on the writer thread; make sure it lands before
+        // the layer tears down rather than racing process exit.
+        AsyncWriter::instance().waitForIdle();
+
+        logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
+
+        // Clean up Wayland resources before destroying the event queue
+        if (isWayland())
+            cleanupPointerConstraints();
+
+        std::string iniPath = ConfigSerializer::getBaseConfigDir() + "/imgui.ini";
+        ImGui::SaveIniSettingsToDisk(iniPath.c_str());
+
+        if (titleIconDescriptor != VK_NULL_HANDLE)
+            ImGui_ImplVulkan_RemoveTexture(titleIconDescriptor);
+
+        // Blur descriptors have to go back to ImGui's pool too before the backend
+        // shuts down; the device handles go through the deferred queue below.
+        releaseBlurResources(true);
+
+        // The ImGui teardown stays inline and runs first, because it releases
+        // ImGui's own references to the descriptor pool and the title icon
+        // descriptor. Those references have to be gone before the queue releases
+        // the pool, and the queue only runs at the next teardown, so ordering
+        // here is by construction rather than by luck.
+        if (backendInitialized)
+            ImGui_ImplVulkan_Shutdown();
+        ImGui::DestroyContext();
+
+        // Deferred, like every other owner. The QueueWaitIdle above already makes
+        // this a safe moment, but inline destruction still meant that an overlay
+        // torn down during device teardown would call into a destroyed VkDevice.
+        // Handing the handles over means the flush at device destroy decides when
+        // they actually go, and the handle is still valid when it does.
+        auto& queue   = DeferredDestroyQueue::instance();
+        auto  device = logicalDevice->device;
+        auto& vkd    = logicalDevice->vkd;
+
+        const VkDeviceMemory   iconMem = titleIconMemory;
+        const VkImage         iconImg = titleIconImage;
+        const VkImageView     iconView = titleIconView;
+        const VkSampler       iconSampler = titleIconSampler;
+        const VkCommandPool   pool = commandPool;
+        const VkRenderPass    pass = renderPass;
+        const VkDescriptorPool descPool = descriptorPool;
+
+        if (iconMem != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Memory, [vkd, device, iconMem] { vkd.FreeMemory(device, iconMem, nullptr); });
+        // image before its view, so the view is released first
+        if (iconImg != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, iconImg] { vkd.DestroyImage(device, iconImg, nullptr); });
+        if (iconView != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, iconView] { vkd.DestroyImageView(device, iconView, nullptr); });
+        if (iconSampler != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, iconSampler] { vkd.DestroySampler(device, iconSampler, nullptr); });
+        if (pool != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Resource, [vkd, device, pool] { vkd.DestroyCommandPool(device, pool, nullptr); });
+
+        if (descPool != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::Descriptor, [vkd, device, descPool] { vkd.DestroyDescriptorPool(device, descPool, nullptr); });
+
+        // framebuffers before the pass they were created from
+        for (auto fb : framebuffers)
+        {
+            if (fb != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::RenderPass, [vkd, device, fb] { vkd.DestroyFramebuffer(device, fb, nullptr); });
+        }
+        if (pass != VK_NULL_HANDLE)
+            queue.push(DestroyPhase::RenderPass, [vkd, device, pass] { vkd.DestroyRenderPass(device, pass, nullptr); });
+
+        // Fences are the earliest phase: a fence whose command pool is gone is
+        // fine to destroy, but a command pool destroyed while a submitted fence
+        // is still unsignalled is not, and the pool lands in Resource.
+        for (auto fence : commandBufferFences)
+        {
+            if (fence != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Sync, [vkd, device, fence] { vkd.DestroyFence(device, fence, nullptr); });
+        }
+
+        Logger::info("ImGui overlay destroyed");
+    }
+
+    void ImGuiOverlay::toggle()
+    {
+        visible = !visible;
+        Logger::debug(std::string("overlay toggled ") + (visible ? "on" : "off"));
+        setInputBlocked(visible);
+
+        // Pointer confinement was removed: the overlay renders inside the game's
+        // surface, so confining the pointer doesn't prevent the compositor from
+        // interpreting clicks as window-move grabs.
+
+        saveToPersistentState();
+    }
+
+    void ImGuiOverlay::refreshShaderProfiles()
+    {
+        shaderProfiles = ConfigSerializer::listShaderProfilesForGame(activeGameName);
+        if (activeShaderProfileName.empty())
+        {
+            const auto lastUsedProfile = ConfigSerializer::getLastShaderProfile(activeGameName);
+            if (std::find(shaderProfiles.begin(), shaderProfiles.end(), lastUsedProfile) != shaderProfiles.end())
+                activeShaderProfileName = lastUsedProfile;
+        }
+        if (activeShaderProfileName.empty() ||
+            std::find(shaderProfiles.begin(), shaderProfiles.end(), activeShaderProfileName) == shaderProfiles.end())
+        {
+            const auto defaultProfile = std::find(shaderProfiles.begin(), shaderProfiles.end(), "default");
+            activeShaderProfileName = defaultProfile != shaderProfiles.end()
+                ? *defaultProfile
+                : (shaderProfiles.empty() ? std::string() : shaderProfiles.front());
+        }
+        activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
+        if (!activeGameName.empty() && !activeShaderProfileName.empty())
+            ConfigSerializer::setLastShaderProfile(activeGameName, activeShaderProfileName);
+    }
+
+    void ImGuiOverlay::setActiveShaderProfile(const std::string& profileName)
+    {
+        activeShaderProfileName = profileName;
+        activeShaderProfilePath = ConfigSerializer::getShaderProfilePath(activeGameName, activeShaderProfileName);
+        if (!activeGameName.empty() && !activeShaderProfileName.empty())
+            ConfigSerializer::setLastShaderProfile(activeGameName, activeShaderProfileName);
+    }
+
+    bool ImGuiOverlay::switchShaderProfile(const std::string& profileName)
+    {
+        if (profileName.empty() || profileName == activeShaderProfileName)
+            return true;
+
+        // save the outgoing profile while it is still active, then clear the
+        // dirty flags so render()'s auto-save can't clobber the new path.
+        if (!autoSaveProfile(true))
+            return false;
+
+        setActiveShaderProfile(profileName);
+        pendingShaderProfilePath = activeShaderProfilePath;
+        pendingShaderProfile = true;
+        applyRequested = true;
+        paramsDirty = false;
+        profileDirty = false;
+        return true;
+    }
+
+    void ImGuiOverlay::pushToast(LogLevel level, const std::string& message)
+    {
+        std::lock_guard<std::mutex> lock(toastsMutex);
+        // Avoid stacking identical messages — refresh timestamp instead.
+        for (auto& t : toasts)
+        {
+            if (t.message == message && t.level == level)
+            {
+                t.createdAt = std::chrono::steady_clock::now();
+                return;
+            }
+        }
+        toasts.push_back({message, level, std::chrono::steady_clock::now()});
+        // Hard cap so a runaway panic loop can't exhaust memory.
+        if (toasts.size() > 8)
+            toasts.erase(toasts.begin(), toasts.end() - 8);
+    }
+
+    bool ImGuiOverlay::hasPendingToasts() const
+    {
+        std::lock_guard<std::mutex> lock(toastsMutex);
+        return !toasts.empty();
+    }
+
+    void ImGuiOverlay::renderToasts()
+    {
+        // Snapshot under the lock so we can render without holding it.
+        std::vector<ToastNotification> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(toastsMutex);
+            snapshot = toasts;
+        }
+        if (snapshot.empty())
+        {
+            toastCardRects.clear();
+            return;
+        }
+
+        // toast card footprints, screen space; the backdrop blur subtracts them
+        toastCardRects.clear();
+
+        constexpr float kLifetimeSeconds = 5.0f;
+        constexpr float kFadeSeconds = 0.6f;
+        const auto now = std::chrono::steady_clock::now();
+
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const float margin = 28.0f;
+        const float gap = 10.0f;
+        const float padX = 22.0f;
+        const float padY = 16.0f;
+        const float rounding = 16.0f;
+        // the host window has to be big enough for the shadow: a fixed 14px pad was
+        // under a level-2 reach, so the falloff was sliced square at the window edge
+        const ImGuiM3Metrics& tm = ImGuiM3GetMetrics();
+        const int toastElevation = 2;
+        const float shadowReach = ImMax(tm.ambient_shadow_blur[toastElevation] * 2.0f + tm.ambient_shadow_spread[toastElevation],
+                                        ImMax(tm.key_shadow_blur[toastElevation] * 2.0f, 4.0f));
+        const float shadowDrop = ImMax(tm.ambient_shadow_y[toastElevation], tm.key_shadow_y[toastElevation]);
+        const float shadowPad = ImCeil((shadowReach + shadowDrop) * tm.density) + 1.0f;
+        // never let a collapsed game window produce a negative card width
+        const float maxCardWidth = ImMax(160.0f, ImMin(560.0f, viewport->WorkSize.x - margin * 2.0f));
+
+        std::vector<size_t> expired;
+        for (size_t i = 0; i < snapshot.size(); ++i)
+            if (std::chrono::duration<float>(now - snapshot[i].createdAt).count() >= kLifetimeSeconds)
+                expired.push_back(i);
+
+        // the newest toast sits nearest the bottom edge, older ones stack upward
+        float cursorY = viewport->WorkPos.y + viewport->WorkSize.y - margin;
+        for (size_t i = 0; i < snapshot.size(); ++i)
+        {
+            const float age = std::chrono::duration<float>(now - snapshot[i].createdAt).count();
+            if (age >= kLifetimeSeconds)
+                continue;
+            // ramp out over the last fraction of a second instead of popping
+            const float fade = age > kLifetimeSeconds - kFadeSeconds
+                ? std::clamp((kLifetimeSeconds - age) / kFadeSeconds, 0.0f, 1.0f)
+                : 1.0f;
+
+            const std::string& message = snapshot[i].message;
+            const float wrapWidth = maxCardWidth - padX * 2.0f;
+            const ImVec2 textSize = ImGui::CalcTextSize(message.c_str(), nullptr, false, wrapWidth);
+            const float cardWidth = ImMin(maxCardWidth, ImMax(textSize.x, 1.0f) + padX * 2.0f);
+            const float cardHeight = textSize.y + padY * 2.0f;
+            const float windowWidth = cardWidth + shadowPad * 2.0f;
+            const float windowHeight = cardHeight + shadowPad * 2.0f;
+
+            cursorY -= windowHeight;
+            const ImVec2 windowPos(viewport->WorkPos.x + (viewport->WorkSize.x - windowWidth) * 0.5f, cursorY);
+            ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(windowWidth, windowHeight), ImGuiCond_Always);
+
+            // NoInputs: the toast is informational, so clicks pass through to the
+            // game instead of being withheld by the input blocker.
+            const ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoInputs;
+
+            // transparent host window: the card and its shadow are drawn inside,
+            // which keeps the whole thing on the top-most window layer.
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+
+            char label[40];
+            snprintf(label, sizeof(label), "##vkintoxToast%zu", i);
+            const bool open = ImGui::Begin(label, nullptr, flags);
+
+            ImGui::PopStyleVar(3);
+            ImGui::PopStyleColor(2);
+
+            if (open)
+            {
+                // pin the toast to the display front: ImGui reorders windows on
+                // focus, so clicking the shell drew it over the toasts next frame
+                ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                const ImVec2 cardMin(windowPos.x + shadowPad, windowPos.y + shadowPad);
+                const ImVec2 cardMax(cardMin.x + cardWidth, cardMin.y + cardHeight);
+                toastCardRects.push_back(InputRect{cardMin.x, cardMin.y, cardWidth, cardHeight});
+
+                // the elevation the filled buttons use
+                ImGuiM3DrawElevation(drawList, ImRect(cardMin, cardMax),
+                                     ImGuiM3ShapeRounding{ rounding, rounding, rounding, rounding },
+                                     toastElevation, fade);
+                const int cardAlpha = static_cast<int>(255.0f * fade);
+                drawList->AddRectFilled(cardMin, cardMax, IM_COL32(255, 255, 255, cardAlpha), rounding);
+
+                ImGui::SetCursorScreenPos(ImVec2(cardMin.x + padX, cardMin.y + padY));
+                ImGui::PushTextWrapPos(cardMin.x + cardWidth - padX);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, fade));
+                ImGui::TextUnformatted(message.c_str());
+                ImGui::PopStyleColor();
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::End();
+
+            cursorY -= gap;
+        }
+
+        if (!expired.empty())
+        {
+            std::lock_guard<std::mutex> lock(toastsMutex);
+            // Erase in reverse so indices stay valid.
+            for (auto it = expired.rbegin(); it != expired.rend(); ++it)
+            {
+                if (*it < toasts.size())
+                    toasts.erase(toasts.begin() + *it);
+            }
+        }
+    }
+
+    // one rounded backdrop image over the shell, minus the toasts' union box: the
+    // blur must not run under a toast, or a fading card reveals it. up to four
+    // bands, each keeping its share of the UVs and whichever corners it contains.
+    static void drawBackdropAvoiding(ImDrawList* dl, ImTextureRef tex, const ImVec2& pMin, const ImVec2& pMax,
+                                     const ImVec2& uvMin, const ImVec2& uvMax, ImU32 col, float rounding,
+                                     const std::vector<InputRect>& skip)
+    {
+        ImRect box;
+        bool haveBox = false;
+        for (const InputRect& r : skip)
+        {
+            const ImRect toast(ImVec2(r.x, r.y), ImVec2(r.x + r.width, r.y + r.height));
+            if (toast.Max.x <= pMin.x || toast.Min.x >= pMax.x || toast.Max.y <= pMin.y || toast.Min.y >= pMax.y)
+                continue;
+            if (!haveBox)
+                box = toast;
+            else
+            {
+                box.Min.x = ImMin(box.Min.x, toast.Min.x);
+                box.Min.y = ImMin(box.Min.y, toast.Min.y);
+                box.Max.x = ImMax(box.Max.x, toast.Max.x);
+                box.Max.y = ImMax(box.Max.y, toast.Max.y);
+            }
+            haveBox = true;
+        }
+
+        if (!haveBox)
+        {
+            dl->AddImageRounded(tex, pMin, pMax, uvMin, uvMax, col, rounding);
+            return;
+        }
+
+        box.Min.x = ImClamp(box.Min.x, pMin.x, pMax.x);
+        box.Min.y = ImClamp(box.Min.y, pMin.y, pMax.y);
+        box.Max.x = ImClamp(box.Max.x, pMin.x, pMax.x);
+        box.Max.y = ImClamp(box.Max.y, pMin.y, pMax.y);
+
+        const float width  = ImMax(pMax.x - pMin.x, 1.0f);
+        const float height = ImMax(pMax.y - pMin.y, 1.0f);
+        auto band = [&](const ImRect& r) {
+            if (r.Max.x - r.Min.x <= 0.5f || r.Max.y - r.Min.y <= 0.5f)
+                return;
+            const ImVec2 uv0(ImLerp(uvMin.x, uvMax.x, (r.Min.x - pMin.x) / width),
+                             ImLerp(uvMin.y, uvMax.y, (r.Min.y - pMin.y) / height));
+            const ImVec2 uv1(ImLerp(uvMin.x, uvMax.x, (r.Max.x - pMin.x) / width),
+                             ImLerp(uvMin.y, uvMax.y, (r.Max.y - pMin.y) / height));
+            const float eps = 1.0f;
+            ImDrawFlags flags = 0;
+            if (r.Min.x <= pMin.x + eps && r.Min.y <= pMin.y + eps) flags |= ImDrawFlags_RoundCornersTopLeft;
+            if (r.Max.x >= pMax.x - eps && r.Min.y <= pMin.y + eps) flags |= ImDrawFlags_RoundCornersTopRight;
+            if (r.Min.x <= pMin.x + eps && r.Max.y >= pMax.y - eps) flags |= ImDrawFlags_RoundCornersBottomLeft;
+            if (r.Max.x >= pMax.x - eps && r.Max.y >= pMax.y - eps) flags |= ImDrawFlags_RoundCornersBottomRight;
+            dl->AddImageRounded(tex, r.Min, r.Max, uv0, uv1, col, rounding,
+                                flags ? flags : (ImDrawFlags)ImDrawFlags_RoundCornersNone);
+        };
+
+        band(ImRect(pMin, ImVec2(pMax.x, box.Min.y)));                          // above the toasts
+        band(ImRect(ImVec2(pMin.x, box.Max.y), pMax));                          // below them
+        band(ImRect(ImVec2(pMin.x, box.Min.y), ImVec2(box.Min.x, box.Max.y)));  // left of them
+        band(ImRect(ImVec2(box.Max.x, box.Min.y), ImVec2(pMax.x, box.Max.y)));  // right of them
+    }
+
+    void ImGuiOverlay::saveToPersistentState()
+    {
+        if (!pPersistentState)
+            return;
+
+        // Only save UI preferences - effect state is in the registry, settings in settingsManager
+        pPersistentState->visible = visible;
+    }
+
+    void ImGuiOverlay::updateState(OverlayState newState)
+    {
+        // only the fields the add-effects view reads; a change here invalidates
+        // its cached entry list
+        if (newState.currentConfigEffects != state.currentConfigEffects
+            || newState.defaultConfigEffects != state.defaultConfigEffects
+            || newState.effectPaths != state.effectPaths)
+            ++overlayStateVersion;
+
+        state = std::move(newState);
+
+        if (!effectRegistry)
+            return;
+
+        // Registry is already initialized from config at swapchain creation
+        // Just ensure any newly added effects are in the registry
+        const auto& selectedEffects = effectRegistry->getSelectedEffects();
+        for (const auto& effectName : selectedEffects)
+        {
+            if (!effectRegistry->hasEffect(effectName))
+                effectRegistry->ensureEffect(effectName);
+        }
+        // No editableParams merging needed - Registry IS the source of truth
+    }
+
+    std::vector<std::unique_ptr<EffectParam>> ImGuiOverlay::getModifiedParams() const
+    {
+        if (!effectRegistry)
+            return {};
+        return effectRegistry->getAllParameters();
+    }
+
+    std::vector<std::string> ImGuiOverlay::getActiveEffects() const
+    {
+        std::vector<std::string> activeEffects;
+        if (!effectRegistry)
+            return activeEffects;
+
+        for (const auto& effectName : effectRegistry->getSelectedEffects())
+        {
+            if (effectRegistry->isEffectEnabled(effectName))
+                activeEffects.push_back(effectName);
+        }
+        return activeEffects;
+    }
+
+    const std::vector<std::string>& ImGuiOverlay::getSelectedEffects() const
+    {
+        static std::vector<std::string> empty;
+        return effectRegistry ? effectRegistry->getSelectedEffects() : empty;
+    }
+
+    void ImGuiOverlay::collectSaveData(
+        std::vector<std::string>& effects,
+        std::vector<std::string>& disabledEffects,
+        std::vector<ConfigParam>& params,
+        std::map<std::string, std::string>& effectPaths,
+        std::vector<PreprocessorDefinition>& allDefs,
+        std::vector<ConfigParam>& disabledEffectParams)
+    {
+        if (!effectRegistry)
+            return;
+
+        effects = effectRegistry->getSelectedEffects();
+
+        for (const auto& effectName : effects)
+        {
+            const bool effectEnabled = effectRegistry->isEffectEnabled(effectName);
+            for (auto* p : effectRegistry->getParametersForEffect(effectName))
+            {
+                if (p->noSave)
+                    continue;
+                auto serialized = p->serialize();
+                for (const auto& [suffix, value] : serialized)
+                {
+                    ConfigParam cp;
+                    cp.effectName = p->effectName;
+                    cp.paramName = suffix.empty() ? p->name : suffix;
+                    cp.value = value;
+                    params.push_back(cp);
+                    if (!effectEnabled)
+                        disabledEffectParams.push_back(cp);
+                }
+            }
+
+            if (!effectEnabled)
+                disabledEffects.push_back(effectName);
+
+            std::string path = effectRegistry->getEffectFilePath(effectName);
+            if (!path.empty())
+                effectPaths[effectName] = path;
+
+            const auto& defs = effectRegistry->getPreprocessorDefs(effectName);
+            for (const auto& def : defs)
+            {
+                allDefs.push_back(def);
+                if (!effectEnabled)
+                    disabledEffectParams.push_back({def.effectName, "@" + def.name, def.value});
+            }
+        }
+    }
+
+    void ImGuiOverlay::saveCurrentConfig()
+    {
+        if (!effectRegistry)
+            return;
+
+        std::vector<std::string> effects, disabledEffects;
+        std::vector<ConfigParam> params;
+        std::vector<ConfigParam> disabledEffectParams;
+        std::map<std::string, std::string> effectPaths;
+        std::vector<PreprocessorDefinition> allDefs;
+        collectSaveData(effects, disabledEffects, params, effectPaths, allDefs, disabledEffectParams);
+
+        ConfigSerializer::saveConfig(saveConfigName, effects, disabledEffects, params, effectPaths, allDefs);
+        configListRefreshPending = true;
+        profileDirty = false;
+    }
+
+    bool ImGuiOverlay::autoSaveProfile(bool block)
+    {
+        if (!effectRegistry)
+            return false;
+        if (activeProfilePath.empty() && activeShaderProfilePath.empty())
+            return true;
+
+        std::vector<std::string> effects, disabledEffects;
+        std::vector<ConfigParam> params;
+        std::vector<ConfigParam> disabledEffectParams;
+        std::map<std::string, std::string> effectPaths;
+        std::vector<PreprocessorDefinition> allDefs;
+        collectSaveData(effects, disabledEffects, params, effectPaths, allDefs, disabledEffectParams);
+
+        // Snapshot the registry-derived data here: the write runs on the writer
+        // thread and must not touch state the present thread mutates. EffectConfig
+        // owns unique_ptrs and cannot be copied, so everything the job needs is
+        // flattened into plain values now.
+        const std::string profilePath = activeProfilePath;
+        const std::string shaderPath = activeShaderProfilePath;
+
+        std::set<std::string> disabledFiles;
+        std::vector<std::string> enabledTechniques;
+        std::vector<std::string> techniqueSorting;
+        if (!shaderPath.empty())
+        {
+            const auto& allEffects = effectRegistry->getAllEffects();
+            for (const auto& effectName : disabledEffects)
+            {
+                const auto effect = std::find_if(allEffects.begin(), allEffects.end(), [&effectName](const EffectConfig& item) {
+                    return item.name == effectName;
+                });
+                if (effect != allEffects.end() && !effect->filePath.empty())
+                    disabledFiles.insert(std::filesystem::path(effect->filePath).filename().string());
+            }
+            const auto& selected = effectRegistry->getSelectedEffects();
+            for (const auto& name : selected)
+            {
+                auto effect = std::find_if(allEffects.begin(), allEffects.end(), [&name](const EffectConfig& item) {
+                    return item.name == name;
+                });
+                if (effect == allEffects.end() || effect->filePath.empty())
+                    continue;
+                const std::string filename = std::filesystem::path(effect->filePath).filename().string();
+                for (const auto& technique : effect->techniqueNames)
+                {
+                    const std::string entry = technique + "@" + filename;
+                    techniqueSorting.push_back(entry);
+                    if (effectRegistry->isEffectEnabled(name))
+                        enabledTechniques.push_back(entry);
+                }
+            }
+        }
+
+        // the job records whether the write succeeded so a blocking caller can
+        // still fail the operation; an async caller only sees the log line.
+        auto ok = std::make_shared<std::atomic<bool>>(true);
+
+        AsyncWriter::instance().submit(
+            [profilePath, shaderPath, effects, disabledEffects, params, effectPaths,
+             allDefs, disabledEffectParams, disabledFiles, enabledTechniques, techniqueSorting, ok]() mutable
+            {
+                bool configSaved = true;
+                if (!profilePath.empty())
+                {
+                    // .conf carries the ReShade definitions only; values live in the
+                    // .ini so a sparse preset can't inherit stale ones.
+                    std::map<std::string, std::string> instancePaths = effectPaths;
+                    for (const auto& [name, path] : effectPaths)
+                    {
+                        if (std::filesystem::path(path).extension() == ".fx")
+                            instancePaths[name] = std::filesystem::path(path).filename().string();
+                    }
+                    configSaved = ConfigSerializer::saveToPath(profilePath, {}, {}, {},
+                                                               instancePaths, {});
+                }
+
+                bool shaderSaved = true;
+                if (!shaderPath.empty())
+                {
+                    std::vector<ConfigParam> shaderParams = params;
+                    shaderParams.erase(std::remove_if(shaderParams.begin(), shaderParams.end(),
+                        [&disabledFiles, &effectPaths](const ConfigParam& param) {
+                            const auto path = effectPaths.find(param.effectName);
+                            return path != effectPaths.end() &&
+                                disabledFiles.count(std::filesystem::path(path->second).filename().string()) != 0;
+                        }),
+                        shaderParams.end());
+                    disabledEffectParams.erase(std::remove_if(disabledEffectParams.begin(), disabledEffectParams.end(),
+                        [&disabledFiles, &effectPaths](const ConfigParam& param) {
+                            const auto path = effectPaths.find(param.effectName);
+                            return path != effectPaths.end() &&
+                                disabledFiles.count(std::filesystem::path(path->second).filename().string()) == 0;
+                        }),
+                        disabledEffectParams.end());
+                    for (const auto& def : allDefs)
+                    {
+                        ConfigParam param{def.effectName, "@" + def.name, def.value};
+                        shaderParams.push_back(std::move(param));
+                    }
+                    std::set<std::pair<std::string, std::string>> enabledParamKeys;
+                    for (const auto& param : shaderParams)
+                        enabledParamKeys.emplace(param.effectName, param.paramName);
+                    disabledEffectParams.erase(std::remove_if(disabledEffectParams.begin(), disabledEffectParams.end(),
+                        [&enabledParamKeys](const ConfigParam& param) {
+                            return enabledParamKeys.count({param.effectName, param.paramName}) != 0;
+                        }), disabledEffectParams.end());
+                    shaderSaved = ConfigSerializer::saveShaderProfile(shaderPath, shaderParams, effects, disabledEffects,
+                                                                       effectPaths, enabledTechniques, techniqueSorting,
+                                                                       disabledEffectParams);
+                }
+
+                if (shaderSaved && configSaved)
+                    Logger::debug("Auto-saved profile: " + profilePath);
+                else
+                    Logger::err("Auto-save failed for profile: " + profilePath);
+                ok->store(shaderSaved && configSaved, std::memory_order_relaxed);
+            });
+
+        // the write is queued; mark clean now so the debounce does not re-arm.
+        profileDirty = false;
+        if (block)
+        {
+            AsyncWriter::instance().waitForIdle();
+            return ok->load(std::memory_order_relaxed);
+        }
+        return true;
+    }
+
+    void ImGuiOverlay::setSelectedEffects(const std::vector<std::string>& effects,
+                                          const std::vector<std::string>& disabledEffects)
+    {
+        if (!effectRegistry)
+            return;
+
+        effectRegistry->setSelectedEffects(effects);
+
+        // Build set of disabled effects for quick lookup
+        std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());
+
+        // Set enabled states in registry: disabled if in disabledEffects, enabled otherwise
+        for (const auto& effectName : effects)
+        {
+            bool enabled = (disabledSet.find(effectName) == disabledSet.end());
+            effectRegistry->setEffectEnabled(effectName, enabled);
+        }
+    }
+
+    void ImGuiOverlay::initVulkanBackend(VkFormat swapchainFormat, uint32_t imageCount)
+    {
+        // Load Vulkan functions for ImGui using VKIntox's dispatch tables
+        bool loaded = ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_3, imguiVulkanLoaderDummy, logicalDevice);
+        if (!loaded)
+        {
+            Logger::err("Failed to load Vulkan functions for ImGui");
+            return;
+        }
+        Logger::debug("ImGui Vulkan functions loaded");
+
+        // Create descriptor pool for ImGui
+        VkDescriptorPoolSize poolSizes[] = {
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 100 }
+        };
+
+        VkDescriptorPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+        poolInfo.maxSets = 100;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = poolSizes;
+
+        VkResult vr = logicalDevice->vkd.CreateDescriptorPool(logicalDevice->device, &poolInfo, nullptr, &descriptorPool);
+        if (vr != VK_SUCCESS)
+        {
+            Logger::err("Failed to create ImGui descriptor pool: " + std::to_string(vr));
+            return;
+        }
+
+        // Create render pass for ImGui
+        VkAttachmentDescription attachment = {};
+        attachment.format = swapchainFormat;
+        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference colorRef = {};
+        colorRef.attachment = 0;
+        colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass = {};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colorRef;
+
+        // Dependency for incoming: wait for prior color writes before overlay renders.
+        // srcAccessMask MUST include COLOR_ATTACHMENT_WRITE (or TRANSFER_WRITE) so
+        // that the implicit PRESENT_SRC→COLOR_ATTACHMENT_OPTIMAL layout transition
+        // does not race with the effect pass that just wrote to the swapchain image.
+        // The semaphore between effect-submit and overlay-submit guarantees
+        // execution ordering, but the render-pass dependency governs the implicit
+        // transition barrier and must correctly describe the source access.
+        VkSubpassDependency dependencies[2] = {};
+        dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[0].dstSubpass = 0;
+        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+        dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+        // Dependency for outgoing: ensure overlay writes + layout transition complete
+        // and are VISIBLE to presentation engine and DMA-BUF screen capture readers.
+        // VK_ACCESS_MEMORY_READ_BIT is critical — without it, GPU caches may not be
+        // flushed before PipeWire/compositor reads the image via DMA-BUF.
+        dependencies[1].srcSubpass = 0;
+        dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+        dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+
+        VkRenderPassCreateInfo renderPassInfo = {};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        renderPassInfo.attachmentCount = 1;
+        renderPassInfo.pAttachments = &attachment;
+        renderPassInfo.subpassCount = 1;
+        renderPassInfo.pSubpasses = &subpass;
+        renderPassInfo.dependencyCount = 2;
+        renderPassInfo.pDependencies = dependencies;
+
+        vr = logicalDevice->vkd.CreateRenderPass(logicalDevice->device, &renderPassInfo, nullptr, &renderPass);
+        if (vr != VK_SUCCESS)
+        {
+            Logger::err("Failed to create ImGui render pass: " + std::to_string(vr));
+            return;
+        }
+
+        // Initialize ImGui Vulkan backend
+        ImGui_ImplVulkan_InitInfo initInfo = {};
+        initInfo.ApiVersion = VK_API_VERSION_1_3;
+        initInfo.Instance = logicalDevice->instance;
+        initInfo.PhysicalDevice = logicalDevice->physicalDevice;
+        initInfo.Device = logicalDevice->device;
+        initInfo.QueueFamily = logicalDevice->queueFamilyIndex;
+        initInfo.Queue = logicalDevice->queue;
+        initInfo.DescriptorPool = descriptorPool;
+        // ImageCount MUST match the actual swapchain image count.
+        // Hardcoding 2 while the real swapchain has 3 (triple-buffering)
+        // causes ImGui's internal vertex/index ring buffer to wrap too early,
+        // overwriting buffers still in-flight on the GPU → ghost trails,
+        // stale vertices, and black corruption artefacts.
+        initInfo.MinImageCount = imageCount;
+        initInfo.ImageCount = imageCount;
+        initInfo.PipelineInfoMain.RenderPass = renderPass;
+
+        ImGui_ImplVulkan_Init(&initInfo);
+
+        // 512 square, but never drawn above ~48px, so it is area-averaged down to
+        // its display footprint and carries a mip chain from there: bilinear on a
+        // single level samples four of every sixty-five texels and the edge crawls.
+        constexpr uint32_t kTitleIconPx = 128;
+        constexpr uint32_t kTitleIconMips = 8;   // 128, 64, 32, 16, 8, 4, 2, 1
+
+        VkImageCreateInfo iconInfo{};
+        iconInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        iconInfo.imageType = VK_IMAGE_TYPE_2D;
+        iconInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+        iconInfo.extent = {kTitleIconPx, kTitleIconPx, 1};
+        iconInfo.mipLevels = kTitleIconMips;
+        iconInfo.arrayLayers = 1;
+        iconInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        iconInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        iconInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        iconInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        iconInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkResult iconResult = logicalDevice->vkd.CreateImage(logicalDevice->device, &iconInfo, nullptr, &titleIconImage);
+        if (iconResult == VK_SUCCESS)
+        {
+            VkMemoryRequirements requirements{};
+            logicalDevice->vkd.GetImageMemoryRequirements(logicalDevice->device, titleIconImage, &requirements);
+            VkMemoryAllocateInfo allocation{};
+            allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocation.allocationSize = requirements.size;
+            allocation.memoryTypeIndex = findMemoryTypeIndex(logicalDevice, requirements.memoryTypeBits,
+                                                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            iconResult = logicalDevice->vkd.AllocateMemory(logicalDevice->device, &allocation, nullptr, &titleIconMemory);
+            if (iconResult == VK_SUCCESS)
+                iconResult = logicalDevice->vkd.BindImageMemory(logicalDevice->device, titleIconImage, titleIconMemory, 0);
+        }
+        if (iconResult == VK_SUCCESS)
+        {
+            int iconWidth = 0, iconHeight = 0, iconChannels = 0;
+            stbi_uc* iconPixels = stbi_load_from_memory(kOverlayIconPng, sizeof(kOverlayIconPng),
+                                                        &iconWidth, &iconHeight, &iconChannels, STBI_rgb_alpha);
+            if (!iconPixels || iconWidth != 512 || iconHeight != 512)
+            {
+                if (iconPixels)
+                    stbi_image_free(iconPixels);
+                iconResult = VK_ERROR_FORMAT_NOT_SUPPORTED;
+                Logger::warn("Could not decode embedded VKIntox icon");
+            }
+            else
+            {
+                // Post-multiplied area average: averaging straight RGBA darkens
+                // the soft edges of the rounded mark.
+                std::vector<uint8_t> resampled(kTitleIconPx * kTitleIconPx * 4);
+                const int factor = iconWidth / static_cast<int>(kTitleIconPx);
+                const uint32_t taps = static_cast<uint32_t>(factor * factor);
+                for (uint32_t y = 0; y < kTitleIconPx; ++y)
+                {
+                    for (uint32_t x = 0; x < kTitleIconPx; ++x)
+                    {
+                        uint32_t acc[4] = {0, 0, 0, 0};
+                        for (int sy = 0; sy < factor; ++sy)
+                        {
+                            const stbi_uc* row = iconPixels +
+                                ((static_cast<size_t>(y) * factor + sy) * static_cast<size_t>(iconWidth) +
+                                 static_cast<size_t>(x) * factor) * 4;
+                            for (int sx = 0; sx < factor; ++sx, row += 4)
+                            {
+                                const uint32_t a = row[3];
+                                acc[0] += row[0] * a;
+                                acc[1] += row[1] * a;
+                                acc[2] += row[2] * a;
+                                acc[3] += a;
+                            }
+                        }
+                        uint8_t* out = resampled.data() + (static_cast<size_t>(y) * kTitleIconPx + x) * 4;
+                        const uint32_t a = acc[3];
+                        out[3] = static_cast<uint8_t>((a + taps / 2) / taps);
+                        for (int ch = 0; ch < 3; ++ch)
+                            out[ch] = a == 0 ? 0 : static_cast<uint8_t>((acc[ch] + a / 2) / a);
+                    }
+                }
+                // straight-alpha texels outside the mark have no colour, and the
+                // mips average whatever RGB they find there, which is a dark fringe
+                // once minified. bleed the mark's colour outward; alpha stays zero,
+                // so only the averaging changes.
+                std::vector<uint8_t> bled(kTitleIconPx * kTitleIconPx, 0);
+                for (uint32_t i = 0; i < kTitleIconPx * kTitleIconPx; ++i)
+                    bled[i] = resampled[i * 4 + 3] > 0 ? 1 : 0;
+                static constexpr int kNeighbours[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+                std::vector<uint8_t> spread = resampled;
+                for (int pass = 0; pass < 8; ++pass)
+                {
+                    bool grew = false;
+                    for (uint32_t y = 0; y < kTitleIconPx; ++y)
+                    {
+                        for (uint32_t x = 0; x < kTitleIconPx; ++x)
+                        {
+                            const uint32_t i = y * kTitleIconPx + x;
+                            if (bled[i])
+                                continue;
+                            for (const auto& n : kNeighbours)
+                            {
+                                const int nx = static_cast<int>(x) + n[0];
+                                const int ny = static_cast<int>(y) + n[1];
+                                if (nx < 0 || ny < 0 || nx >= static_cast<int>(kTitleIconPx) || ny >= static_cast<int>(kTitleIconPx))
+                                    continue;
+                                const uint32_t j = static_cast<uint32_t>(ny) * kTitleIconPx + static_cast<uint32_t>(nx);
+                                if (!bled[j])
+                                    continue;
+                                spread[i * 4 + 0] = spread[j * 4 + 0];
+                                spread[i * 4 + 1] = spread[j * 4 + 1];
+                                spread[i * 4 + 2] = spread[j * 4 + 2];
+                                bled[i] = 1;
+                                grew = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!grew)
+                        break;
+                }
+                uploadToImage(logicalDevice, titleIconImage,
+                              {kTitleIconPx, kTitleIconPx, 1},
+                              kTitleIconPx * kTitleIconPx * 4, spread.data(), kTitleIconMips);
+                stbi_image_free(iconPixels);
+            }
+        }
+        if (iconResult == VK_SUCCESS)
+        {
+            VkImageViewCreateInfo viewInfo{};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = titleIconImage;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+            viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, kTitleIconMips, 0, 1};
+            iconResult = logicalDevice->vkd.CreateImageView(logicalDevice->device, &viewInfo, nullptr, &titleIconView);
+        }
+        if (iconResult == VK_SUCCESS)
+        {
+            VkSamplerCreateInfo samplerInfo{};
+            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+            // trilinear: the mark is always minified, and nearest-mip steps between
+            // levels as the panel animates
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.maxLod = static_cast<float>(kTitleIconMips - 1);
+            iconResult = logicalDevice->vkd.CreateSampler(logicalDevice->device, &samplerInfo, nullptr, &titleIconSampler);
+        }
+        if (iconResult == VK_SUCCESS)
+            titleIconDescriptor = ImGui_ImplVulkan_AddTexture(titleIconSampler, titleIconView,
+                                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        else
+            Logger::warn("Could not create VKIntox title bar icon: " + std::to_string(iconResult));
+
+        this->swapchainFormat = swapchainFormat;
+        this->imageCount = imageCount;
+        bool commandBuffersAllocated = false;
+
+        auto rollbackBackendInit = [&]() {
+            for (auto fence : commandBufferFences)
+            {
+                if (fence != VK_NULL_HANDLE)
+                    logicalDevice->vkd.DestroyFence(logicalDevice->device, fence, nullptr);
+            }
+            commandBufferFences.clear();
+
+            if (commandBuffersAllocated && !commandBuffers.empty() && commandPool != VK_NULL_HANDLE)
+            {
+                logicalDevice->vkd.FreeCommandBuffers(
+                    logicalDevice->device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+            }
+            commandBuffers.clear();
+
+            for (auto fb : framebuffers)
+            {
+                if (fb != VK_NULL_HANDLE)
+                    logicalDevice->vkd.DestroyFramebuffer(logicalDevice->device, fb, nullptr);
+            }
+            framebuffers.clear();
+            framebufferImageViews.clear();
+
+            if (commandPool != VK_NULL_HANDLE)
+            {
+                logicalDevice->vkd.DestroyCommandPool(logicalDevice->device, commandPool, nullptr);
+                commandPool = VK_NULL_HANDLE;
+            }
+            if (renderPass != VK_NULL_HANDLE)
+            {
+                logicalDevice->vkd.DestroyRenderPass(logicalDevice->device, renderPass, nullptr);
+                renderPass = VK_NULL_HANDLE;
+            }
+            if (descriptorPool != VK_NULL_HANDLE)
+            {
+                logicalDevice->vkd.DestroyDescriptorPool(logicalDevice->device, descriptorPool, nullptr);
+                descriptorPool = VK_NULL_HANDLE;
+            }
+
+            ImGui_ImplVulkan_Shutdown();
+            backendInitialized = false;
+        };
+
+        // Create command pool
+        VkCommandPoolCreateInfo poolCreateInfo = {};
+        poolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        poolCreateInfo.queueFamilyIndex = logicalDevice->queueFamilyIndex;
+        vr = logicalDevice->vkd.CreateCommandPool(logicalDevice->device, &poolCreateInfo, nullptr, &commandPool);
+        if (vr != VK_SUCCESS)
+        {
+            Logger::err("Failed to create ImGui command pool: " + std::to_string(vr));
+            rollbackBackendInit();
+            return;
+        }
+
+        // Allocate command buffers
+        commandBuffers.resize(imageCount);
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = imageCount;
+        vr = logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &allocInfo, commandBuffers.data());
+        if (vr != VK_SUCCESS)
+        {
+            Logger::err("Failed to allocate ImGui command buffers: " + std::to_string(vr));
+            rollbackBackendInit();
+            return;
+        }
+        commandBuffersAllocated = true;
+
+        // Create fences for command buffer synchronization (signaled initially so first frame doesn't wait)
+        commandBufferFences.resize(imageCount);
+        VkFenceCreateInfo fenceInfo = {};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        for (uint32_t i = 0; i < imageCount; i++)
+        {
+            vr = logicalDevice->vkd.CreateFence(logicalDevice->device, &fenceInfo, nullptr, &commandBufferFences[i]);
+            if (vr != VK_SUCCESS)
+            {
+                Logger::err("Failed to create ImGui fence " + std::to_string(i) + ": " + std::to_string(vr));
+                rollbackBackendInit();
+                return;
+            }
+        }
+
+        backendInitialized = true;
+        Logger::debug("ImGui Vulkan backend initialized");
+    }
+
+    bool ImGuiOverlay::ensureBlurResources(uint32_t width, uint32_t height)
+    {
+        if (!logicalDevice || !backendInitialized || width == 0 || height == 0)
+            return false;
+
+        const uint32_t targetWidth  = std::max(1u, width / kBlurDownsample);
+        const uint32_t targetHeight = std::max(1u, height / kBlurDownsample);
+        if (blurReady && blurWidth == targetWidth && blurHeight == targetHeight)
+            return true;
+
+        // Rebuilding destroys objects the GPU may still be reading. Wait on every
+        // overlay fence, including sibling swapchain images, so nothing in flight
+        // references them. If one never signals, keep the old resources: a stale
+        // blur resolution is far better than a use-after-free.
+        for (VkFence fence : commandBufferFences)
+        {
+            if (fence == VK_NULL_HANDLE)
+                continue;
+            if (logicalDevice->vkd.WaitForFences(logicalDevice->device, 1, &fence, VK_TRUE, 1'000'000'000ull) != VK_SUCCESS)
+            {
+                Logger::warn("overlay blur: fence wait before resize failed; keeping previous resources");
+                return blurReady;
+            }
+        }
+
+        releaseBlurResources(false);
+
+        auto& vkd = logicalDevice->vkd;
+        const VkDevice dev = logicalDevice->device;
+        blurWidth  = targetWidth;
+        blurHeight = targetHeight;
+        bool ok = true;
+
+        // A capture needs the swapchain format to be blittable and filterable.
+        // If it is not, the whole feature is unavailable and we fall back to the
+        // flat translucent surface rather than record an invalid blit.
+        {
+            VkFormatProperties formatProps{};
+            logicalDevice->vki.GetPhysicalDeviceFormatProperties(logicalDevice->physicalDevice, swapchainFormat, &formatProps);
+            const VkFormatFeatureFlags features = formatProps.optimalTilingFeatures;
+            const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+            if ((features & required) != required)
+            {
+                Logger::warn("overlay blur: swapchain format lacks blit support; blur disabled");
+                blurWidth  = 0;
+                blurHeight = 0;
+                return false;
+            }
+            blurFilter = (features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+        }
+
+        // Offscreen render pass. DONT_CARE because every pass overwrites the whole
+        // attachment. Its external dependencies make a prior sample of the target
+        // (write-after-read) and a prior write (write-after-write) safe without a
+        // separate barrier before every pass.
+        {
+            VkAttachmentDescription attachment{};
+            attachment.format         = swapchainFormat;
+            attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+            attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+            attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+            attachment.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkAttachmentReference colorRef{};
+            colorRef.attachment = 0;
+            colorRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            VkSubpassDescription subpass{};
+            subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.colorAttachmentCount = 1;
+            subpass.pColorAttachments    = &colorRef;
+
+            VkSubpassDependency deps[2]{};
+            deps[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+            deps[0].dstSubpass    = 0;
+            deps[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            deps[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            deps[1].srcSubpass    = 0;
+            deps[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+            deps[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            deps[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+            VkRenderPassCreateInfo info{};
+            info.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+            info.attachmentCount = 1;
+            info.pAttachments    = &attachment;
+            info.subpassCount    = 1;
+            info.pSubpasses      = &subpass;
+            info.dependencyCount = 2;
+            info.pDependencies   = deps;
+            ok = vkd.CreateRenderPass(dev, &info, nullptr, &blurRenderPass) == VK_SUCCESS;
+        }
+
+        if (ok)
+        {
+            blurSetLayout = createImageSamplerDescriptorSetLayout(logicalDevice, 1u);
+            if (blurSetLayout == VK_NULL_HANDLE)
+                ok = false;
+        }
+
+        if (ok)
+        {
+            VkDescriptorPoolSize poolSize{};
+            poolSize.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            poolSize.descriptorCount = imageCount * 2u;
+            blurPool = createDescriptorPool(logicalDevice, {poolSize});
+            if (blurPool == VK_NULL_HANDLE)
+                ok = false;
+        }
+
+        if (ok)
+        {
+            VkSamplerCreateInfo info{};
+            info.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            info.magFilter    = VK_FILTER_LINEAR;
+            info.minFilter    = VK_FILTER_LINEAR;
+            info.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            info.maxLod       = 0.0f;
+            ok = vkd.CreateSampler(dev, &info, nullptr, &blurSampler) == VK_SUCCESS;
+        }
+
+        if (ok)
+        {
+            VkPushConstantRange range{};
+            range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            range.offset     = 0;
+            range.size       = sizeof(BlurPushConstants);
+            blurPipelineLayout = createGraphicsPipelineLayout(logicalDevice, {blurSetLayout}, {range});
+            if (blurPipelineLayout == VK_NULL_HANDLE)
+                ok = false;
+        }
+
+        if (ok)
+        {
+            VkShaderModule vert = VK_NULL_HANDLE;
+            VkShaderModule frag = VK_NULL_HANDLE;
+            createShaderModule(logicalDevice, full_screen_triangle_vert, &vert);
+            createShaderModule(logicalDevice, overlay_blur_frag, &frag);
+            if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE)
+            {
+                ok = false;
+            }
+            else
+            {
+                VkExtent2D extent{blurWidth, blurHeight};
+                blurPipeline = createGraphicsPipeline(logicalDevice, vert, nullptr, "main", frag, nullptr, "main",
+                                                      extent, blurRenderPass, blurPipelineLayout);
+                if (blurPipeline == VK_NULL_HANDLE)
+                    ok = false;
+            }
+            if (frag != VK_NULL_HANDLE) vkd.DestroyShaderModule(dev, frag, nullptr);
+            if (vert != VK_NULL_HANDLE) vkd.DestroyShaderModule(dev, vert, nullptr);
+        }
+
+        if (ok)
+        {
+            // One image, its device memory and its view. Both ping-pong targets
+            // share this so the per-image block below stays symmetric.
+            auto createImage = [&](VkImage& image, VkDeviceMemory& memory, VkImageView& view) -> bool {
+                VkImageCreateInfo ci{};
+                ci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+                ci.imageType     = VK_IMAGE_TYPE_2D;
+                ci.format        = swapchainFormat;
+                ci.extent        = {blurWidth, blurHeight, 1};
+                ci.mipLevels     = 1;
+                ci.arrayLayers   = 1;
+                ci.samples       = VK_SAMPLE_COUNT_1_BIT;
+                ci.tiling        = VK_IMAGE_TILING_OPTIMAL;
+                ci.usage         = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+                ci.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+                ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                if (vkd.CreateImage(dev, &ci, nullptr, &image) != VK_SUCCESS)
+                    return false;
+                VkMemoryRequirements req{};
+                vkd.GetImageMemoryRequirements(dev, image, &req);
+                VkMemoryAllocateInfo ai{};
+                ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                ai.allocationSize  = req.size;
+                ai.memoryTypeIndex = findMemoryTypeIndex(logicalDevice, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                if (vkd.AllocateMemory(dev, &ai, nullptr, &memory) != VK_SUCCESS)
+                    return false;
+                if (vkd.BindImageMemory(dev, image, memory, 0) != VK_SUCCESS)
+                    return false;
+                VkImageViewCreateInfo vi{};
+                vi.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                vi.image                           = image;
+                vi.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+                vi.format                          = swapchainFormat;
+                vi.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+                vi.subresourceRange.baseMipLevel   = 0;
+                vi.subresourceRange.levelCount     = 1;
+                vi.subresourceRange.baseArrayLayer = 0;
+                vi.subresourceRange.layerCount     = 1;
+                return vkd.CreateImageView(dev, &vi, nullptr, &view) == VK_SUCCESS;
+            };
+
+            // Sample set for a blur source. The layout is declared read-only so
+            // it matches the render pass's final layout, unlike the shared helper
+            // which hardcodes GENERAL.
+            auto writeSourceSet = [&](VkDescriptorSet& set, VkImageView view) -> bool {
+                VkDescriptorSetAllocateInfo ai{};
+                ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+                ai.descriptorPool     = blurPool;
+                ai.descriptorSetCount = 1;
+                ai.pSetLayouts        = &blurSetLayout;
+                if (vkd.AllocateDescriptorSets(dev, &ai, &set) != VK_SUCCESS)
+                    return false;
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.sampler     = blurSampler;
+                imageInfo.imageView   = view;
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                VkWriteDescriptorSet write{};
+                write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet          = set;
+                write.dstBinding      = 0;
+                write.descriptorCount = 1;
+                write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.pImageInfo      = &imageInfo;
+                vkd.UpdateDescriptorSets(dev, 1, &write, 0, nullptr);
+                return true;
+            };
+
+            blurResources.resize(imageCount);
+            for (uint32_t i = 0; i < imageCount && ok; ++i)
+            {
+                BlurResources& r = blurResources[i];
+                for (int s = 0; s < 2 && ok; ++s)
+                {
+                    if (!createImage(r.image[s], r.memory[s], r.view[s]))
+                    {
+                        ok = false;
+                        break;
+                    }
+
+                    VkFramebufferCreateInfo fi{};
+                    fi.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                    fi.renderPass      = blurRenderPass;
+                    fi.attachmentCount = 1;
+                    fi.pAttachments    = &r.view[s];
+                    fi.width           = blurWidth;
+                    fi.height          = blurHeight;
+                    fi.layers          = 1;
+                    if (vkd.CreateFramebuffer(dev, &fi, nullptr, &r.framebuffer[s]) != VK_SUCCESS)
+                    {
+                        ok = false;
+                        break;
+                    }
+
+                    if (!writeSourceSet(r.sourceSet[s], r.view[s]))
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+
+                if (!ok)
+                    break;
+
+                // image[0] is always the final ping-pong result, so it is the one
+                // the overlay draws.
+                r.imguiTexture = ImGui_ImplVulkan_AddTexture(blurSampler, r.view[0],
+                                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                if (r.imguiTexture == VK_NULL_HANDLE)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+
+        if (!ok)
+        {
+            releaseBlurResources(false);
+            return false;
+        }
+
+        blurReady = true;
+        Logger::debug("overlay blur resources ready at " + std::to_string(blurWidth) + "x" + std::to_string(blurHeight));
+        return true;
+    }
+
+    void ImGuiOverlay::releaseBlurResources(bool deferred)
+    {
+        if (!logicalDevice)
+            return;
+
+        auto& vkd = logicalDevice->vkd;
+        const VkDevice dev = logicalDevice->device;
+
+        // ImGui owns these descriptor sets and pulls them from its own pool, so
+        // they must go back before ImGui_ImplVulkan_Shutdown no matter how the
+        // device handles below are released.
+        for (auto& r : blurResources)
+        {
+            if (r.imguiTexture != VK_NULL_HANDLE && backendInitialized)
+                ImGui_ImplVulkan_RemoveTexture(r.imguiTexture);
+            r.imguiTexture = VK_NULL_HANDLE;
+        }
+
+        if (deferred)
+        {
+            auto& queue = DeferredDestroyQueue::instance();
+            for (auto& r : blurResources)
+            {
+                for (int s = 0; s < 2; ++s)
+                {
+                    if (r.image[s] != VK_NULL_HANDLE)
+                        queue.push(DestroyPhase::Resource, [vkd, dev, h = r.image[s]] { vkd.DestroyImage(dev, h, nullptr); });
+                    if (r.view[s] != VK_NULL_HANDLE)
+                        queue.push(DestroyPhase::Resource, [vkd, dev, h = r.view[s]] { vkd.DestroyImageView(dev, h, nullptr); });
+                    if (r.framebuffer[s] != VK_NULL_HANDLE)
+                        queue.push(DestroyPhase::RenderPass, [vkd, dev, h = r.framebuffer[s]] { vkd.DestroyFramebuffer(dev, h, nullptr); });
+                    if (r.memory[s] != VK_NULL_HANDLE)
+                        queue.push(DestroyPhase::Memory, [vkd, dev, h = r.memory[s]] { vkd.FreeMemory(dev, h, nullptr); });
+                }
+            }
+            if (blurPipeline != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Pipeline, [vkd, dev, h = blurPipeline] { vkd.DestroyPipeline(dev, h, nullptr); });
+            if (blurRenderPass != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::RenderPass, [vkd, dev, h = blurRenderPass] { vkd.DestroyRenderPass(dev, h, nullptr); });
+            if (blurPool != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Descriptor, [vkd, dev, h = blurPool] { vkd.DestroyDescriptorPool(dev, h, nullptr); });
+            if (blurPipelineLayout != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Layout, [vkd, dev, h = blurPipelineLayout] { vkd.DestroyPipelineLayout(dev, h, nullptr); });
+            if (blurSetLayout != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Layout, [vkd, dev, h = blurSetLayout] { vkd.DestroyDescriptorSetLayout(dev, h, nullptr); });
+            if (blurSampler != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::Resource, [vkd, dev, h = blurSampler] { vkd.DestroySampler(dev, h, nullptr); });
+        }
+        else
+        {
+            for (auto& r : blurResources)
+            {
+                for (int s = 0; s < 2; ++s)
+                {
+                    if (r.framebuffer[s] != VK_NULL_HANDLE) { vkd.DestroyFramebuffer(dev, r.framebuffer[s], nullptr); r.framebuffer[s] = VK_NULL_HANDLE; }
+                    if (r.view[s] != VK_NULL_HANDLE)        { vkd.DestroyImageView(dev, r.view[s], nullptr); r.view[s] = VK_NULL_HANDLE; }
+                    if (r.image[s] != VK_NULL_HANDLE)       { vkd.DestroyImage(dev, r.image[s], nullptr); r.image[s] = VK_NULL_HANDLE; }
+                    if (r.memory[s] != VK_NULL_HANDLE)      { vkd.FreeMemory(dev, r.memory[s], nullptr); r.memory[s] = VK_NULL_HANDLE; }
+                }
+            }
+            if (blurPipeline != VK_NULL_HANDLE)       { vkd.DestroyPipeline(dev, blurPipeline, nullptr); blurPipeline = VK_NULL_HANDLE; }
+            if (blurRenderPass != VK_NULL_HANDLE)     { vkd.DestroyRenderPass(dev, blurRenderPass, nullptr); blurRenderPass = VK_NULL_HANDLE; }
+            if (blurPool != VK_NULL_HANDLE)           { vkd.DestroyDescriptorPool(dev, blurPool, nullptr); blurPool = VK_NULL_HANDLE; }
+            if (blurPipelineLayout != VK_NULL_HANDLE) { vkd.DestroyPipelineLayout(dev, blurPipelineLayout, nullptr); blurPipelineLayout = VK_NULL_HANDLE; }
+            if (blurSetLayout != VK_NULL_HANDLE)      { vkd.DestroyDescriptorSetLayout(dev, blurSetLayout, nullptr); blurSetLayout = VK_NULL_HANDLE; }
+            if (blurSampler != VK_NULL_HANDLE)        { vkd.DestroySampler(dev, blurSampler, nullptr); blurSampler = VK_NULL_HANDLE; }
+        }
+
+        blurResources.clear();
+        blurReady = false;
+        blurWidth = 0;
+        blurHeight = 0;
+    }
+
+    void ImGuiOverlay::recordBlur(VkCommandBuffer cmd, uint32_t imageIndex, VkImage sourceImage,
+                                  uint32_t sourceWidth, uint32_t sourceHeight)
+    {
+        if (!blurReady || imageIndex >= blurResources.size())
+            return;
+        BlurResources& r = blurResources[imageIndex];
+        if (r.image[0] == VK_NULL_HANDLE || r.image[1] == VK_NULL_HANDLE)
+            return;
+
+        auto& vkd = logicalDevice->vkd;
+
+        VkImageMemoryBarrier barrier{};
+        barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel   = 0;
+        barrier.subresourceRange.levelCount     = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount     = 1;
+
+        // Swapchain: PRESENT_SRC -> TRANSFER_SRC for the capture blit. PRESENT_SRC
+        // is not a legal blit source layout, so this transition is mandatory.
+        barrier.image         = sourceImage;
+        barrier.oldLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkd.CmdPipelineBarrier(cmd,
+                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        // Capture target: discard the previous frame's contents and ready it for
+        // the blit. UNDEFINED is safe because the blit overwrites it entirely.
+        barrier.image         = r.image[0];
+        barrier.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkd.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        VkImageBlit region{};
+        region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.srcSubresource.mipLevel       = 0;
+        region.srcSubresource.baseArrayLayer = 0;
+        region.srcSubresource.layerCount     = 1;
+        region.srcOffsets[0] = {0, 0, 0};
+        region.srcOffsets[1] = {static_cast<int32_t>(sourceWidth), static_cast<int32_t>(sourceHeight), 1};
+        region.dstSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.dstSubresource.mipLevel       = 0;
+        region.dstSubresource.baseArrayLayer = 0;
+        region.dstSubresource.layerCount     = 1;
+        region.dstOffsets[0] = {0, 0, 0};
+        region.dstOffsets[1] = {static_cast<int32_t>(blurWidth), static_cast<int32_t>(blurHeight), 1};
+        vkd.CmdBlitImage(cmd, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         r.image[0], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         1, &region, blurFilter);
+
+        // Capture is now readable by the first blur pass.
+        barrier.image         = r.image[0];
+        barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkd.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                               0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        // Swapchain back to PRESENT_SRC for the ImGui render pass, whose
+        // attachment declares that as its initial layout.
+        barrier.image         = sourceImage;
+        barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        vkd.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                               0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        const ImGuiM3BlurSettings& settings = ImGuiM3GetBlurSettings();
+        int passes = settings.passes;
+        if (passes < 1)  passes = 1;
+        if (passes > 10) passes = 10;
+        // Half the configured size as pixel spacing: a 5-wide kernel on each side
+        // of a 9-tap read, repeated, reads as a generous radius rather than a
+        // hard band.
+        const float radius = std::max(0.0f, settings.size) * 0.5f;
+        const float sigma  = kBlurSigma;
+
+        auto recordPass = [&](VkFramebuffer framebuffer, VkDescriptorSet source, const BlurPushConstants& pc) {
+            VkRenderPassBeginInfo rp{};
+            rp.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rp.renderPass        = blurRenderPass;
+            rp.framebuffer       = framebuffer;
+            rp.renderArea.offset = {0, 0};
+            rp.renderArea.extent = {blurWidth, blurHeight};
+            vkd.CmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+            vkd.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blurPipeline);
+            vkd.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blurPipelineLayout, 0, 1, &source, 0, nullptr);
+            vkd.CmdPushConstants(cmd, blurPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+            vkd.CmdDraw(cmd, 3, 1, 0, 0);
+            vkd.CmdEndRenderPass(cmd);
+        };
+
+        // Horizontal into image[1], then vertical back into image[0]. Pairs keep
+        // the final image fixed at image[0] regardless of `passes` parity, so the
+        // ImGui texture registered above never has to be rebuilt.
+        for (int p = 0; p < passes; ++p)
+        {
+            BlurPushConstants pc{};
+            pc.directionX = radius / static_cast<float>(blurWidth);
+            pc.directionY = 0.0f;
+            pc.sigma      = sigma;
+            recordPass(r.framebuffer[1], r.sourceSet[0], pc);
+
+            pc.directionX = 0.0f;
+            pc.directionY = radius / static_cast<float>(blurHeight);
+            pc.sigma      = sigma;
+            recordPass(r.framebuffer[0], r.sourceSet[1], pc);
+        }
+    }
+
+    VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height)
+    {
+        sampleDiagnostics();
+        // Shell appear/disappear. The clock lives on steady_clock so it runs even
+        // on frames where ImGui hasn't ticked yet. Same curve and rise as the
+        // dialogs, reversed on hide, so the overlay opens and closes like a popup.
+        const double shellNow = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (shellAnimTarget != visible)
+        {
+            shellAnimTarget = visible;
+            shellAnimStart = shellNow;
+        }
+        const float shellClock = std::clamp(
+            static_cast<float>((shellNow - shellAnimStart) / kShellAnimSeconds), 0.0f, 1.0f);
+        const float shellEase = UI::CubicBezierEase(shellClock, kShellBezX1, kShellBezY1, kShellBezX2, kShellBezY2);
+        // The bezier overshoots past 1 (kShellBezY2 > 1); clamp the alpha or the
+        // raw 8-bit pack in the title bar wraps and the marks blink out.
+        shellAlpha = std::clamp(visible ? shellEase : 1.0f - shellEase, 0.0f, 1.0f);
+        const bool  shellActive = visible || shellAlpha > 0.001f;
+        const bool  shellAnimating = shellClock < 1.0f;
+        // appears by rising from below, disappears by sinking back down: the
+        // reverse of the dialog's entrance.
+        const float shellDrop = kShellAnimDropDp * ImGuiM3GetMetrics().density;
+        const float shellOffsetY = shellDrop * (visible ? (1.0f - shellEase) : shellEase);
+
+        // Render even when the main overlay is hidden if there are pending
+        // toast notifications — fatal errors must stay visible to the user. The
+        // main shell keeps rendering through its disappear animation.
+        const bool hasToasts = hasPendingToasts();
+        if (!backendInitialized || (!shellActive && !hasToasts))
+        {
+            // drop last frame's hitboxes, or they keep swallowing input.
+            frameInputRects.clear();
+            setInputRects(nullptr, 0);
+            setInputBlocked(false);
+            setInputInteractive(false);
+            setOverlayWantsKeyboard(false);
+            setWaylandInputSurfaceRects(nullptr, 0);
+            return VK_NULL_HANDLE;
+        }
+
+        // hitboxes are rebuilt below; the gate is only on while the overlay (or
+        // a toast) is actually on screen.
+        frameInputRects.clear();
+        setInputBlocked((shellActive || hasToasts) && settingsManager.getOverlayBlockInput());
+
+        // Store current resolution for VRAM estimates in settings
+        currentWidth = width;
+        currentHeight = height;
+
+        // Backdrop blur. Resolve the settings once per frame; the struct lives in
+        // the theme, so the editor and the persisted `.colors` file drive this
+        // directly. blurActive stays false on any failure and the caller then
+        // falls back to the flat translucent surface.
+        ImGuiM3BlurSettings&    blurSettings     = ImGuiM3GetBlurSettings();
+        ImGuiM3BackgroundObject& backgroundObject = ImGuiM3GetBackgroundObject();
+        const float backgroundOpacity = std::clamp(blurSettings.background_opacity, 0.0f, 1.0f);
+        const bool  blurRequested = blurSettings.blur && backgroundObject.BackgroundBlur && backgroundOpacity <= 0.99f;
+        bool        blurActive    = false;
+        if (shellActive && blurRequested)
+        {
+            ensureBlurResources(width, height);
+            blurActive = blurReady && imageIndex < blurResources.size();
+        }
+
+        // Wait for previous use of this command buffer to complete.
+        // Adaptive timeout: 4x the measured frame time (generous margin for GPU
+        // scheduling jitter), clamped to [2ms, 50ms].  With triple buffering the
+        // fence was submitted 2-3 frames ago and is almost always already signaled.
+        static float avgFrameTimeMs = 8.0f;  // Seed at ~120 FPS
+        VkFence fence = commandBufferFences[imageIndex];
+        uint64_t timeoutNs = static_cast<uint64_t>(
+            std::clamp(avgFrameTimeMs * 4.0f, 2.0f, 12.0f) * 1'000'000.0f);
+        VkResult fenceResult = logicalDevice->vkd.WaitForFences(logicalDevice->device, 1, &fence, VK_TRUE, timeoutNs);
+        if (fenceResult == VK_TIMEOUT)
+        {
+            Logger::warn("ImGui fence wait timed out for image " + std::to_string(imageIndex));
+            return VK_NULL_HANDLE;
+        }
+        if (fenceResult != VK_SUCCESS)
+        {
+            Logger::err("ImGui fence wait failed: " + std::to_string(fenceResult));
+            return VK_NULL_HANDLE;
+        }
+        VkResult resetResult = logicalDevice->vkd.ResetFences(logicalDevice->device, 1, &fence);
+        if (resetResult != VK_SUCCESS)
+        {
+            Logger::err("Failed to reset ImGui fence: " + std::to_string(resetResult));
+            return VK_NULL_HANDLE;
+        }
+
+        VkCommandBuffer cmd = commandBuffers[imageIndex];
+
+        // Begin command buffer
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        VkResult vr = logicalDevice->vkd.BeginCommandBuffer(cmd, &beginInfo);
+        if (vr != VK_SUCCESS)
+        {
+            Logger::err("Failed to begin ImGui command buffer: " + std::to_string(vr));
+            return VK_NULL_HANDLE;
+        }
+
+        // Ensure framebuffer exists for this image index.
+        // Recreate if the image view or dimensions changed (swapchain recreation).
+        if (framebuffers.size() <= imageIndex)
+        {
+            framebuffers.resize(imageIndex + 1, VK_NULL_HANDLE);
+            framebufferImageViews.resize(imageIndex + 1, VK_NULL_HANDLE);
+        }
+
+        bool needRecreate = (framebuffers[imageIndex] == VK_NULL_HANDLE) ||
+                            (framebufferImageViews[imageIndex] != imageView) ||
+                            (framebufferWidth != width) || (framebufferHeight != height);
+
+        if (needRecreate)
+        {
+            if (framebuffers[imageIndex] != VK_NULL_HANDLE)
+                logicalDevice->vkd.DestroyFramebuffer(logicalDevice->device, framebuffers[imageIndex], nullptr);
+
+            VkFramebufferCreateInfo fbInfo = {};
+            fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fbInfo.renderPass = renderPass;
+            fbInfo.attachmentCount = 1;
+            fbInfo.pAttachments = &imageView;
+            fbInfo.width = width;
+            fbInfo.height = height;
+            fbInfo.layers = 1;
+            vr = logicalDevice->vkd.CreateFramebuffer(logicalDevice->device, &fbInfo, nullptr, &framebuffers[imageIndex]);
+            if (vr != VK_SUCCESS)
+            {
+                Logger::err("Failed to create ImGui framebuffer: " + std::to_string(vr));
+                logicalDevice->vkd.EndCommandBuffer(cmd);
+                return VK_NULL_HANDLE;
+            }
+            framebufferImageViews[imageIndex] = imageView;
+            framebufferWidth = width;
+            framebufferHeight = height;
+        }
+
+        VkFramebuffer framebuffer = framebuffers[imageIndex];
+
+        // Set display size and frame timing BEFORE NewFrame
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2((float)width, (float)height);
+
+        // DeltaTime for ImGui's internal timing (drag thresholds, animations).
+        // Uses last known good value as fallback instead of hardcoded 1/60.
+        static auto lastFrameTime = std::chrono::steady_clock::now();
+        static float lastGoodDt = 0.008f;  // Seed at ~120 FPS
+        auto now = std::chrono::steady_clock::now();
+        float dt = std::chrono::duration<float>(now - lastFrameTime).count();
+        lastFrameTime = now;
+        if (dt > 0.0f && dt < 1.0f)
+        {
+            io.DeltaTime = dt;
+            lastGoodDt = dt;
+            // Update adaptive fence timeout with exponential moving average
+            avgFrameTimeMs = avgFrameTimeMs * 0.9f + (dt * 1000.0f) * 0.1f;
+        }
+        else
+        {
+            io.DeltaTime = lastGoodDt;
+        }
+
+        // Mouse input for interactivity
+        MouseState mouse = getMouseState();
+        io.MousePos = ImVec2((float)mouse.x, (float)mouse.y);
+
+        io.MouseDown[0] = mouse.leftButton;
+        io.MouseDown[1] = mouse.rightButton;
+        io.MouseDown[2] = mouse.middleButton;
+        io.MouseWheel = mouse.scrollDelta;
+        // Wayland surfaces are their own layer and never get a compositor-drawn
+        // pointer, so the overlay renders one. Under X11/Xwayland the real system
+        // cursor already sits above the overlay window, and drawing a second one
+        // only reads as a doubled, trailing pointer.
+        io.MouseDrawCursor = (getSurfaceKind() == SurfaceKind::Wayland);
+
+        auto publishOverlayInput = [&]() {
+            const bool blocking = settingsManager.getOverlayBlockInput();
+            if (blocking)
+                setInputRects(frameInputRects.data(), static_cast<int>(frameInputRects.size()));
+            else
+                setInputRects(nullptr, 0);
+
+            // Keys are only taken from the game while the overlay consumes them:
+            // a text field is active or a popup is open. Taking them for a bare
+            // pointer crossing makes Wine drop the game's cursor capture (it
+            // reads the grab's focus events as a window-manager grab).
+            const bool interactive = shellActive && blocking;
+            setInputInteractive(interactive);
+            setOverlayWantsKeyboard(interactive
+                && (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup)));
+            updatePointerPosition(static_cast<float>(mouse.x), static_cast<float>(mouse.y));
+        };
+
+        // Keyboard input for text fields
+        // Keys are one-shot events, so we send press and release in same frame
+        KeyboardState keyboard = getKeyboardState();
+        for (char c : keyboard.typedChars)
+            io.AddInputCharacter(c);
+        if (keyboard.backspace) { io.AddKeyEvent(ImGuiKey_Backspace, true); io.AddKeyEvent(ImGuiKey_Backspace, false); }
+        if (keyboard.del) { io.AddKeyEvent(ImGuiKey_Delete, true); io.AddKeyEvent(ImGuiKey_Delete, false); }
+        if (keyboard.enter) { io.AddKeyEvent(ImGuiKey_Enter, true); io.AddKeyEvent(ImGuiKey_Enter, false); }
+        if (keyboard.left) { io.AddKeyEvent(ImGuiKey_LeftArrow, true); io.AddKeyEvent(ImGuiKey_LeftArrow, false); }
+        if (keyboard.right) { io.AddKeyEvent(ImGuiKey_RightArrow, true); io.AddKeyEvent(ImGuiKey_RightArrow, false); }
+        if (keyboard.home) { io.AddKeyEvent(ImGuiKey_Home, true); io.AddKeyEvent(ImGuiKey_Home, false); }
+        if (keyboard.end) { io.AddKeyEvent(ImGuiKey_End, true); io.AddKeyEvent(ImGuiKey_End, false); }
+
+        // ImGui frame
+        ImGui_ImplVulkan_NewFrame();
+        ImGui::NewFrame();
+
+        // When the overlay is hidden but toasts are showing, skip the main
+        // window — toasts are standalone floating windows. During the disappear
+        // animation the shell is still drawn.
+        if (!visible && !shellActive)
+        {
+            // toasts render on their own so fatal errors stay visible
+            renderToasts();
+            // main window is gone; only toasts remain, so free the pointer.
+            setWaylandInputSurfaceRects(nullptr, 0);
+            publishOverlayInput();
+            ImGui::Render();
+
+            VkRenderPassBeginInfo rpBegin = {};
+            rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rpBegin.renderPass = renderPass;
+            rpBegin.framebuffer = framebuffer;
+            rpBegin.renderArea.extent.width = width;
+            rpBegin.renderArea.extent.height = height;
+
+            logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+            logicalDevice->vkd.CmdEndRenderPass(cmd);
+
+            VkResult endRes = logicalDevice->vkd.EndCommandBuffer(cmd);
+            if (endRes != VK_SUCCESS)
+            {
+                Logger::err("Failed to end ImGui command buffer (toast-only): " + std::to_string(endRes));
+                return VK_NULL_HANDLE;
+            }
+            return cmd;
+        }
+
+        // the overlay draws into the game's swapchain, so all window math lives in
+        // framebuffer space -- monitor work area is the wrong coordinate system
+        // for a windowed game.
+        const ImVec2 screenMin(0.0f, 0.0f);
+        const ImVec2 screenMax(static_cast<float>(width), static_cast<float>(height));
+        const ImVec2 avail(screenMax.x - screenMin.x, screenMax.y - screenMin.y);
+
+        // default: tall panel on the right, sized off the game window so it isn't
+        // starving on a large display and doesn't overflow a small one. The floor
+        // scales off the window so labels, the nav and the actions never clip; it
+        // is capped by the window itself so the overlay can't exceed the game.
+        const ImGuiM3Metrics& shell_metrics = ImGuiM3GetMetrics();
+        const float margin_x = avail.x * 0.04f;
+        const float margin_y = avail.y * 0.03f;
+        const float legible_w = 520.0f * shell_metrics.density;
+        const float legible_h = 420.0f * shell_metrics.density;
+        const float panel_w = ImClamp(avail.x * 0.36f, ImMin(legible_w, avail.x), ImMax(320.0f, avail.x - margin_x * 2.0f));
+        const float panel_h = ImClamp(avail.y * 0.91f, ImMin(legible_h, avail.y), ImMax(360.0f, avail.y - margin_y * 2.0f));
+        const ImVec2 defaultPos(screenMax.x - panel_w - margin_x, screenMin.y + margin_y);
+        const ImVec2 defaultSize(panel_w, panel_h);
+
+        // A floor the layout can always lay out against, in dp so it tracks the
+        // theme's density: below this the cards, nav and preview rows start
+        // cutting each other off. Still clamped by the window, so a game smaller
+        // than the floor can keep its own size.
+        const float min_overlay_w = 640.0f * shell_metrics.density;
+        const float min_overlay_h = 830.0f * shell_metrics.density;
+        const ImVec2 minSize(ImMin(ImMax(legible_w, min_overlay_w), avail.x),
+                             ImMin(ImMax(legible_h, min_overlay_h), avail.y));
+        const ImVec2 maxSize = avail;
+
+        // One source of truth for the shell's resting position. While the slide
+        // runs (or on the frame it settles) the position is driven from the base
+        // plus offset; once settled we stop forcing it so the user can drag the
+        // window. shellForcePos covers the settle frame, so there is no pop.
+        if (resetLayoutRequested)
+        {
+            shellBaseX = defaultPos.x;
+            shellBaseY = defaultPos.y;
+            shellBaseValid = true;
+            resetLayoutRequested = false;
+            shellForcePos = true;
+        }
+        if (!shellBaseValid)
+        {
+            shellBaseX = defaultPos.x;
+            shellBaseY = defaultPos.y;
+            shellBaseValid = true;
+            shellForcePos = true;
+        }
+        if (shellAnimating)
+            shellForcePos = true;
+        if (shellForcePos)
+        {
+            const float keep = ImMin(avail.x, avail.y) * 0.05f;
+            shellBaseX = ImClamp(shellBaseX, screenMin.x, ImMax(screenMin.x, screenMax.x - keep));
+            shellBaseY = ImClamp(shellBaseY, screenMin.y, ImMax(screenMin.y, screenMax.y - keep));
+            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY + shellOffsetY), ImGuiCond_Always);
+        }
+        else
+        {
+            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY), ImGuiCond_FirstUseEver);
+        }
+        ImGui::SetNextWindowSize(defaultSize, ImGuiCond_FirstUseEver);
+
+        const float previousFramePaddingY = ImGui::GetStyle().FramePadding.y;
+        ImGui::GetStyle().FramePadding.y = std::max(0.0f, (OverlayTitleBarHeight() - ImGui::GetFontSize()) * 0.5f);
+        ImGui::SetNextWindowSizeConstraints(minSize, maxSize, overlayTitleHeightConstraint);
+        // The shell surface is translucent by BackgroundOpacity over the game
+        // frame (and over the blurred backdrop when blur is active). The content
+        // child stays transparent so the tint is applied exactly once. The whole
+        // shell fades with the appear/disappear clock.
+        ImGui::SetNextWindowBgAlpha(backgroundOpacity * shellAlpha);
+        // "##..." renders as an empty native title: the bar keeps its drag
+        // rect while the brand row below owns the pixels.
+        ImGui::Begin("##vkintox_overlay", nullptr,
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
+
+        // Fade every widget the shell draws. Raw draw-list marks below get the
+        // alpha applied by hand.
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, shellAlpha);
+
+        const ImVec2 windowPos = ImGui::GetWindowPos();
+        const ImVec2 windowSize = ImGui::GetWindowSize();
+
+        // A settled frame writes its (possibly dragged) position back into the
+        // base and stops forcing the position, so dragging works again.
+        if (!shellAnimating)
+        {
+            shellBaseX = windowPos.x;
+            shellBaseY = windowPos.y;
+            shellForcePos = false;
+        }
+
+        // Subtle elevation under the shell, on the background list so it sits
+        // behind the translucent surface. PackU32 scales the shadow by the
+        // shell alpha pushed above, so it fades in and out with the surface
+        // instead of popping in once the motion stops.
+        {
+            const float shellR = ImGui::GetStyle().WindowRounding;
+            ImGuiM3DrawElevation(ImGui::GetBackgroundDrawList(),
+                                 ImRect(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y)),
+                                 ImGuiM3ShapeRounding{ shellR, shellR, shellR, shellR }, 3);
+        }
+
+        // Draw the blurred backdrop behind every overlay surface. The background
+        // draw list is rendered before any window, so the shell/nav/child surfaces
+        // (at BackgroundOpacity) tint it exactly like they tint the game frame.
+        if (blurActive && blurResources[imageIndex].imguiTexture != VK_NULL_HANDLE)
+        {
+            // Sample the region actually behind the window so the backdrop stays
+            // registered with the scene as the overlay is dragged or resized.
+            const float invW = width  > 0 ? 1.0f / static_cast<float>(width)  : 0.0f;
+            const float invH = height > 0 ? 1.0f / static_cast<float>(height) : 0.0f;
+            const ImVec2 uv0(windowPos.x * invW, windowPos.y * invH);
+            const ImVec2 uv1((windowPos.x + windowSize.x) * invW, (windowPos.y + windowSize.y) * invH);
+
+            // The backdrop rides the same clock as the shell, so it fades in and
+            // out with the surface instead of popping in fully formed.
+            const int backdropAlpha = static_cast<int>(255.0f * std::clamp(shellAlpha, 0.0f, 1.0f));
+            ImDrawList* backgroundDrawList = ImGui::GetBackgroundDrawList();
+            // the toasts are separate windows and can sit anywhere over the shell
+            drawBackdropAvoiding(backgroundDrawList,
+                                 ImTextureRef(reinterpret_cast<ImTextureID>(blurResources[imageIndex].imguiTexture)),
+                                 windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y),
+                                 uv0, uv1, IM_COL32(255, 255, 255, backdropAlpha),
+                                 ImGui::GetStyle().WindowRounding, toastCardRects);
+        }
+        const float titleBarHeight = ImGui::GetCurrentWindowRead()->TitleBarHeight;
+        const ImGuiM3Metrics& m3metrics = ImGuiM3GetMetrics();
+        // three-zone header: icon leading, brand centred, close trailing.
+        const float closeButtonSize = 26.0f * m3metrics.density;
+        const float closeButtonRightInset = 14.0f * m3metrics.density;
+        const ImVec2 buttonMin(windowPos.x + windowSize.x - closeButtonSize - closeButtonRightInset,
+                               windowPos.y + (titleBarHeight - closeButtonSize) * 0.5f);
+        const ImVec2 buttonMax(buttonMin.x + closeButtonSize, buttonMin.y + closeButtonSize);
+        const ImVec2 buttonCenter(buttonMin.x + closeButtonSize * 0.5f,
+                                  buttonMin.y + closeButtonSize * 0.5f);
+        const bool buttonHovered = ImGui::IsMouseHoveringRect(buttonMin, buttonMax, false);
+        const ImVec2 mousePos = ImGui::GetIO().MousePos;
+        const bool pointerInTitleBar = mousePos.x >= windowPos.x && mousePos.x < windowPos.x + windowSize.x &&
+                                       mousePos.y >= windowPos.y && mousePos.y < windowPos.y + titleBarHeight;
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && pointerInTitleBar && !buttonHovered)
+        {
+            titleRightDragging = true;
+            titleRightDragOffsetX = mousePos.x - windowPos.x;
+            titleRightDragOffsetY = mousePos.y - windowPos.y;
+        }
+        if (titleRightDragging)
+        {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Right))
+                ImGui::SetWindowPos(ImVec2(mousePos.x - titleRightDragOffsetX,
+                                           mousePos.y - titleRightDragOffsetY));
+            else
+                titleRightDragging = false;
+        }
+        const bool closeRequested = buttonHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        // The titlebar rides the window's own draw list, not the foreground one,
+        // so popups opened over it draw above it. The window's content clip
+        // excludes the title bar, so widen the clip to the whole window while
+        // the bar is drawn, then restore it.
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImGui::PushClipRect(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + windowSize.y), false);
+
+        // The bar mixes raw draw-list colors with M3 colors (which PackU32 already
+        // scales by the style alpha). Pin the style alpha to 1 here and fade every
+        // mark by hand, so the logo, wordmark and close button all fade together
+        // and can't double-dim against the shell.
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
+        auto fadeU32 = [&](ImU32 c) -> ImU32
+        {
+            const float a = std::clamp(((c >> IM_COL32_A_SHIFT) & 0xFFu) / 255.0f * shellAlpha, 0.0f, 1.0f);
+            return (c & ~IM_COL32_A_MASK) | (static_cast<ImU32>(a * 255.0f + 0.5f) << IM_COL32_A_SHIFT);
+        };
+
+        // brand row: icon pinned to the leading edge, wordmark centred on the
+        // bar independently of it.
+        {
+            if (titleIconDescriptor != VK_NULL_HANDLE)
+            {
+                const float leftPad = 14.0f * m3metrics.density;
+                const float iconSize = ImTrunc(titleBarHeight * 0.62f);
+                const ImVec2 iconMin(windowPos.x + leftPad, windowPos.y + (titleBarHeight - iconSize) * 0.5f);
+                drawList->AddImage(ImTextureRef(reinterpret_cast<ImTextureID>(titleIconDescriptor)),
+                                   iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize),
+                                   ImVec2(0, 0), ImVec2(1, 1), fadeU32(IM_COL32_WHITE));
+            }
+            ImFont* bold = ImGuiM3FontBold();
+            const float titleSize = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge).size * ImGuiM3GetMetrics().density;
+            if (bold)
+                ImGui::PushFont(bold, titleSize);
+            const char* brand = "VKIntox";
+            const ImVec2 textSize = ImGui::CalcTextSize(brand);
+            drawList->AddText(ImVec2(windowPos.x + (windowSize.x - textSize.x) * 0.5f,
+                                     windowPos.y + (titleBarHeight - textSize.y) * 0.5f),
+                              fadeU32(ImGuiM3ColorU32(ImGuiM3Role_OnSurface)), brand);
+            if (bold)
+                ImGui::PopFont();
+        }
+
+        // a surface-container tone: brighter than the shell in dark mode, darker
+        // in light, so the button separates without reading as a black/white hole.
+        drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
+                                  fadeU32(ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh)));
+        if (buttonHovered)
+        {
+            const ImGuiM3State layer = ImGui::IsMouseDown(ImGuiMouseButton_Left) ? ImGuiM3State_Pressed : ImGuiM3State_Hovered;
+            drawList->AddCircleFilled(buttonCenter, closeButtonSize * 0.5f,
+                                      fadeU32(ImGuiM3StateLayerU32(ImGuiM3Role_OnSurface, layer)));
+        }
+        const ImU32 crossColor = fadeU32(buttonHovered ? ImGuiM3ColorU32(ImGuiM3Role_OnSurface)
+                                                       : ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
+        // the `close` glyph is already rounded and evenly weighted.
+        static const char kCloseGlyph[] = "\xEE\x85\x8C";
+        ImFont* closeIcon = ImGuiM3IconFont();
+        if (closeIcon)
+        {
+            const float px = closeButtonSize * 0.60f;
+            ImGuiM3DrawIcon(drawList, kCloseGlyph, ImRect(buttonMin, buttonMax), px, crossColor);
+        }
+        else
+        {
+            const float crossInset = closeButtonSize * 0.22f;
+            const float crossThickness = 3.0f * m3metrics.density;
+            drawList->AddLine(ImVec2(buttonCenter.x - crossInset, buttonCenter.y - crossInset),
+                              ImVec2(buttonCenter.x + crossInset, buttonCenter.y + crossInset), crossColor, crossThickness);
+            drawList->AddLine(ImVec2(buttonCenter.x + crossInset, buttonCenter.y - crossInset),
+                              ImVec2(buttonCenter.x - crossInset, buttonCenter.y + crossInset), crossColor, crossThickness);
+        }
+        ImGui::PopStyleVar();  // title bar alpha pin
+        ImGui::PopClipRect();
+
+        // Clamp position after the window is created (prevents dragging offscreen).
+        // the keep-on-screen margin scales with the game window too. Skipped while
+        // animating so it can't fight the rise.
+        ImVec2 winPos = ImGui::GetWindowPos();
+        ImVec2 winSize = ImGui::GetWindowSize();
+        const float keep = ImMin(avail.x, avail.y) * 0.05f;
+        bool clamped = false;
+        if (!shellAnimating)
+        {
+            if (winPos.x + winSize.x < screenMin.x + keep) { winPos.x = screenMin.x; clamped = true; }
+            if (winPos.y < screenMin.y)                    { winPos.y = screenMin.y; clamped = true; }
+            if (winPos.x > screenMax.x - keep)              { winPos.x = screenMax.x - keep; clamped = true; }
+            if (winPos.y > screenMax.y - keep)              { winPos.y = screenMax.y - keep; clamped = true; }
+            if (clamped)
+                ImGui::SetWindowPos(winPos);
+        }
+        frameInputRects.push_back(InputRect{winPos.x, winPos.y, winSize.x, winSize.y});
+
+        // Process shader test (one per frame) regardless of active tab
+        processShaderTest();
+
+        // Gather depth-buffer state for the Advanced tab. The overlay shares the
+        // process with the layer, so we read LogicalDevice directly under the
+        // global lock.
+        gatherDepthInfo();
+        applyDepthPinRequests();
+
+        // Bottom navigation dock: a pill bar under the content. The active
+        // destination shows its label; the rest show only their icon. Its height
+        // comes off the content region below.
+        static int activeView = 0;
+        static const char* const kViewLabels[] = {"Effects", "Shaders", "Settings", "About"};
+        static const ImWchar kViewIcons[] = {Icon::WandShine, Icon::Function, Icon::Settings, Icon::Info};
+        constexpr int kViewCount = (int)(sizeof(kViewLabels) / sizeof(kViewLabels[0]));
+        const float dockHeight = ImGuiM3GetMetrics().nav_bar_height * ImGuiM3GetMetrics().density;
+
+        // View key: the Effects tab expands into 0 (main), 1 (add effects) and 2
+        // (config manage). The other top-level tabs map to fixed keys.
+        auto contentIndex = [&]() -> int {
+            // pushed pages come first: they belong to whichever tab opened them
+            if (openSubView == SubView_DepthBuffers) return 8;
+            if (openSubView == SubView_Diagnostics)  return 6;
+            if (openSubView == SubView_ThemeColors)  return 9;
+            if (openSubView == SubView_ThemeBlur)    return 10;
+            if (openSubView == SubView_ThemeShape)   return 11;
+            if (openSubView == SubView_Navbar)       return 12;
+            if (activeView == 0)
+            {
+                if (inSelectionMode)    return 1;
+                if (inConfigManageMode) return 2;
+                return 0;
+            }
+            static const int kNamed[] = {0, 3, 4, 7};  // nav index -> content key
+            return kNamed[activeView];
+        };
+        auto renderView = [&](int key) {
+            switch (key)
+            {
+            case 0: renderMainView(keyboard); break;
+            case 1: renderAddEffectsView(); break;
+            case 2: renderConfigManagerView(); break;
+            case 3: renderShaderManagerView(); break;
+            case 4: renderSettingsView(keyboard); break;
+            case 5: renderAdvancedView(); break;
+            case 6: renderDiagnosticsView(); break;
+            case 7: renderAboutView(); break;
+            case 8: renderDepthBuffersView(); break;
+            case 9: renderThemeColorsView(); break;
+            case 10: renderThemeBlurView(); break;
+            case 11: renderThemeShapeView(); break;
+            case 12: renderNavbarView(); break;
+            default: break;
+            }
+        };
+
+        // View transition. Both the outgoing and incoming views animate at once:
+        // each travels a fifth of the width in opposite directions and fades with
+        // the same eased clock, so the edge is soft instead of a moving boundary.
+        // The clock is a fixed-duration cubic bezier sampled from a start
+        // timestamp, so it is deterministic: no frame-time integration and no
+        // spring whose bounce depends on how the frames land.
+        constexpr float kViewSlideSeconds = 0.30f;
+        constexpr float kBezX1 = 0.05f, kBezY1 = 0.90f;
+        constexpr float kBezX2 = 0.10f, kBezY2 = 1.06f;
+
+        static int    viewLastIndex     = -1;  // last observed target key
+        static int    viewSettledIndex  = 0;   // last fully shown key
+        static int    viewTargetIndex   = 0;   // key being shown / slid to
+        static int    viewFromIndex     = 0;   // key sliding out
+        static int    viewSlideDir      = 1;
+        static bool   viewTransitioning = false;
+        static double viewSlideStart    = 0.0;
+
+        const int viewIndex = contentIndex();
+        if (viewIndex != viewLastIndex)
+        {
+            if (viewLastIndex >= 0)
+            {
+                // Always slide from the last settled view. Rapid re-targeting
+                // just restarts settled -> newest instead of composing two
+                // half-finished transitions, which is what made fast switching
+                // glitchy.
+                viewFromIndex     = viewSettledIndex;
+                viewTargetIndex   = viewIndex;
+                viewTransitioning = (viewFromIndex != viewTargetIndex);
+                viewSlideDir      = (viewIndex > viewSettledIndex) ? 1 : -1;
+                viewSlideStart    = ImGui::GetTime();
+            }
+            else
+            {
+                viewSettledIndex = viewIndex;
+                viewTargetIndex  = viewIndex;
+            }
+            viewLastIndex = viewIndex;
+        }
+
+        float viewEase = 1.0f;
+        if (viewTransitioning)
+        {
+            const float clock = static_cast<float>((ImGui::GetTime() - viewSlideStart) / kViewSlideSeconds);
+            if (clock >= 1.0f)
+            {
+                viewTransitioning = false;
+                viewSettledIndex = viewTargetIndex;
+            }
+            else
+            {
+                viewEase = UI::CubicBezierEase(clock, kBezX1, kBezY1, kBezX2, kBezY2);
+            }
+        }
+
+        // defer the add-effects search focus until the slide is done
+        viewTransitionActive = viewTransitioning;
+
+        const bool navOnTop = settingsManager.getNavPosition() == 0;
+        const bool navPills = settingsManager.getNavStyle() == 1;
+        // One reveal for the nav, whichever edge holds it. A pushed page takes
+        // the strip back for itself, so the page reads as arriving over it
+        // rather than beside it - and the top bar cannot hang over the
+        // breadcrumb of a page that is standing on it.
+        const float dockGap = ImGui::GetStyle().ItemSpacing.y;
+        const bool overDock = (viewIndex == 1 || viewIndex == 2 || viewIndex == 6 ||
+                               viewIndex == 8 || viewIndex == 9 || viewIndex == 10 || viewIndex == 11 ||
+                               viewIndex == 12);
+        const float dockFade = overDock
+                                   ? 0.0f
+                                   : ImClamp(UI::FoldProgress(ImGui::GetID("##dock_reveal"), true, true), 0.0f, 1.0f);
+        const float navStrip = (dockHeight + dockGap) * dockFade;
+        const float navTopInset = navOnTop ? navStrip : 0.0f;
+        const ImVec2 viewPos  = ImVec2(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y + navTopInset);
+        ImVec2 viewSize = ImVec2(ImGui::GetContentRegionAvail().x,
+                                 ImMax(1.0f, ImGui::GetContentRegionAvail().y - navTopInset -
+                                             (navOnTop ? 0.0f : navStrip)));
+        const bool showingFrom = viewTransitioning && viewFromIndex != viewTargetIndex;
+
+        // Slidefade: a spatial travel of a fifth of the width, with the incoming
+        // view fading in and the outgoing view fading out on the same clock.
+        const float travel    = 0.20f * viewSize.x * static_cast<float>(viewSlideDir);
+        const float offsetIn  = showingFrom ? (1.0f - viewEase) * travel : 0.0f;
+        const float offsetOut = showingFrom ? -viewEase * travel : 0.0f;
+        const float alphaIn   = showingFrom ? ImClamp(viewEase, 0.0f, 1.0f) : 1.0f;
+        // the outgoing view is the expensive half of a transition (both views are
+        // submitted each frame), so it fades out over the first ~40% and is then
+        // dropped entirely; the incoming still uses the full curve.
+        const float alphaOut  = showingFrom ? ImClamp(1.0f - viewEase * 2.5f, 0.0f, 1.0f) : 1.0f;
+
+        // the strip clip stops a sliding view painting over the title bar or the
+        // dock, but it is also exactly the content rect, which slices the shadow off
+        // anything that lifts on a view's first row. open it by the shell's own
+        // padding margin: enough room for an elevation, still short of both.
+        float padLeft = 0.0f, padRight = 0.0f;
+        if (showingFrom)
+        {
+            const float pad = (travel < 0.0f ? -travel : travel) * 0.15f;
+            if (viewSlideDir > 0) padLeft = pad;
+            else                  padRight = pad;
+        }
+        const ImVec2 shellPad = ImGui::GetStyle().WindowPadding;
+        const float shadowMargin = ImMax(0.0f, ImMin(shellPad.x, shellPad.y) - 4.0f);
+        const ImVec2 stripMin(viewPos.x - padLeft - shadowMargin, viewPos.y - shadowMargin);
+        const ImVec2 stripMax(viewPos.x + viewSize.x + padRight + shadowMargin, viewPos.y + viewSize.y + shadowMargin);
+
+        // A zero-padding child guarantees the offset applies even for views that
+        // position their own content. WindowPadding is popped right after
+        // BeginChild so popups opened inside the view keep the real padding; the
+        // alpha stays pushed across the view so the whole thing fades together.
+        auto renderSlidingView = [&](int key, const char* childId, float offset, float alpha) {
+            ImGui::SetCursorScreenPos(ImVec2(viewPos.x + offset, viewPos.y));
+            // multiply the shell's fade in, or the child's own alpha resets it
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha * ImGui::GetStyle().Alpha);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImVec4 viewBg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+            // Transparent: the window's own surface (at BackgroundOpacity) is the
+            // single tint layer, so the game frame or blurred backdrop shows
+            // through the content region too instead of being covered twice.
+            viewBg.w = 0.0f;
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, viewBg);
+            ImGui::BeginChild(childId, viewSize, false);
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+            // the child clips to its own rect too; bounded by the strip, so a sliding
+            // view's margin cannot follow it over the dock
+            const ImVec2 childPos = ImGui::GetWindowPos();
+            const ImVec2 childSize = ImGui::GetWindowSize();
+            ImGui::PushClipRect(ImVec2(ImMax(stripMin.x, childPos.x - shadowMargin), ImMax(stripMin.y, childPos.y - shadowMargin)),
+                                ImVec2(ImMin(stripMax.x, childPos.x + childSize.x + shadowMargin), ImMin(stripMax.y, childPos.y + childSize.y + shadowMargin)),
+                                false);
+            renderView(key);
+            ImGui::PopClipRect();
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+        };
+
+        // the position bezier overshoots, so the strip above pads the crossed side
+        ImGui::PushClipRect(stripMin, stripMax, true);
+
+        if (showingFrom && alphaOut > 0.01f)
+            renderSlidingView(viewFromIndex, "##view_slide_out", offsetOut, alphaOut);
+        renderSlidingView(viewTargetIndex, "##view_slide_in", offsetIn, alphaIn);
+
+        ImGui::PopClipRect();
+        ImGui::SetCursorScreenPos(viewPos);
+
+        // navigation bar: the dock, or the pill row the overlay used before it.
+        // Pinned under the content, or above it when the setting asks for top.
+        {
+            // the same reveal for both edges and both styles: a pushed page takes
+            // the strip back rather than having the bar hang over its breadcrumb.
+            // Multiply by the shell fade: PushStyleVar replaces the inherited
+            // alpha, so using dockFade alone makes the dock stay opaque while
+            // the shell is still sliding/fading.
+            const float navFade = dockFade * shellAlpha;
+            const float navY = navOnTop ? viewPos.y - navTopInset
+                                        : viewPos.y + viewSize.y + dockGap;
+            if (navFade > 0.02f)
+            {
+                const int viewBeforeNav = activeView;
+                ImGui::SetCursorScreenPos(ImVec2(viewPos.x, navY));
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, navFade);
+                if (navPills)
+                {
+                    // the pills are a button row, not a bar: centre it in the
+                    // strip and leave room for the scrollbar when they overflow
+                    const float pillH = ImGuiM3GetMetrics().button_height_default * ImGuiM3GetMetrics().density;
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+                    ImGui::BeginChild("##overlay_nav_pills_scroll", ImVec2(0.0f, dockHeight),
+                                      ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+                    ImGui::SetCursorPosY(ImMax(0.0f, (dockHeight - pillH) * 0.5f - 4.0f));
+                    ImGui::M3ConnectedButtonGroup("##overlay_nav_pills", kViewLabels, kViewCount, &activeView,
+                                                  kViewIcons, true, NULL, true);
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
+                }
+                else
+                {
+                    ImGui::M3NavigationDock("##overlay_nav", kViewLabels, kViewCount, &activeView, kViewIcons,
+                                            navOnTop);
+                }
+                ImGui::PopStyleVar();
+                // a nav tap always lands on a top-level destination
+                if (activeView != viewBeforeNav)
+                {
+                    openSubView = SubView_None;
+                    inSelectionMode = false;
+                    inConfigManageMode = false;
+                }
+            }
+        }
+
+        ImGui::PopStyleVar();  // shell alpha
+        ImGui::End();  // VKIntox Overlay
+
+        if (closeRequested)
+            toggle();
+
+        // toasts last, so they draw above the overlay
+        renderToasts();
+
+        // Global auto-apply check (runs regardless of which tab is active)
+        if (settingsManager.getAutoApply() && paramsDirty)
+        {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastChangeTime).count();
+            const bool mouseButtonDown = ImGui::GetIO().MouseDown[0] || ImGui::GetIO().MouseDown[1];
+
+            // Defer auto-apply while either mouse button is held (dragging/resizing/sliders).
+            // Apply on the first frame after release once delay has already elapsed.
+            if (elapsed >= settingsManager.getAutoApplyDelay() && !mouseButtonDown)
+            {
+                // a ReShade uniform edit is already live via updateEffect, so
+                // only rebuild the chain when something structural changed
+                if (reloadNeeded)
+                    applyRequested = true;
+                reloadNeeded = false;
+                paramsDirty = false;
+                profileDirty = true;  // Mark for auto-save to profile
+            }
+        }
+
+        // Auto-save profile when changes are applied
+        if (profileDirty && !paramsDirty &&
+            (!activeProfilePath.empty() || !activeShaderProfilePath.empty()))
+            autoSaveProfile();
+
+        // combo dropdowns and dialogs are separate windows that stick out past
+        // the main one; publish their rects too so pointer events over them are
+        // withheld from the game instead of leaking through.
+        if (ImGuiContext* ctx = ImGui::GetCurrentContext())
+        {
+            for (ImGuiWindow* w : ctx->Windows)
+            {
+                if (!w->Active || !(w->Flags & ImGuiWindowFlags_Popup))
+                    continue;
+                frameInputRects.push_back(InputRect{w->Pos.x, w->Pos.y, w->Size.x, w->Size.y});
+            }
+        }
+
+        // the capture surface has to cover the same rects, or a popup sticking
+        // out past the main window won't withhold anything
+        setWaylandInputSurfaceRects(frameInputRects.data(), static_cast<int>(frameInputRects.size()));
+
+        publishOverlayInput();
+        ImGui::Render();
+
+        // Record the backdrop capture + blur into this same command buffer,
+        // before the overlay render pass samples the result. No work is recorded
+        // when the blur is disabled or the resources are unavailable.
+        if (blurActive)
+            recordBlur(cmd, imageIndex, image, width, height);
+
+        // Begin render pass
+        VkRenderPassBeginInfo rpBegin = {};
+        rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rpBegin.renderPass = renderPass;
+        rpBegin.framebuffer = framebuffer;
+        rpBegin.renderArea.extent.width = width;
+        rpBegin.renderArea.extent.height = height;
+
+        logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+        logicalDevice->vkd.CmdEndRenderPass(cmd);
+
+        vr = logicalDevice->vkd.EndCommandBuffer(cmd);
+        if (vr != VK_SUCCESS)
+        {
+            Logger::err("Failed to end ImGui command buffer: " + std::to_string(vr));
+            return VK_NULL_HANDLE;
+        }
+
+        return cmd;
+    }
+
+    void ImGuiOverlay::collectCommandFences(std::vector<VkFence>& out) const
+    {
+        for (VkFence f : commandBufferFences)
+            if (f != VK_NULL_HANDLE) out.push_back(f);
+    }
+
+} // namespace VKIntox
