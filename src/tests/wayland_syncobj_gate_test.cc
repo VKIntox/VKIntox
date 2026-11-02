@@ -1,7 +1,7 @@
 // A missing hold in the explicit-sync gate ends as a compositor-killed wayland
 // connection at runtime, so the hold-and-release ordering is driven directly
 // with threads here.
-#include "wayland_syncobj_gate.hh"
+#include "input/wayland/wayland_syncobj_gate.hh"
 
 #include <atomic>
 #include <chrono>

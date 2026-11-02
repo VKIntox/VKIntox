@@ -1,0 +1,718 @@
+#include "effects/runtime/effect_registry.hh"
+
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <set>
+#include <sstream>
+
+#include "effects/compiler/reshade_parser.hh"
+#include "config/config_serializer.hh"
+#include "util/logger.hh"
+
+namespace VKIntox
+{
+
+    namespace
+    {
+        std::string toLower(std::string value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value;
+        }
+
+        bool hasFxExtension(const std::filesystem::path& path)
+        {
+            return toLower(path.extension().string()) == ".fx";
+        }
+
+        std::string tryResolveDirectEffectPath(const std::string& value)
+        {
+            if (value.empty())
+                return "";
+
+            std::error_code ec;
+            std::filesystem::path candidate(value);
+            if (std::filesystem::exists(candidate, ec) && std::filesystem::is_regular_file(candidate, ec))
+            {
+                if (hasFxExtension(candidate))
+                    return candidate.string();
+            }
+
+            if (!candidate.has_extension())
+            {
+                std::filesystem::path withFx = candidate;
+                withFx.replace_extension(".fx");
+                if (std::filesystem::exists(withFx, ec) && std::filesystem::is_regular_file(withFx, ec))
+                    return withFx.string();
+            }
+
+            return "";
+        }
+
+        // Search a list of directories for an effect file by name
+        std::string searchDirsForEffect(const std::string& name,
+                                        const std::vector<std::string>& dirs)
+        {
+            const std::filesystem::path queryPath(name);
+            const std::string queryFilenameLower = toLower(queryPath.filename().string());
+            const std::string queryStemLower = toLower(queryPath.stem().string());
+
+            for (const auto& dir : dirs)
+            {
+                std::error_code ec;
+                std::filesystem::path base(dir);
+
+                std::filesystem::path path = base / name;
+                if (std::filesystem::exists(path, ec) && std::filesystem::is_regular_file(path, ec))
+                {
+                    if (hasFxExtension(path))
+                        return path.string();
+                }
+
+                if (!queryPath.has_extension())
+                {
+                    std::filesystem::path withFx = base / (name + ".fx");
+                    if (std::filesystem::exists(withFx, ec) && std::filesystem::is_regular_file(withFx, ec))
+                        return withFx.string();
+                }
+
+                if (!std::filesystem::exists(base, ec) || !std::filesystem::is_directory(base, ec))
+                    continue;
+
+                try
+                {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(
+                             base, std::filesystem::directory_options::skip_permission_denied))
+                    {
+                        if (!entry.is_regular_file())
+                            continue;
+
+                        const auto& filePath = entry.path();
+                        if (!hasFxExtension(filePath))
+                            continue;
+
+                        const std::string filenameLower = toLower(filePath.filename().string());
+                        const std::string stemLower = toLower(filePath.stem().string());
+
+                        // Match either full filename (for "Foo.fx") or stem (for "Foo")
+                        if ((!queryFilenameLower.empty() && filenameLower == queryFilenameLower) ||
+                            (!queryStemLower.empty() && stemLower == queryStemLower))
+                        {
+                            return filePath.string();
+                        }
+                    }
+                }
+                catch (const std::filesystem::filesystem_error&)
+                {
+                    // Keep searching other paths if one directory is inaccessible
+                }
+            }
+            return "";
+        }
+
+        // Try to find effect file path
+        std::string findEffectPath(const std::string& name, Config* config)
+        {
+            // If caller already provides a path (absolute or relative), use it directly.
+            std::string directPath = tryResolveDirectEffectPath(name);
+            if (!directPath.empty())
+                return directPath;
+
+            // First check if path is directly configured (e.g. "Vibrance = /path/to/Vibrance.fx")
+            std::string path = config->getOption<std::string>(name, "");
+            std::string resolvedConfiguredPath = tryResolveDirectEffectPath(path);
+            if (!resolvedConfiguredPath.empty())
+                return resolvedConfiguredPath;
+
+            // Collect all search directories
+            std::vector<std::string> searchDirs;
+
+            // reshadeIncludePath from config (colon-separated)
+            std::string includePath = config->getOption<std::string>("reshadeIncludePath", "");
+            if (!includePath.empty())
+            {
+                std::stringstream ss(includePath);
+                std::string dir;
+                while (std::getline(ss, dir, ':'))
+                {
+                    if (!dir.empty())
+                        searchDirs.push_back(dir);
+                }
+            }
+
+            // Shader manager paths
+            ShaderManagerConfig shaderMgrConfig = ConfigSerializer::loadShaderManagerConfig();
+
+            // Discovered shader paths
+            for (const auto& p : shaderMgrConfig.discoveredShaderPaths)
+                searchDirs.push_back(p);
+
+            // Parent directories — scan for Shaders/ subdirectories and also
+            // search the parent dir itself (users may keep .fx files flat)
+            for (const auto& parentDir : shaderMgrConfig.parentDirectories)
+            {
+                searchDirs.push_back(parentDir);  // search directly
+                try
+                {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(
+                             parentDir, std::filesystem::directory_options::skip_permission_denied))
+                    {
+                        if (!entry.is_directory())
+                            continue;
+                        std::string dirName = entry.path().filename().string();
+                        std::transform(dirName.begin(), dirName.end(), dirName.begin(), ::tolower);
+                        if (dirName == "shaders")
+                            searchDirs.push_back(entry.path().string());
+                    }
+                }
+                catch (const std::filesystem::filesystem_error&) {}
+            }
+
+            // Search all collected directories
+            path = searchDirsForEffect(name, searchDirs);
+            if (!path.empty())
+                return path;
+
+            return "";
+        }
+    } // anonymous namespace
+
+    bool EffectRegistry::isLegacyBuiltInName(const std::string& name)
+    {
+        static const std::set<std::string> legacyNames = {"cas", "dls", "fxaa", "smaa", "deband", "lut"};
+
+        std::string base = toLower(name);
+        // strip a numbered-instance suffix ("cas.2"), not a filename extension
+        const size_t dot = base.find('.');
+        if (dot != std::string::npos)
+        {
+            const std::string suffix = base.substr(dot + 1);
+            if (!suffix.empty() && std::all_of(suffix.begin(), suffix.end(),
+                                               [](unsigned char c) { return std::isdigit(c) != 0; }))
+                base = base.substr(0, dot);
+        }
+        return legacyNames.count(base) != 0;
+    }
+
+    std::string EffectRegistry::resolveEffectPath(const std::string& name, Config* config)
+    {
+        if (name.empty() || !config)
+            return "";
+        return findEffectPath(name, config);
+    }
+
+    void EffectRegistry::initialize(Config* config)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        this->rootConfig = config;
+        effects.clear();
+        paramGeneration.fetch_add(1, std::memory_order_release);
+
+        std::vector<std::string> effectNames = config->getOption<std::vector<std::string>>("effects");
+        std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects");
+
+        // Build set for quick lookup
+        std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());
+
+        for (const auto& name : effectNames)
+        {
+            std::string effectPath = findEffectPath(name, config);
+            if (effectPath.empty())
+            {
+                // a legacy built-in has no .fx to find; drop it silently so the
+                // next auto-save rewrites the preset without it
+                const std::string storedValue = config->getOption<std::string>(name, "");
+                if (!isLegacyBuiltInName(name) && !isLegacyBuiltInName(storedValue))
+                    Logger::err("EffectRegistry: could not find effect file for: " + name);
+                continue;
+            }
+            initReshadeEffect(name, effectPath);
+
+            // Set enabled state based on disabledEffects list
+            if (!effects.empty() && disabledSet.count(name))
+                effects.back().enabled = false;
+        }
+
+        Logger::debug("EffectRegistry: initialized " + std::to_string(effects.size()) + " effects");
+    }
+
+    void EffectRegistry::initReshadeEffect(const std::string& name, const std::string& path)
+    {
+        EffectConfig config;
+        config.name = name;
+        config.filePath = path;
+        config.type = EffectType::ReShade;
+        config.enabled = true;
+
+        // Record file modification time for change detection
+        std::error_code ec;
+        config.fileModTime = std::filesystem::last_write_time(path, ec);
+
+        // Extract effectType from filename (e.g., "/path/to/Clarity.fx" -> "Clarity")
+        std::filesystem::path p(path);
+        config.effectType = p.stem().string();
+
+        // parseReshadeEffect runs the full preprocessor/parser/codegen pass, so it
+        // is already the compile check; a separate testShaderCompilation call just
+        // compiled the same shader a second time.
+        std::string parseError;
+        config.parameters = parseReshadeEffect(name, path, rootConfig, &config.techniqueNames, &parseError);
+        if (!parseError.empty())
+        {
+            config.compileError = parseError;
+            config.enabled = false;  // Disable failed effects by default
+            Logger::err("EffectRegistry: failed to compile " + name + ": " + parseError);
+        }
+        else
+        {
+            // Extract preprocessor definitions (user-configurable macros)
+            config.preprocessorDefs = extractPreprocessorDefinitions(name, path);
+
+            // Override default values with any saved values from config
+            // Config format: effectName@MACRO = value
+            for (auto& def : config.preprocessorDefs)
+            {
+                std::string configKey = name + "@" + def.name;
+                std::string savedValue = rootConfig->getOption<std::string>(configKey, "");
+                if (!savedValue.empty())
+                {
+                    def.value = savedValue;
+                    Logger::debug("EffectRegistry: loaded preprocessor def " + configKey + " = " + savedValue);
+                }
+            }
+
+            Logger::debug("EffectRegistry: loaded ReShade effect " + name + " with " +
+                          std::to_string(config.parameters.size()) + " parameters and " +
+                          std::to_string(config.preprocessorDefs.size()) + " preprocessor defs");
+        }
+
+        effects.push_back(std::move(config));
+        paramGeneration.fetch_add(1, std::memory_order_release);
+    }
+
+    std::vector<const EffectConfig*> EffectRegistry::getEnabledEffects() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        std::vector<const EffectConfig*> enabled;
+
+        for (const auto& effect : effects)
+        {
+            if (effect.enabled)
+                enabled.push_back(&effect);
+        }
+
+        return enabled;
+    }
+
+    std::vector<std::unique_ptr<EffectParam>> EffectRegistry::getAllParameters() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        std::vector<std::unique_ptr<EffectParam>> params;
+
+        for (const auto& effect : effects)
+        {
+            for (const auto& p : effect.parameters)
+                params.push_back(p->clone());
+        }
+
+        return params;
+    }
+
+    // Internal helper to find effect by name (assumes mutex is held)
+    std::optional<EffectConfig*> EffectRegistry::findEffect(const std::string& effectName)
+    {
+        for (auto& effect : effects)
+        {
+            if (effect.name == effectName)
+                return &effect;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<const EffectConfig*> EffectRegistry::findEffect(const std::string& effectName) const
+    {
+        for (const auto& effect : effects)
+        {
+            if (effect.name == effectName)
+                return &effect;
+        }
+        return std::nullopt;
+    }
+
+    // Internal helper to find parameter within an effect (assumes mutex is held)
+    std::optional<EffectParam*> EffectRegistry::findParam(EffectConfig& effect, const std::string& paramName)
+    {
+        for (auto& param : effect.parameters)
+        {
+            if (param->name == paramName)
+                return param.get();
+        }
+        return std::nullopt;
+    }
+
+    std::optional<const EffectParam*> EffectRegistry::findParam(const EffectConfig& effect, const std::string& paramName) const
+    {
+        for (const auto& param : effect.parameters)
+        {
+            if (param->name == paramName)
+                return param.get();
+        }
+        return std::nullopt;
+    }
+
+    void EffectRegistry::setEffectEnabled(const std::string& effectName, bool enabled)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        if (auto effect = findEffect(effectName))
+            (*effect)->enabled = enabled;
+    }
+
+    bool EffectRegistry::isEffectEnabled(const std::string& effectName) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        auto effect = findEffect(effectName);
+        return effect ? (*effect)->enabled : false;
+    }
+
+    std::map<std::string, bool> EffectRegistry::getEffectEnabledStates() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        std::map<std::string, bool> states;
+        for (const auto& effect : effects)
+            states[effect.name] = effect.enabled;
+        return states;
+    }
+
+    void EffectRegistry::setParameterValue(const std::string& effectName, const std::string& paramName, float value)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        auto effect = findEffect(effectName);
+        if (!effect)
+            return;
+
+        auto param = findParam(**effect, paramName);
+        if (param && (*param)->getType() == ParamType::Float)
+            static_cast<FloatParam*>(*param)->value = value;
+    }
+
+    void EffectRegistry::setParameterValue(const std::string& effectName, const std::string& paramName, int value)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        auto effect = findEffect(effectName);
+        if (!effect)
+            return;
+
+        auto param = findParam(**effect, paramName);
+        if (param && (*param)->getType() == ParamType::Int)
+            static_cast<IntParam*>(*param)->value = value;
+    }
+
+    void EffectRegistry::setParameterValue(const std::string& effectName, const std::string& paramName, bool value)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        auto effect = findEffect(effectName);
+        if (!effect)
+            return;
+
+        auto param = findParam(**effect, paramName);
+        if (param && (*param)->getType() == ParamType::Bool)
+            static_cast<BoolParam*>(*param)->value = value;
+    }
+
+    std::optional<EffectParam*> EffectRegistry::getParameter(const std::string& effectName, const std::string& paramName)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        auto effect = findEffect(effectName);
+        if (!effect)
+            return std::nullopt;
+
+        return findParam(**effect, paramName);
+    }
+
+    std::optional<const EffectParam*> EffectRegistry::getParameter(const std::string& effectName, const std::string& paramName) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        auto effect = findEffect(effectName);
+        if (!effect)
+            return std::nullopt;
+
+        return findParam(**effect, paramName);
+    }
+
+    bool EffectRegistry::effectUniformsBaked(const std::string& effectName) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (const auto& effect : effects)
+            if (effect.name == effectName)
+                return effect.uniformsBaked;
+        return true;
+    }
+
+    void EffectRegistry::setEffectUniformsBaked(const std::string& effectName, bool baked)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (auto& effect : effects)
+            if (effect.name == effectName)
+            {
+                effect.uniformsBaked = baked;
+                return;
+            }
+    }
+
+    std::vector<EffectParam*> EffectRegistry::getParametersForEffect(const std::string& effectName)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        std::vector<EffectParam*> result;
+
+        auto effect = findEffect(effectName);
+        if (!effect)
+            return result;
+
+        for (auto& param : (*effect)->parameters)
+            result.push_back(param.get());
+
+        return result;
+    }
+
+    bool EffectRegistry::hasEffect(const std::string& name) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return findEffect(name).has_value();
+    }
+
+    std::string EffectRegistry::getEffectFilePath(const std::string& name) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto effect = findEffect(name);
+        return effect ? (*effect)->filePath : "";
+    }
+
+    std::string EffectRegistry::getEffectType(const std::string& name) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto effect = findEffect(name);
+        return effect ? (*effect)->effectType : "";
+    }
+
+    bool EffectRegistry::hasEffectFailed(const std::string& name) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto effect = findEffect(name);
+        return effect ? (*effect)->hasFailed() : false;
+    }
+
+    std::string EffectRegistry::getEffectError(const std::string& name) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto effect = findEffect(name);
+        return effect ? (*effect)->compileError : "";
+    }
+
+    void EffectRegistry::setEffectError(const std::string& name, const std::string& error)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (auto effect = findEffect(name))
+        {
+            (*effect)->compileError = error;
+            (*effect)->enabled = false;  // Disable failed effects
+        }
+    }
+
+    void EffectRegistry::ensureEffect(const std::string& instanceName, const std::string& effectType)
+    {
+        // If effectType not provided, assume instanceName is the effect type
+        std::string type = effectType.empty() ? instanceName : effectType;
+
+        // Do path lookup outside mutex (filesystem I/O can be slow)
+        const bool legacy = isLegacyBuiltInName(type) || isLegacyBuiltInName(instanceName);
+        std::string path = findEffectPath(type, rootConfig);
+        if (path.empty() || !std::filesystem::exists(path))
+        {
+            // a legacy built-in has nothing to resolve, so dropping it silently
+            // keeps the ghost out of the log
+            if (!legacy)
+                Logger::warn("EffectRegistry::ensureEffect: could not find effect file for: " + type);
+            return;
+        }
+
+        // Lock for the check-and-mutate as a single critical section
+        std::lock_guard<std::mutex> lock(mutex);
+
+        auto existing = findEffect(instanceName);
+        if (existing)
+        {
+            // check if the file changed on disk since we last parsed it
+            std::error_code ec;
+            auto currentModTime = std::filesystem::last_write_time(path, ec);
+            if (!ec && currentModTime != (*existing)->fileModTime)
+            {
+                Logger::info("EffectRegistry: shader file changed on disk, re-parsing: " + instanceName);
+                // Remove the stale entry so we re-parse below
+                effects.remove_if(
+                    [&](const EffectConfig& e) { return e.name == instanceName; });
+                // the removed config freed its params; readers must rebuild
+                paramGeneration.fetch_add(1, std::memory_order_release);
+            }
+            else
+            {
+                return;  // File unchanged, keep existing
+            }
+        }
+
+        initReshadeEffect(instanceName, path);
+    }
+
+    void EffectRegistry::removeEffect(const std::string& name)
+    {
+        // Validate input
+        if (name.empty())
+        {
+            Logger::warn("EffectRegistry::removeEffect called with empty name");
+            return;
+        }
+
+        // Use try-catch for crash protection during removal
+        try
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+
+            // Log before removal for debugging
+            Logger::debug("EffectRegistry: removing effect '" + name + "'");
+
+            size_t sizeBefore = effects.size();
+            
+            effects.remove_if(
+                [&](const EffectConfig& e) { return e.name == name; });
+
+            paramGeneration.fetch_add(1, std::memory_order_release);
+
+            size_t sizeAfter = effects.size();
+            
+            if (sizeBefore != sizeAfter)
+            {
+                Logger::info("EffectRegistry: removed effect '" + name + "' (" + 
+                            std::to_string(sizeBefore - sizeAfter) + " instance(s))");
+            }
+            else
+            {
+                Logger::debug("EffectRegistry: effect '" + name + "' not found for removal");
+            }
+        }
+        catch (const std::exception& e)
+        {
+            Logger::err("EffectRegistry::removeEffect exception for '" + name + "': " + e.what());
+        }
+        catch (...)
+        {
+            Logger::err("EffectRegistry::removeEffect unknown exception for '" + name + "'");
+        }
+    }
+
+    // Per-instance empty vector for returning when effect not found (avoids shared mutable static)
+    std::vector<PreprocessorDefinition>& EffectRegistry::getPreprocessorDefs(const std::string& effectName)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto effect = findEffect(effectName);
+        if (effect)
+            return (*effect)->preprocessorDefs;
+        static thread_local std::vector<PreprocessorDefinition> emptyDefs;
+        emptyDefs.clear();
+        return emptyDefs;
+    }
+
+    const std::vector<PreprocessorDefinition>& EffectRegistry::getPreprocessorDefs(const std::string& effectName) const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto effect = findEffect(effectName);
+        if (effect)
+            return (*effect)->preprocessorDefs;
+        static thread_local const std::vector<PreprocessorDefinition> emptyDefs;
+        return emptyDefs;
+    }
+
+    void EffectRegistry::setPreprocessorDefValue(const std::string& effectName, const std::string& macroName, const std::string& value)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto effect = findEffect(effectName);
+        if (!effect)
+            return;
+
+        for (auto& def : (*effect)->preprocessorDefs)
+        {
+            if (def.name == macroName)
+            {
+                def.value = value;
+                return;
+            }
+        }
+    }
+
+    void EffectRegistry::setSelectedEffects(const std::vector<std::string>& effects)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        selectedEffects = effects;
+    }
+
+    void EffectRegistry::clearSelectedEffects()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        selectedEffects.clear();
+    }
+
+    void EffectRegistry::initializeSelectedEffectsFromConfig()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (initializedFromConfig || !rootConfig)
+                return;
+        }
+
+        // Read effects list from config
+        std::vector<std::string> configEffects = rootConfig->getOption<std::vector<std::string>>("effects", {});
+        std::vector<std::string> disabledEffects = rootConfig->getOption<std::vector<std::string>>("disabledEffects", {});
+
+        // drop the removed built-ins and anything with no installed .fx, so a
+        // stale config never seeds a ghost instance in the selected list
+        configEffects.erase(
+            std::remove_if(configEffects.begin(), configEffects.end(),
+                           [this](const std::string& name) {
+                               return resolveEffectPath(name, rootConfig).empty();
+                           }),
+            configEffects.end());
+
+        // Build set of disabled effects for quick lookup
+        std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());
+
+        // Set selected effects
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            selectedEffects = configEffects;
+        }
+
+        // Ensure effects exist in registry before setting enabled states
+        for (const auto& effectName : configEffects)
+            ensureEffect(effectName);
+
+        // Set enabled states (disabled if in disabledEffects list)
+        for (const auto& effectName : configEffects)
+        {
+            bool enabled = (disabledSet.find(effectName) == disabledSet.end());
+            setEffectEnabled(effectName, enabled);
+        }
+
+        initializedFromConfig = true;
+        Logger::debug("EffectRegistry: initialized " + std::to_string(configEffects.size()) +
+                      " effects from config (" + std::to_string(disabledEffects.size()) + " disabled)");
+    }
+
+} // namespace VKIntox

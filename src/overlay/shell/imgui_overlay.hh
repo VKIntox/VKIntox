@@ -1,0 +1,429 @@
+#ifndef IMGUI_OVERLAY_HPP_INCLUDED
+#define IMGUI_OVERLAY_HPP_INCLUDED
+
+#include <atomic>
+#include <vector>
+#include <memory>
+#include <string>
+#include <chrono>
+#include <mutex>
+#include <map>
+#include <set>
+#include <cstdint>
+
+#include "render/device/vulkan_include.hh"
+#include "render/device/logical_device.hh"
+#include "input/common/keyboard_input.hh"
+#include "effects/params/effect_param.hh"
+#include "config/config_serializer.hh"
+#include "input/common/input_blocker.hh"
+#include "config/settings_manager.hh"
+#include "util/logger.hh"
+
+namespace VKIntox
+{
+    class Effect;
+    class EffectRegistry;
+
+    struct OverlayState
+    {
+        std::vector<std::string> disabledEffects;       // Effects that are unchecked (in list but not rendered)
+        std::vector<std::string> currentConfigEffects;  // ReShade effects from current config (e.g., tunic.conf)
+        std::vector<std::string> defaultConfigEffects;  // ReShade effects from default VKIntox.conf (no duplicates)
+        std::map<std::string, std::string> effectPaths; // Effect name -> file path (for reshade effects)
+        std::string configPath;
+        std::string configName;  // Just the filename (e.g., "tunic.conf")
+        bool effectsEnabled = true;
+        // Parameters now read directly from EffectRegistry
+    };
+
+    // UI preferences that persist across swapchain recreation
+    // Effect-related state is managed by EffectRegistry
+    // Settings are managed by SettingsManager
+    // UI visibility state that survives swapchain recreation.
+    struct OverlayPersistentState
+    {
+        bool visible = false;
+    };
+
+    // Snackbar shown bottom-centre for layer errors and notices. It is
+    // non-interactive and auto-dismisses after a few seconds.
+    struct ToastNotification
+    {
+        std::string                         message;
+        LogLevel                            level = LogLevel::Error;
+        std::chrono::steady_clock::time_point createdAt = std::chrono::steady_clock::now();
+    };
+
+    // Snapshot of the depth-capture state, gathered each frame for the Advanced
+    // tab. The overlay reads these from LogicalDevice under globalLock.
+    struct DepthCandidateInfo
+    {
+        VkImageView         imageView = VK_NULL_HANDLE;
+        VkFormat            format = VK_FORMAT_UNDEFINED;
+        VkExtent3D          extent = {0, 0, 1};
+        VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+        VkImageLayout       observedLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bool                transient = false;
+        uint32_t            drawCount = 0;
+        bool                hasPresentableSnapshotTarget = false;
+    };
+
+    struct DepthInfo
+    {
+        DepthCandidateInfo active;              // Currently active depth buffer (effective: pinned or auto)
+        std::vector<DepthCandidateInfo> candidates; // All tracked candidates
+        VkExtent2D          swapchainExtent = {0, 0}; // Current window size, for pin defaults
+        VkResolveModeFlags supportedResolveModes = 0; // HW support (for UI greying)
+        bool                depthCaptureEnabled = false;
+        bool                depthResolveIsMsaa = false;
+        VkResolveModeFlagBits depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+        bool                depthIsPinned = false;       // Whether a manual pin is active
+        VkImageView         pinnedView = VK_NULL_HANDLE;  // The pinned view handle (for UI highlighting)
+    };
+
+    // identity of the VkPhysicalDevice the game is actually using. reported
+    // verbatim because the sysfs DRM scan can't tell hybrid GPUs apart.
+    struct DeviceInfo
+    {
+        std::string gpuName;
+        std::string gpuDriverInfo;
+        std::string gpuPciSlot;
+        uint32_t    gpuApiVersion = 0;
+        uint32_t    gpuVendorId = 0;
+    };
+
+    class ImGuiOverlay
+    {
+    public:
+        ImGuiOverlay(LogicalDevice* device, VkFormat swapchainFormat, uint32_t imageCount, OverlayPersistentState* persistentState);
+        ~ImGuiOverlay();
+
+        void toggle();
+        bool isVisible() const { return visible; }
+
+        // Push a toast notification. Thread-safe, auto-dismissed after ~5s.
+        void pushToast(LogLevel level, const std::string& message);
+        bool hasPendingToasts() const;
+
+        void updateState(OverlayState newState);
+
+        // Returns modified parameters when Apply is clicked, empty otherwise
+        std::vector<std::unique_ptr<EffectParam>> getModifiedParams() const;
+        bool hasModifiedParams() const { return applyRequested; }
+        void clearApplyRequest() { applyRequested = false; reloadNeeded = false; }
+
+        // Config switching
+        bool hasPendingConfig() const { return !pendingConfigPath.empty(); }
+        std::string getPendingConfigPath() const { return pendingConfigPath; }
+        void clearPendingConfig() { pendingConfigPath.clear(); }
+        bool hasPendingShaderProfile() const { return pendingShaderProfile; }
+        std::string getPendingShaderProfilePath() const { return pendingShaderProfilePath; }
+        void clearPendingShaderProfile() { pendingShaderProfilePath.clear(); pendingShaderProfile = false; }
+
+        // Depth pin changed (needs command buffer reallocation)
+        bool hasDepthPinChanged() const { return depthPinChanged; }
+        void clearDepthPinChanged() { depthPinChanged = false; }
+
+        // Effects toggle (global on/off)
+        bool hasToggleEffectsRequest() const { return toggleEffectsRequested; }
+        void clearToggleEffectsRequest() { toggleEffectsRequested = false; }
+
+        // Set the effect registry (single source of truth for enabled states)
+        void setEffectRegistry(EffectRegistry* registry) { effectRegistry = registry; }
+
+        // Set game/profile info for auto-save (called from vkintox.cpp after detection)
+        void setGameProfile(const std::string& gameName, const std::string& profileName, const std::string& profilePath)
+        {
+            activeGameName = gameName;
+            activeProfileName = profileName;
+            activeProfilePath = profilePath;
+            refreshShaderProfiles();
+        }
+
+        void refreshShaderProfiles();
+        void setActiveShaderProfile(const std::string& profileName);
+        // save the outgoing profile, activate profileName and queue a reload.
+        // atomic so the debounced auto-save can't hit the new path first.
+        bool switchShaderProfile(const std::string& profileName);
+        std::string getActiveShaderProfilePath() const { return activeShaderProfilePath; }
+
+        // Trigger debounced reload (for config switch)
+        void markDirty() { paramsDirty = true; lastChangeTime = std::chrono::steady_clock::now(); }
+        void noteParamEdit(const std::string& effectName)
+        {
+            paramsDirty = true;
+            lastChangeTime = std::chrono::steady_clock::now();
+            editedEffectNames.insert(effectName);
+        }        bool hasLiveEditActivity() const
+        {
+            return paramsDirty || !editedEffectNames.empty();
+        }
+        const std::set<std::string>& getEditedEffectNames() const { return editedEffectNames; }
+        void clearEditedEffectNames() { editedEffectNames.clear(); }
+
+        // Settings were saved (keybindings need reload)
+        bool hasSettingsSaved() const { return settingsSaved; }
+        void clearSettingsSaved() { settingsSaved = false; }
+
+        // Shader paths were changed (effect list needs refresh)
+        bool hasShaderPathsChanged() const { return shaderPathsChanged; }
+        void clearShaderPathsChanged() { shaderPathsChanged = false; }
+
+        // Returns list of effects that should be active (enabled, for reloading)
+        std::vector<std::string> getActiveEffects() const;
+
+        // Returns all selected effects (enabled + disabled, for parameter collection)
+        const std::vector<std::string>& getSelectedEffects() const;
+
+        // Set effects list (when loading a different config)
+        // disabledEffects: effects that should be unchecked (in list but not rendered)
+        void setSelectedEffects(const std::vector<std::string>& effects,
+                                const std::vector<std::string>& disabledEffects = {});
+
+        VkCommandBuffer recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height);
+
+        // Get fence for command buffer synchronization (used by vkintox.cpp submit)
+        VkFence getCommandBufferFence(uint32_t imageIndex) const
+        {
+            return (imageIndex < commandBufferFences.size()) ? commandBufferFences[imageIndex] : VK_NULL_HANDLE;
+        }
+
+        // Collect all in-flight command buffer fences (for drain before depth image destroy)
+        void collectCommandFences(std::vector<VkFence>& out) const;
+
+    private:
+        void initVulkanBackend(VkFormat swapchainFormat, uint32_t imageCount);
+        void saveToPersistentState();
+        void saveCurrentConfig();
+
+        // Backdrop blur. Resources are created once and rebuilt only when the
+        // backing swapchain extent or format changes. Returns false when the
+        // blur cannot run (no Vulkan objects or a failed creation), in which
+        // case the caller falls back to the flat translucent background.
+        bool ensureBlurResources(uint32_t width, uint32_t height);
+        void recordBlur(VkCommandBuffer cmd, uint32_t imageIndex, VkImage sourceImage, uint32_t sourceWidth, uint32_t sourceHeight);
+        void releaseBlurResources(bool deferred = false);
+
+        // View rendering methods (implemented in separate files)
+        void renderAddEffectsView();
+        void renderConfigManagerView();
+        void renderSettingsView(const KeyboardState& keyboard);
+        void renderShaderManagerView();
+        void renderShaderTestSection();  // Shader test UI (part of shader manager)
+        void startShaderTest();          // Initialize shader test queue and start
+        void processShaderTest();        // Process one shader per frame (runs every frame)
+        void renderMainView(const KeyboardState& keyboard);
+        void importShaderPreset(const std::string& sourcePath);
+        void renderDiagnosticsView();
+        // Samples frame time, FPS and GPU stats. Called every overlay frame, not
+        // just while the Diagnostics tab is open, so the tab has real history.
+        void sampleDiagnostics();
+        void renderAboutView();
+        void renderAdvancedView();  // Depth buffer switching (Advanced tab)
+        // Sub-views: pages pushed inside a tab. They slide in over the dock (which
+        // fades out to make room) and carry a breadcrumb back to their parent.
+        void renderDepthBuffersView();   // Reported depth buffers (from Settings)
+        void renderThemeColorsView();    // Theme editor: colors (from Appearance)
+        void renderThemeBlurView();      // Theme editor: blur
+        void renderThemeShapeView();     // Theme editor: shape and metrics
+        void renderNavbarView();         // Appearance: navigation bar shape
+        enum SubView
+        {
+            SubView_None = 0,
+            SubView_DepthBuffers,
+            SubView_Diagnostics,
+            SubView_ThemeColors,
+            SubView_ThemeBlur,
+            SubView_ThemeShape,
+            SubView_Navbar,
+        };
+        int openSubView = SubView_None;
+        void gatherDepthInfo();     // Snapshot LogicalDevice depth state under globalLock
+        void applyDepthPinRequests();  // Flush UI depth-pin/clear requests to LogicalDevice
+        void renderToasts();       // Persistent top-right notifications
+
+        // Overlay hitboxes for this frame, in surface pixels. published to the
+        // input blocker so only pointer events over the overlay are withheld.
+        std::vector<InputRect> frameInputRects;
+        // toast cards this frame, in surface pixels; the backdrop blur skips them
+        std::vector<InputRect> toastCardRects;
+
+        LogicalDevice* logicalDevice;
+        OverlayPersistentState* pPersistentState;
+        EffectRegistry* effectRegistry = nullptr;  // Single source of truth for enabled states
+        VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+        VkRenderPass renderPass = VK_NULL_HANDLE;
+        VkCommandPool commandPool = VK_NULL_HANDLE;
+        VkImage titleIconImage = VK_NULL_HANDLE;
+        VkDeviceMemory titleIconMemory = VK_NULL_HANDLE;
+        VkImageView titleIconView = VK_NULL_HANDLE;
+        VkSampler titleIconSampler = VK_NULL_HANDLE;
+        VkDescriptorSet titleIconDescriptor = VK_NULL_HANDLE;
+        // Backdrop blur. One set of resources per swapchain image so a half-res
+        // capture written for image N can never race a blur still reading image
+        // M on the GPU. Shared objects (pipeline, sampler, render pass) live
+        // below and are rebuilt only on a swapchain extent/format change.
+        struct BlurResources
+        {
+            VkImage         image[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};       // [0] final ping-pong target
+            VkDeviceMemory  memory[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+            VkImageView     view[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+            VkFramebuffer   framebuffer[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+            VkDescriptorSet sourceSet[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};   // samples image[i]
+            VkDescriptorSet imguiTexture = VK_NULL_HANDLE;                     // samples image[0]
+        };
+        // Backdrop blur. One set of resources per swapchain image so a half-res
+        // capture written for image N can never race a blur still reading image
+        // N-1.
+        std::vector<BlurResources> blurResources;
+        VkSampler             blurSampler = VK_NULL_HANDLE;
+        VkDescriptorSetLayout blurSetLayout = VK_NULL_HANDLE;
+        VkDescriptorPool      blurPool = VK_NULL_HANDLE;
+        VkRenderPass          blurRenderPass = VK_NULL_HANDLE;
+        VkPipelineLayout      blurPipelineLayout = VK_NULL_HANDLE;
+        VkPipeline            blurPipeline = VK_NULL_HANDLE;
+        uint32_t              blurWidth = 0;   // half-res capture width
+        uint32_t              blurHeight = 0;  // half-res capture height
+        VkFilter              blurFilter = VK_FILTER_LINEAR;  // blit filter, downgraded if unsupported
+        bool                  blurReady = false;
+        std::vector<VkCommandBuffer> commandBuffers;
+        std::vector<VkFence> commandBufferFences;  // Fences to track command buffer completion
+        std::vector<VkFramebuffer> framebuffers;    // Pre-created per swapchain image
+        std::vector<VkImageView> framebufferImageViews;  // Track which image views framebuffers were created for
+        VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
+        uint32_t imageCount = 0;
+        uint32_t framebufferWidth = 0;   // Dimensions used to create framebuffers
+        uint32_t framebufferHeight = 0;
+        OverlayState state;
+        std::vector<std::pair<std::string, std::string>> pendingAddEffects;  // {instanceName, effectType} to add
+        std::map<std::string, int> addEffectsDuplicateCount;  // effectType -> extra copies to add per queue action
+        std::set<std::string> addEffectsRemoved;  // effectType whose original is queued for removal
+        bool inSelectionMode = false;
+        int insertPosition = -1;  // Position to insert effects (-1 = append to end)
+        char addEffectsSearch[64] = "";  // Search filter for add effects view
+        bool addEffectsFocusSearch = false;  // Focus the search box on the next frame
+        // True while a view slide is running. The add-effects search focus is
+        // deferred until it is false: focusing mid-slide made ImGui scroll the
+        // window to the focused item, which dragged the nav bar along.
+        bool viewTransitionActive = false;
+
+        // Bumped when updateState sees different effect sources, so the
+        // add-effects view can cache its entry list instead of rebuilding it
+        uint64_t overlayStateVersion = 0;
+
+        // add-effects view: rebuilt only when state, search or filter changes
+        struct AddEffectsEntry
+        {
+            std::string type;
+            std::string path;
+            std::string package;  // top-level directory under Shaders/, for grouping
+            int         group = 0;
+            int         score = 0;
+        };
+        std::vector<AddEffectsEntry> addEffectsEntries;
+        std::vector<std::string>     addEffectsPackages;  // unique package names for the tabs
+        struct AddEffectsRow
+        {
+            std::string header;  // non-empty on a package header row
+            int         entry = -1;
+        };
+        std::vector<AddEffectsRow>   addEffectsRows;      // display order, headers included
+        std::string                  addEffectsCacheSearch;
+        std::string                  addEffectsCacheFilter;  // selected package, empty = All
+        uint64_t                     addEffectsCacheVersion = UINT64_MAX;
+        bool inConfigManageMode = false;
+        std::vector<std::string> configList;
+        std::string configListDefault;          // cached default_config, refreshed with configList
+        bool configListRefreshPending = true;   // re-scan the configs dir on next render
+
+        // Shader Manager state
+        std::vector<std::string> shaderMgrParentDirs;
+        std::vector<std::string> shaderMgrShaderPaths;
+        std::vector<std::string> shaderMgrTexturePaths;
+        bool shaderMgrInitialized = false;
+
+        // Shader test state
+        bool shaderTestRunning = false;
+        bool shaderTestComplete = false;
+        uint64_t shaderTestStateVersion = 0;  // overlayStateVersion the finished test ran against
+        size_t shaderTestCurrentIndex = 0;
+        int shaderTestDuplicateCount = 0;  // Number of duplicate shaders skipped
+        std::vector<std::pair<std::string, std::string>> shaderTestQueue;  // {effectName, filePath}
+        std::vector<std::string> shaderTestIncludePaths;  // Cached include paths (avoid re-reading config per shader)
+        std::vector<std::tuple<std::string, std::string, bool, std::string>> shaderTestResults;  // {name, path, success, error}
+        std::set<std::string> depthShaders;  // Effect names that use depth buffer (populated by shader test)
+        std::set<std::string> checkedShaders; // Effects already checked for depth (avoids recompiling)
+
+        // UI state for settings view
+        bool themeEditorOpen = false;  // Material 3 token editor panel
+        int listeningForKey = 0;  // 0=none, 1=toggle, 2=reload, 3=overlay
+        bool settingsSaved = false;  // True when settings saved, cleared by vkintox.cpp
+        bool shaderPathsChanged = false;  // True when shader manager saved, cleared by vkintox.cpp
+
+        // Toast snackbars (bottom-centre, auto-dismissing). They render even when
+        // the main overlay is hidden, so fatal errors stay visible.
+        mutable std::mutex toastsMutex;
+        std::vector<ToastNotification> toasts;
+
+        // UI state for Advanced (depth buffer) view
+        DepthInfo depthInfo;  // Refreshed each frame before rendering
+        DeviceInfo deviceInfo;  // Same, for the Diagnostics GPU card
+        bool depthPinPendingClear = false;   // Request to clear pinned depth (from UI)
+        VkImageView depthPinPendingView = VK_NULL_HANDLE;  // Request to pin a specific view (from UI)
+        bool depthPinChanged = false;         // Set when pin/clear was applied (triggers cmd buf reallocation)
+        bool depthTransformPending = false;   // Set when a depth transform toggle changed (rebuild resolve path)
+
+        bool applyRequested = false;
+        // a pending edit that genuinely needs the effect chain rebuilt; a plain
+        // ReShade uniform edit is applied live by updateEffect()
+        bool reloadNeeded = false;
+        bool toggleEffectsRequested = false;
+        bool paramsDirty = false;  // True when params changed, waiting for debounce
+        std::chrono::steady_clock::time_point lastChangeTime;
+        bool visible = false;
+        bool initialized = false;
+        // Shell appear/disappear. Mirrors the dialog motion exactly: same
+        // 0.28s clock, same rise, same bezier, run backwards on hide.
+        float  shellAlpha = 1.0f;
+        double shellAnimStart = -1000.0;
+        bool   shellAnimTarget = false;
+        bool   shellBaseValid = false;
+        bool   shellForcePos = false;
+        float  shellBaseX = 0.0f;
+        float  shellBaseY = 0.0f;
+        bool backendInitialized = false;
+        bool resetLayoutRequested = false;  // When true, reset window position/size next frame
+        bool titleRightDragging = false;
+        float titleRightDragOffsetX = 0.0f;
+        float titleRightDragOffsetY = 0.0f;
+        uint32_t currentWidth = 1920;   // Current swapchain resolution for VRAM estimates
+        uint32_t currentHeight = 1080;
+        char saveConfigName[64] = "";
+        std::string pendingConfigPath;
+        std::string pendingShaderProfilePath;
+        bool pendingShaderProfile = false;
+        std::set<std::string> editedEffectNames;
+        
+        std::string activeShaderProfileName;
+        std::string activeShaderProfilePath;
+        std::vector<std::string> shaderProfiles;
+
+        // Per-app profile system
+        std::string activeGameName;       // Detected executable name
+        std::string activeProfileName;    // Active profile ("default", "performance", etc.)
+        std::string activeProfilePath;    // Full path to active profile file
+        bool profileDirty = false;        // True when changes need saving
+        bool autoSaveProfile(bool block = false);  // Save current state to active profile
+        void collectSaveData(            // Shared helper for save operations
+            std::vector<std::string>& effects,
+            std::vector<std::string>& disabledEffects,
+            std::vector<ConfigParam>& params,
+            std::map<std::string, std::string>& effectPaths,
+            std::vector<PreprocessorDefinition>& allDefs,
+            std::vector<ConfigParam>& disabledEffectParams);
+    };
+
+} // namespace VKIntox
+
+#endif // IMGUI_OVERLAY_HPP_INCLUDED

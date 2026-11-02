@@ -1,6 +1,6 @@
-#include "config.hh"
-#include "config_serializer.hh"
-#include "default_config.hh"
+#include "config/config.hh"
+#include "config/config_serializer.hh"
+#include "config/default_config.hh"
 
 #include <algorithm>
 #include <cstdlib>

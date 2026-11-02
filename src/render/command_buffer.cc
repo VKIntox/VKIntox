@@ -1,12 +1,12 @@
-#include "command_buffer.hh"
+#include "render/command_buffer.hh"
 
 #include <algorithm>
 
-#include "format.hh"
-#include "image_view.hh"
-#include "logical_swapchain.hh"
-#include "settings_manager.hh"
-#include "util.hh"
+#include "render/resources/format.hh"
+#include "render/resources/image_view.hh"
+#include "render/swapchain/logical_swapchain.hh"
+#include "config/settings_manager.hh"
+#include "util/util.hh"
 
 namespace VKIntox
 {

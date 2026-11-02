@@ -4,7 +4,7 @@
 // variation code without needing a GPU.
 
 #define STB_TRUETYPE_IMPLEMENTATION
-#include "imstb_truetype.h"
+#include "vendor/imgui/imstb_truetype.h"
 
 #include <cmath>
 #include <cstdio>
