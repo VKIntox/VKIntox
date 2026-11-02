@@ -1,0 +1,35 @@
+#include "render/pipeline/shader.hh"
+
+#include <array>
+#include <filesystem>
+
+namespace VKIntox
+{
+    void createShaderModule(LogicalDevice* logicalDevice, const std::vector<char>& code, VkShaderModule* shaderModule)
+    {
+        VkShaderModuleCreateInfo shaderCreateInfo;
+
+        shaderCreateInfo.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        shaderCreateInfo.pNext    = nullptr;
+        shaderCreateInfo.flags    = 0;
+        shaderCreateInfo.codeSize = code.size();
+        shaderCreateInfo.pCode    = (uint32_t*) code.data();
+
+        VkResult result = logicalDevice->vkd.CreateShaderModule(logicalDevice->device, &shaderCreateInfo, nullptr, shaderModule);
+        ASSERT_VULKAN(result);
+    }
+
+    void createShaderModule(LogicalDevice* logicalDevice, const std::vector<uint32_t>& code, VkShaderModule* shaderModule)
+    {
+        VkShaderModuleCreateInfo shaderCreateInfo;
+
+        shaderCreateInfo.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        shaderCreateInfo.pNext    = nullptr;
+        shaderCreateInfo.flags    = 0;
+        shaderCreateInfo.codeSize = code.size() * sizeof(uint32_t);
+        shaderCreateInfo.pCode    = code.data();
+
+        VkResult result = logicalDevice->vkd.CreateShaderModule(logicalDevice->device, &shaderCreateInfo, nullptr, shaderModule);
+        ASSERT_VULKAN(result);
+    }
+} // namespace VKIntox

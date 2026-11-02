@@ -180,8 +180,7 @@ compiles the same ImGui sources, so its object files are a convenient link set:
 
 ```sh
 R=$PWD
-clang++ -std=c++20 -O1 -I$R/src -I$R/src/vendor/imgui -I$R/src/overlay \
-    -I$R/src/core -I$R/src/effects -I$R/src/effects/params -I$R/src/core/config \
+clang++ -std=c++20 -O1 -I$R/src -I$R/src/vendor/imgui \
     probe.cc \
     $R/build/src/vkintox-m3-theme-tests.p/vendor_imgui_imgui_m3.cc.o \
     $R/build/src/vkintox-m3-theme-tests.p/vendor_imgui_imgui_draw.cc.o \
