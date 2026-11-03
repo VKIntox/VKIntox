@@ -16,6 +16,7 @@ glsl_shader_src = files(
     'shaders/glsl/full_screen_triangle.vert.glsl',
     'shaders/glsl/overlay_blur.frag.glsl',
     'shaders/glsl/hud_preserve.frag.glsl',
+    'shaders/glsl/hud_scene_input.frag.glsl',
 )
 glsl_compiler = find_program('glslangValidator')
 glsl_generator = generator(glsl_compiler,

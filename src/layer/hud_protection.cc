@@ -3,6 +3,7 @@
 #include "layer/internal.hh"
 #include "layer/pass_log.hh"
 
+#include "effects/runtime/effect_transfer.hh"
 #include "effects/runtime/hud_preserve.hh"
 #include "render/command_buffer.hh"
 #include "render/device/vk_handle.hh"
@@ -195,6 +196,43 @@ namespace VKIntox::Hud
                 device->vkd.CmdClearColorImage(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                                 &zero, 1, &range);
                 imageBarrier(device, commandBuffer, image,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            }
+
+            VkImageSubresourceRange validRange{};
+            validRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            validRange.baseMipLevel = 0;
+            validRange.levelCount = 1;
+            validRange.baseArrayLayer = 0;
+            validRange.layerCount = 1;
+
+            for (VkImage image : swapchain->hud.validImages)
+            {
+                if (image == VK_NULL_HANDLE)
+                    continue;
+                imageBarrier(device, commandBuffer, image,
+                             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                device->vkd.CmdClearColorImage(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                                &zero, 1, &validRange);
+                imageBarrier(device, commandBuffer, image,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            }
+
+            if (swapchain->hud.pendingValidImage != VK_NULL_HANDLE)
+            {
+                imageBarrier(device, commandBuffer, swapchain->hud.pendingValidImage,
+                             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                device->vkd.CmdClearColorImage(commandBuffer, swapchain->hud.pendingValidImage,
+                                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &validRange);
+                imageBarrier(device, commandBuffer, swapchain->hud.pendingValidImage,
                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                              VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -400,6 +438,28 @@ namespace VKIntox::Hud
                          VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
             pending.sceneUsed = true;
 
+            if (swapchain->hud.pendingValidImage != VK_NULL_HANDLE)
+            {
+                imageBarrier(device, commandBuffer, swapchain->hud.pendingValidImage,
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                VkClearColorValue valid{};
+                valid.float32[0] = 1.0f;
+                VkImageSubresourceRange range{};
+                range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                range.baseMipLevel = 0;
+                range.levelCount = 1;
+                range.baseArrayLayer = 0;
+                range.layerCount = 1;
+                device->vkd.CmdClearColorImage(commandBuffer, swapchain->hud.pendingValidImage,
+                                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &valid, 1, &range);
+                imageBarrier(device, commandBuffer, swapchain->hud.pendingValidImage,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            }
+
             imageBarrier(device, commandBuffer, candidate.colorImage,
                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, candidate.colorFinalLayout,
                          VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
@@ -524,6 +584,75 @@ namespace VKIntox::Hud
             return false;
         }
 
+        swapchain->hud.compositeImages.assign(count, VK_NULL_HANDLE);
+        swapchain->hud.compositeViews.assign(count, VK_NULL_HANDLE);
+        swapchain->hud.compositeMemory.assign(count, VK_NULL_HANDLE);
+        swapchain->hud.validImages.assign(count, VK_NULL_HANDLE);
+        swapchain->hud.validViews.assign(count, VK_NULL_HANDLE);
+        swapchain->hud.validMemory.assign(count, VK_NULL_HANDLE);
+        swapchain->hud.sceneInputViews.assign(count, VK_NULL_HANDLE);
+        swapchain->hud.processedViews.assign(count, VK_NULL_HANDLE);
+
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            swapchain->hud.compositeImages[i] = createSingleImage(
+                device, extent, swapchain->format,
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, swapchain->hud.compositeMemory[i]);
+            if (swapchain->hud.compositeImages[i] == VK_NULL_HANDLE)
+            {
+                destroy(swapchain);
+                return false;
+            }
+            swapchain->hud.compositeViews[i] = createSingleImageView(device, swapchain->format, swapchain->hud.compositeImages[i]);
+            if (swapchain->hud.compositeViews[i] == VK_NULL_HANDLE)
+            {
+                destroy(swapchain);
+                return false;
+            }
+
+            swapchain->hud.validImages[i] = createSingleImage(
+                device, {1, 1, 1}, VK_FORMAT_R8_UNORM,
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, swapchain->hud.validMemory[i]);
+            if (swapchain->hud.validImages[i] == VK_NULL_HANDLE)
+            {
+                destroy(swapchain);
+                return false;
+            }
+            swapchain->hud.validViews[i] = createSingleImageView(device, VK_FORMAT_R8_UNORM, swapchain->hud.validImages[i]);
+            if (swapchain->hud.validViews[i] == VK_NULL_HANDLE)
+            {
+                destroy(swapchain);
+                return false;
+            }
+
+            swapchain->hud.sceneInputViews[i] = createSingleImageView(device, swapchain->format, swapchain->fakeImages[i]);
+            if (swapchain->hud.sceneInputViews[i] == VK_NULL_HANDLE)
+            {
+                destroy(swapchain);
+                return false;
+            }
+            const size_t processedSlot = swapchain->fakeImages.size() - swapchain->imageCount;
+            swapchain->hud.processedViews[i] = createSingleImageView(device, swapchain->format,
+                swapchain->fakeImages[processedSlot + i]);
+            if (swapchain->hud.processedViews[i] == VK_NULL_HANDLE)
+            {
+                destroy(swapchain);
+                return false;
+            }
+        }
+
+        swapchain->hud.pendingValidImage = createSingleImage(
+            device, {1, 1, 1}, VK_FORMAT_R8_UNORM,
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, swapchain->hud.pendingValidMemory);
+        if (swapchain->hud.pendingValidImage == VK_NULL_HANDLE)
+        {
+            destroy(swapchain);
+            return false;
+        }
+
         const bool snapshotsInitialized = initializeSnapshots(device, swapchain);
         if (snapshotsInitialized)
         {
@@ -534,20 +663,35 @@ namespace VKIntox::Hud
         }
         else
         {
-            Logger::warn("HUD protection: snapshot clear skipped");
+            Logger::warn("HUD protection: snapshot clear failed; disabling protection");
+            destroy(swapchain);
+            return false;
         }
 
         auto preserve = std::make_shared<HudPreserveEffect>(
             device, swapchain->format, swapchain->imageExtent,
-            swapchain->images, swapchain->imageViews,
-            swapchain->hud.sceneViews, swapchain->hud.finalViews, count);
+            swapchain->hud.compositeImages, swapchain->hud.compositeViews,
+            std::vector<VkImage>(swapchain->fakeImages.end() - count, swapchain->fakeImages.end()),
+            swapchain->hud.processedViews,
+            swapchain->hud.sceneViews, swapchain->hud.finalViews, swapchain->hud.validViews, count);
         if (!preserve || !preserve->valid())
         {
             destroy(swapchain);
             return false;
         }
 
+        auto sceneInput = std::make_shared<HudSceneInputEffect>(
+            device, swapchain->format, swapchain->imageExtent,
+            swapchain->hud.sceneInputViews, swapchain->hud.sceneViews,
+            swapchain->hud.validViews, count);
+        if (!sceneInput || !sceneInput->valid())
+        {
+            destroy(swapchain);
+            return false;
+        }
+
         swapchain->hudPreserve = preserve;
+        swapchain->hudSceneInput = sceneInput;
         swapchain->hud.hudPreserveValid = true;
         swapchain->hud.initialized = true;
         Logger::info("HUD protection enabled for ROSELINE: snapshots=" + std::to_string(count)
@@ -571,6 +715,7 @@ namespace VKIntox::Hud
         }
 
         LogicalDevice* device = swapchain->logicalDevice;
+        swapchain->hudSceneInput.reset();
         swapchain->hudPreserve.reset();
         swapchain->hud.hudPreserveValid = false;
 
@@ -592,6 +737,21 @@ namespace VKIntox::Hud
                 releaseImage(swapchain->hud.sceneImages[i], swapchain->hud.sceneViews[i], swapchain->hud.sceneMemory[i]);
             for (size_t i = 0; i < swapchain->hud.finalImages.size(); ++i)
                 releaseImage(swapchain->hud.finalImages[i], swapchain->hud.finalViews[i], swapchain->hud.finalMemory[i]);
+            for (size_t i = 0; i < swapchain->hud.compositeImages.size(); ++i)
+                releaseImage(swapchain->hud.compositeImages[i], swapchain->hud.compositeViews[i], swapchain->hud.compositeMemory[i]);
+            for (size_t i = 0; i < swapchain->hud.validImages.size(); ++i)
+                releaseImage(swapchain->hud.validImages[i], swapchain->hud.validViews[i], swapchain->hud.validMemory[i]);
+            for (VkImageView view : swapchain->hud.sceneInputViews)
+                if (view != VK_NULL_HANDLE)
+                    device->vkd.DestroyImageView(device->device, view, nullptr);
+            for (VkImageView view : swapchain->hud.processedViews)
+                if (view != VK_NULL_HANDLE)
+                    device->vkd.DestroyImageView(device->device, view, nullptr);
+
+            if (swapchain->hud.pendingValidImage != VK_NULL_HANDLE)
+                device->vkd.DestroyImage(device->device, swapchain->hud.pendingValidImage, nullptr);
+            if (swapchain->hud.pendingValidMemory != VK_NULL_HANDLE)
+                device->vkd.FreeMemory(device->device, swapchain->hud.pendingValidMemory, nullptr);
 
             HudPendingImages& pending = swapchain->hud.pendingFrame;
             if (pending.sceneImage != VK_NULL_HANDLE)
@@ -606,43 +766,65 @@ namespace VKIntox::Hud
         }
 
         swapchain->hud = {};
-        swapchain->commandBuffersEffectHud.clear();
     }
 
-    bool rebuildCommandBuffers(LogicalDevice* device, LogicalSwapchain* swapchain,
-                               const DepthState& depthState, VkCommandPool pool)
+    std::vector<std::shared_ptr<Effect>> composeEffects(
+        LogicalSwapchain* logicalSwapchain,
+        const std::vector<std::shared_ptr<Effect>>& effects)
     {
-        if (!enabled() || !device || !swapchain || !swapchain->hud.initialized
-            || !swapchain->hud.hudPreserveValid || !swapchain->hudPreserve)
-            return false;
+        std::vector<std::shared_ptr<Effect>> chain;
+        if (!logicalSwapchain)
+            return chain;
 
-        std::vector<VkCommandBuffer> commandBuffers =
-            allocateCommandBuffer(device, swapchain->imageCount, pool);
-        if (commandBuffers.size() != swapchain->imageCount)
-            return false;
-
-        std::vector<std::shared_ptr<Effect>> effects = swapchain->effects;
-        effects.push_back(swapchain->hudPreserve);
-        writeCommandBuffers(device, swapchain, effects, commandBuffers, depthState);
-        swapchain->commandBuffersEffectHud = std::move(commandBuffers);
-        return true;
+        const bool hud = logicalSwapchain->hud.initialized && logicalSwapchain->hud.hudPreserveValid;
+        if (hud && logicalSwapchain->hudSceneInput)
+            chain.push_back(logicalSwapchain->hudSceneInput);
+        chain.insert(chain.end(), effects.begin(), effects.end());
+        if (hud && logicalSwapchain->hudPreserve)
+        {
+            chain.push_back(logicalSwapchain->hudPreserve);
+            chain.push_back(std::make_shared<TransferEffect>(
+                logicalSwapchain->logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
+                logicalSwapchain->hud.compositeImages, logicalSwapchain->images, nullptr));
+        }
+        return chain;
     }
 
-    bool activeFor(const LogicalSwapchain* swapchain, uint32_t imageIndex)
+    void refresh(LogicalSwapchain* logicalSwapchain, size_t processedSlot)
     {
-        if (!enabled() || !swapchain || !swapchain->hud.initialized
-            || !swapchain->hud.hudPreserveValid || !swapchain->hudPreserve)
-            return false;
-        if (swapchain->commandBuffersEffectHud.empty())
-            return false;
+        if (!logicalSwapchain || !logicalSwapchain->hud.initialized
+            || !logicalSwapchain->hudPreserve || !logicalSwapchain->hud.hudPreserveValid)
+            return;
 
-        static const bool forced = getenv("VKINTOX_HUD_FORCE") != nullptr;
-        if (forced)
-            return true;
+        const uint32_t count = logicalSwapchain->imageCount;
+        if (count == 0 || logicalSwapchain->fakeImages.size() < (processedSlot + 1) * count)
+            return;
 
-        if (imageIndex >= swapchain->hud.snapshotValid.size())
-            return false;
-        return swapchain->hud.snapshotValid[imageIndex];
+        LogicalDevice* device = logicalSwapchain->logicalDevice;
+        if (!device)
+            return;
+        std::vector<VkImage> images(logicalSwapchain->fakeImages.begin() + processedSlot * count,
+                                    logicalSwapchain->fakeImages.begin() + (processedSlot + 1) * count);
+        std::vector<VkImageView> views(count, VK_NULL_HANDLE);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            views[i] = createSingleImageView(device, logicalSwapchain->format, images[i]);
+            if (views[i] == VK_NULL_HANDLE)
+            {
+                for (VkImageView created : views)
+                    if (created != VK_NULL_HANDLE)
+                        device->vkd.DestroyImageView(device->device, created, nullptr);
+                return;
+            }
+        }
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            if (logicalSwapchain->hud.processedViews[i] != VK_NULL_HANDLE)
+                device->vkd.DestroyImageView(device->device, logicalSwapchain->hud.processedViews[i], nullptr);
+            logicalSwapchain->hud.processedViews[i] = views[i];
+        }
+
+        static_cast<HudPreserveEffect*>(logicalSwapchain->hudPreserve.get())->updateProcessedViews(images, views);
     }
 
     void commandBufferBegan(VkCommandBuffer commandBuffer)
@@ -866,6 +1048,49 @@ namespace VKIntox::Hud
                      VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
         copyImageRegion(device, commandBuffer, pending.sceneImage, swapchain->hud.sceneImages[index], swapchain->imageExtent);
         copyImageRegion(device, commandBuffer, pending.finalImage, swapchain->hud.finalImages[index], swapchain->imageExtent);
+
+        if (swapchain->hud.pendingValidImage != VK_NULL_HANDLE && index < swapchain->hud.validImages.size())
+        {
+            VkImageSubresourceRange validRange{};
+            validRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            validRange.baseMipLevel = 0;
+            validRange.levelCount = 1;
+            validRange.baseArrayLayer = 0;
+            validRange.layerCount = 1;
+
+            imageBarrier(device, commandBuffer, swapchain->hud.validImages[index],
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+            VkImageCopy validCopy{};
+            validCopy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            validCopy.srcSubresource.layerCount = 1;
+            validCopy.dstSubresource = validCopy.srcSubresource;
+            validCopy.extent = {1, 1, 1};
+            device->vkd.CmdCopyImage(commandBuffer,
+                                      swapchain->hud.pendingValidImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                      swapchain->hud.validImages[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                      1, &validCopy);
+
+            imageBarrier(device, commandBuffer, swapchain->hud.validImages[index],
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+            imageBarrier(device, commandBuffer, swapchain->hud.pendingValidImage,
+                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            VkClearColorValue zeroValid{};
+            device->vkd.CmdClearColorImage(commandBuffer, swapchain->hud.pendingValidImage,
+                                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zeroValid, 1, &validRange);
+            imageBarrier(device, commandBuffer, swapchain->hud.pendingValidImage,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        }
+
         imageBarrier(device, commandBuffer, swapchain->hud.sceneImages[index],
                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                      VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,

@@ -1924,27 +1924,17 @@ namespace VKIntox
                 logicalSwapchain->commandBuffersNoEffect.size(),
                 logicalSwapchain->commandBuffersNoEffect.data());
         }
-        if (pool != VK_NULL_HANDLE && !logicalSwapchain->commandBuffersEffectHud.empty())
-        {
-            logicalDevice->vkd.FreeCommandBuffers(
-                logicalDevice->device, pool,
-                logicalSwapchain->commandBuffersEffectHud.size(),
-                logicalSwapchain->commandBuffersEffectHud.data());
-            logicalSwapchain->commandBuffersEffectHud.clear();
-        }
-
         Logger::debug("reallocateCommandBuffers: old command buffers freed");
 
         // Allocate and write effect command buffers
         logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, pool);
         writeCommandBuffers(logicalDevice,
                             logicalSwapchain,
-                            logicalSwapchain->effects,
+                            Hud::composeEffects(logicalSwapchain, logicalSwapchain->effects),
                             logicalSwapchain->commandBuffersEffect,
                             depth);
 
         Logger::debug("reallocateCommandBuffers: effect command buffers written");
-        Hud::rebuildCommandBuffers(logicalDevice, logicalSwapchain, depth, pool);
 
         // Allocate and write no-effect command buffers
         logicalSwapchain->commandBuffersNoEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, pool);

@@ -1314,6 +1314,8 @@ namespace VKIntox
         bool checkEnabledState = true)
     {
         const bool useMutableFormat = logicalSwapchain->useMutableFormat;
+        const bool hudCompose = logicalSwapchain->hud.initialized;
+        const bool writeToSwapchain = useMutableFormat && !hudCompose;
 
         if (logicalSwapchain->imageCount == 0)
         {
@@ -1321,9 +1323,32 @@ namespace VKIntox
             return;
         }
 
-        const size_t requiredSlots = effectStrings.empty()
-            ? 1
-            : effectStrings.size() + (useMutableFormat ? 0u : 1u);
+        logicalSwapchain->activeChainSlots = 0;
+
+        std::vector<std::string> activeEffects;
+        activeEffects.reserve(effectStrings.size());
+        for (const auto& name : effectStrings)
+        {
+            const bool failed = effectRegistry.hasEffectFailed(name);
+            const bool disabled = checkEnabledState && !effectRegistry.isEffectEnabled(name);
+            if (!failed && !disabled)
+                activeEffects.push_back(name);
+        }
+
+        if (activeEffects.empty())
+        {
+            if (!hudCompose)
+            {
+                std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin(),
+                                                 logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount);
+                logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
+                    logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
+                    firstImages, logicalSwapchain->images, config));
+            }
+            return;
+        }
+
+        const size_t requiredSlots = activeEffects.size() + 1;
         const size_t requiredFakeImages = static_cast<size_t>(logicalSwapchain->imageCount) * requiredSlots;
         if (logicalSwapchain->fakeImages.size() < requiredFakeImages)
         {
@@ -1333,55 +1358,28 @@ namespace VKIntox
             return;
         }
 
-        // If no effects, add pass-through so rendering still works
-        if (effectStrings.empty())
+        auto slotImages = [&](size_t slot) {
+            return std::vector<VkImage>(logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * slot,
+                                        logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * (slot + 1));
+        };
+
+        for (uint32_t i = 0; i < activeEffects.size(); i++)
         {
-            std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin(),
-                                             logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount);
-            logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
-                logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                firstImages, logicalSwapchain->images, config));
-            return;
-        }
+            Logger::debug("creating effect " + std::to_string(i) + ": " + activeEffects[i]);
 
-        for (uint32_t i = 0; i < effectStrings.size(); i++)
-        {
-            Logger::debug("creating effect " + std::to_string(i) + ": " + effectStrings[i]);
-
-            // Calculate input images for this effect
-            std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * i,
-                                             logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * (i + 1));
-
-            // Calculate output images - last effect writes to swapchain or final fake images
+            std::vector<VkImage> firstImages = slotImages(i);
             std::vector<VkImage> secondImages;
-            if (i == effectStrings.size() - 1)
-            {
-                secondImages = useMutableFormat
-                    ? logicalSwapchain->images
-                    : std::vector<VkImage>(logicalSwapchain->fakeImages.end() - logicalSwapchain->imageCount,
-                                           logicalSwapchain->fakeImages.end());
-            }
+            if (i == activeEffects.size() - 1)
+                secondImages = writeToSwapchain ? logicalSwapchain->images : slotImages(activeEffects.size());
             else
-            {
-                secondImages = std::vector<VkImage>(logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * (i + 1),
-                                                    logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * (i + 2));
-            }
+                secondImages = slotImages(i + 1);
 
-            // Check if effect should be skipped (disabled or failed)
-            bool effectFailed = effectRegistry.hasEffectFailed(effectStrings[i]);
-            bool effectDisabled = checkEnabledState && !effectRegistry.isEffectEnabled(effectStrings[i]);
-
-            if (effectFailed || effectDisabled)
-            {
-                Logger::debug("effect " + std::string(effectFailed ? "failed" : "disabled") + ", using pass-through: " + effectStrings[i]);
-                logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
-                continue;
-            }
+            const std::string& effectName = activeEffects[i];
 
             // ReShade effect - wrap in try-catch + signal handler to handle compilation failures gracefully
             // The embedded reshadefx compiler can trigger SIGFPE/SIGABRT in edge cases
-            std::string effectPath = effectRegistry.getEffectFilePath(effectStrings[i]);
-            auto customDefs = effectRegistry.getPreprocessorDefs(effectStrings[i]);
+            std::string effectPath = effectRegistry.getEffectFilePath(effectName);
+            auto customDefs = effectRegistry.getPreprocessorDefs(effectName);
 
             installCrashHandlers();
             bool signalCrash = false;
@@ -1398,13 +1396,13 @@ namespace VKIntox
                 std::string sigName = (caughtSignal == SIGFPE) ? "SIGFPE"
                                     : (caughtSignal == SIGABRT) ? "SIGABRT"
                                     : (caughtSignal == SIGSEGV) ? "SIGSEGV" : "SIGNAL";
-                Logger::err("Caught " + sigName + " creating ReshadeEffect " + effectStrings[i]);
-                effectRegistry.setEffectError(effectStrings[i], sigName + " during shader compilation");
+                Logger::err("Caught " + sigName + " creating ReshadeEffect " + effectName);
+                effectRegistry.setEffectError(effectName, sigName + " during shader compilation");
                 logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
                 // Soft-disable: reshadefx native crash means we can't
                 // trust the compiler. Don't risk another one.
                 panicLayer(logicalDevice, std::string("reshadefx native crash (") + sigName
-                           + ") while compiling " + effectStrings[i]);
+                           + ") while compiling " + effectName);
             }
 
             if (!signalCrash)
@@ -1414,33 +1412,33 @@ namespace VKIntox
                 {
                     auto reshadeEffect = std::make_shared<ReshadeEffect>(
                         logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                        firstImages, secondImages, &effectRegistry, effectStrings[i], effectPath, customDefs,
-                        effectRegistry.effectUniformsBaked(effectStrings[i]));
+                        firstImages, secondImages, &effectRegistry, effectName, effectPath, customDefs,
+                        effectRegistry.effectUniformsBaked(effectName));
                     logicalSwapchain->effects.push_back(reshadeEffect);
                     if (reshadeEffect->getOutputWrites() == 0)
                     {
-                        Logger::debug("deterministic forwarding for zero-output-write effect: " + effectStrings[i]);
+                        Logger::debug("deterministic forwarding for zero-output-write effect: " + effectName);
                         logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
                                                firstImages, secondImages, config));
                     }
                 }
                 catch (const std::exception& e)
                 {
-                    Logger::err("Failed to create ReshadeEffect " + effectStrings[i] + ": " + e.what());
-                    effectRegistry.setEffectError(effectStrings[i], e.what());
+                    Logger::err("Failed to create ReshadeEffect " + effectName + ": " + e.what());
+                    effectRegistry.setEffectError(effectName, e.what());
                     logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
                 }
                 signalJmpActive = 0;
             }
         }
 
-        // If device doesn't support mutable format, add final transfer to swapchain
-        if (!useMutableFormat)
+        logicalSwapchain->activeChainSlots = activeEffects.size();
+
+        if (!writeToSwapchain && !hudCompose)
         {
             logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
                 logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                std::vector<VkImage>(logicalSwapchain->fakeImages.end() - logicalSwapchain->imageCount, logicalSwapchain->fakeImages.end()),
-                logicalSwapchain->images, config));
+                slotImages(activeEffects.size()), logicalSwapchain->images, config));
         }
     }
 
@@ -2708,8 +2706,9 @@ namespace VKIntox
         size_t effectSlots = std::max(selectedEffects.size(), static_cast<size_t>(maxEffects));
         logicalSwapchain->maxEffectSlots = effectSlots;
 
-        // create 1 more set of images when we can't use the swapchain itself
-        const uint64_t slotCount = static_cast<uint64_t>(effectSlots) + (logicalSwapchain->useMutableFormat ? 0u : 1u);
+        // one spare slot: the final transfer needs it when the swapchain cannot
+        // be written directly, and the HUD composite needs a stable last slot
+        const uint64_t slotCount = static_cast<uint64_t>(effectSlots) + 1u;
         const uint64_t fakeImageCount64 = static_cast<uint64_t>(logicalSwapchain->imageCount) * slotCount;
         if (fakeImageCount64 == 0 || fakeImageCount64 > std::numeric_limits<uint32_t>::max())
         {
@@ -2732,15 +2731,21 @@ namespace VKIntox
         }
         Logger::debug("created fake swapchain images");
 
+        Hud::init(logicalSwapchain);
+
         if (!isFirstRun && !selectedEffects.empty())
         {
             // Resize with effects - use pass-through and debounce for smooth resize
             Logger::debug("using pass-through during resize, will restore effects after debounce");
-            std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin(),
-                                             logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount);
-            logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
-                logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                firstImages, logicalSwapchain->images, config.get()));
+            if (!logicalSwapchain->hud.initialized)
+            {
+                std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin(),
+                                                 logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount);
+                logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
+                    logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
+                    firstImages, logicalSwapchain->images, config.get()));
+            }
+            logicalSwapchain->activeChainSlots = 0;
 
             resizeDebounce.pending = true;
             resizeDebounce.lastResizeTime = std::chrono::steady_clock::now();
@@ -2755,7 +2760,7 @@ namespace VKIntox
 
         Logger::debug("selected effect count: " + std::to_string(selectedEffects.size()));
         Logger::debug("effect count: " + std::to_string(logicalSwapchain->effects.size()));
-        Hud::init(logicalSwapchain);
+        Hud::refresh(logicalSwapchain, logicalSwapchain->activeChainSlots);
 
         logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, logicalSwapchain->commandPool);
         Logger::debug("allocated ComandBuffers " + std::to_string(logicalSwapchain->commandBuffersEffect.size()) + " for swapchain "
@@ -2764,11 +2769,10 @@ namespace VKIntox
         ensureDepthResolveResources(logicalSwapchain, depth);
         writeCommandBuffers(logicalDevice,
                             logicalSwapchain,
-                            logicalSwapchain->effects,
+                            Hud::composeEffects(logicalSwapchain, logicalSwapchain->effects),
                             logicalSwapchain->commandBuffersEffect,
                             depth);
         Logger::debug("wrote CommandBuffers");
-        Hud::rebuildCommandBuffers(logicalDevice, logicalSwapchain, depth, logicalSwapchain->commandPool);
 
         logicalSwapchain->semaphores = createSemaphores(logicalDevice, logicalSwapchain->imageCount);
         logicalSwapchain->overlaySemaphores = createSemaphores(logicalDevice, logicalSwapchain->imageCount);
@@ -3703,9 +3707,8 @@ namespace VKIntox
                     return VK_ERROR_OUT_OF_DATE_KHR;
                 }
 
-                const bool hudActive = presentEffectSnapshot && Hud::activeFor(logicalSwapchain, index);
                 const auto& commandBuffers = presentEffectSnapshot
-                    ? (hudActive ? logicalSwapchain->commandBuffersEffectHud : logicalSwapchain->commandBuffersEffect)
+                    ? logicalSwapchain->commandBuffersEffect
                     : logicalSwapchain->commandBuffersNoEffect;
                 if (!logicalSwapchain->passthrough && index >= commandBuffers.size())
                 {
@@ -4047,9 +4050,8 @@ namespace VKIntox
                     presentEffectSnapshot = false;
                 }
 
-                const bool hudActive = presentEffectSnapshot && Hud::activeFor(logicalSwapchain, index);
                 const auto& submitCommandBuffers = presentEffectSnapshot
-                    ? (hudActive ? logicalSwapchain->commandBuffersEffectHud : logicalSwapchain->commandBuffersEffect)
+                    ? logicalSwapchain->commandBuffersEffect
                     : logicalSwapchain->commandBuffersNoEffect;
                 if (index >= submitCommandBuffers.size())
                 {
