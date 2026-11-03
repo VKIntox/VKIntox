@@ -1,5 +1,6 @@
 #include "render/swapchain/logical_swapchain.hh"
 
+#include "layer/hud_protection.hh"
 #include "render/device/vk_handle.hh"
 #include "util/util.hh"
 
@@ -32,10 +33,12 @@ namespace VKIntox
             }
             commandBuffersEffect.clear();
             commandBuffersNoEffect.clear();
+            commandBuffersEffectHud.clear();
             Logger::info("[DESTROY-TRACE] command buffers freed");
 
             Logger::info("[DESTROY-TRACE] destroying " + std::to_string(effects.size()) + " effects");
             effects.clear();
+            hudPreserve.reset();
             defaultTransfer.reset();
             Logger::info("[DESTROY-TRACE] effects destroyed");
 
@@ -47,6 +50,7 @@ namespace VKIntox
             // makes this the legal moment to run them.
             DeferredDestroyQueue::instance().flush();
 
+            Hud::destroy(this);
             destroyDepthResolveResources(this);
 
             // Fake images may still have application image views attached.

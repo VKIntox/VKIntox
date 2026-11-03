@@ -2,6 +2,7 @@
 #define LOGICAL_SWAPCHAIN_HPP_INCLUDED
 #include <vector>
 #include <memory>
+#include <unordered_map>
 
 #include "effects/runtime/effect.hh"
 
@@ -24,6 +25,32 @@ namespace VKIntox
         bool           initialized = false;
     };
 
+    struct HudPendingImages
+    {
+        VkImage        sceneImage = VK_NULL_HANDLE;
+        VkDeviceMemory sceneMemory = VK_NULL_HANDLE;
+        VkImage        finalImage = VK_NULL_HANDLE;
+        VkDeviceMemory finalMemory = VK_NULL_HANDLE;
+        bool           sceneUsed = false;
+        bool           finalUsed = false;
+    };
+
+    struct HudProtectionState
+    {
+        bool                              initialized = false;
+        bool                              hudPreserveValid = false;
+        std::vector<VkImage>              sceneImages;
+        std::vector<VkImageView>          sceneViews;
+        std::vector<VkDeviceMemory>       sceneMemory;
+        std::vector<VkImage>              finalImages;
+        std::vector<VkImageView>          finalViews;
+        std::vector<VkDeviceMemory>       finalMemory;
+        std::vector<bool>                 sceneInitialized;
+        std::vector<bool>                 finalInitialized;
+        std::vector<bool>                 snapshotValid;
+        HudPendingImages                  pendingFrame;
+    };
+
     struct LogicalSwapchain
     {
         LogicalDevice*                       logicalDevice;
@@ -35,6 +62,9 @@ namespace VKIntox
         std::vector<VkImage>                 images;
         std::vector<VkImageView>             imageViews;  // for overlay rendering
         std::vector<VkImage>                 fakeImages;
+        HudProtectionState                   hud;
+        std::shared_ptr<Effect>              hudPreserve;
+        std::vector<VkCommandBuffer>         commandBuffersEffectHud;
         // per-swapchain pool: a shared-pool reset invalidated the replacement
         // swapchain's buffers while the old one was still being torn down
         VkCommandPool                        commandPool = VK_NULL_HANDLE;

@@ -39,6 +39,8 @@
 #include "render/device/logical_device.hh"
 #include "render/device/vk_handle.hh"
 #include "render/swapchain/logical_swapchain.hh"
+#include "layer/pass_log.hh"
+#include "layer/hud_protection.hh"
 
 #include "render/command_buffer.hh"
 #include "config/config.hh"
@@ -2751,6 +2753,7 @@ namespace VKIntox
 
         Logger::debug("selected effect count: " + std::to_string(selectedEffects.size()));
         Logger::debug("effect count: " + std::to_string(logicalSwapchain->effects.size()));
+        Hud::init(logicalSwapchain);
 
         logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, logicalSwapchain->commandPool);
         Logger::debug("allocated ComandBuffers " + std::to_string(logicalSwapchain->commandBuffersEffect.size()) + " for swapchain "
@@ -2763,6 +2766,7 @@ namespace VKIntox
                             logicalSwapchain->commandBuffersEffect,
                             depth);
         Logger::debug("wrote CommandBuffers");
+        Hud::rebuildCommandBuffers(logicalDevice, logicalSwapchain, depth, logicalSwapchain->commandPool);
 
         logicalSwapchain->semaphores = createSemaphores(logicalDevice, logicalSwapchain->imageCount);
         logicalSwapchain->overlaySemaphores = createSemaphores(logicalDevice, logicalSwapchain->imageCount);
@@ -3455,6 +3459,7 @@ namespace VKIntox
                 return devIt->second->vkd.QueuePresentKHR(queue, pPresentInfo);
 
             LogicalDevice* deviceForSettings = devIt->second.get();
+            PassLog::present(pPresentInfo);
 
             // Check if settings were saved (re-read from settingsManager which is already updated by UI)
             if (deviceForSettings && deviceForSettings->imguiOverlay && deviceForSettings->imguiOverlay->hasSettingsSaved())
@@ -3696,8 +3701,9 @@ namespace VKIntox
                     return VK_ERROR_OUT_OF_DATE_KHR;
                 }
 
+                const bool hudActive = presentEffectSnapshot && Hud::activeFor(logicalSwapchain, index);
                 const auto& commandBuffers = presentEffectSnapshot
-                    ? logicalSwapchain->commandBuffersEffect
+                    ? (hudActive ? logicalSwapchain->commandBuffersEffectHud : logicalSwapchain->commandBuffersEffect)
                     : logicalSwapchain->commandBuffersNoEffect;
                 if (!logicalSwapchain->passthrough && index >= commandBuffers.size())
                 {
@@ -4039,8 +4045,9 @@ namespace VKIntox
                     presentEffectSnapshot = false;
                 }
 
+                const bool hudActive = presentEffectSnapshot && Hud::activeFor(logicalSwapchain, index);
                 const auto& submitCommandBuffers = presentEffectSnapshot
-                    ? logicalSwapchain->commandBuffersEffect
+                    ? (hudActive ? logicalSwapchain->commandBuffersEffectHud : logicalSwapchain->commandBuffersEffect)
                     : logicalSwapchain->commandBuffersNoEffect;
                 if (index >= submitCommandBuffers.size())
                 {
@@ -4236,6 +4243,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4261,6 +4269,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4280,6 +4289,7 @@ namespace VKIntox
                     break;
                 }
             }
+            PassLog::renderPassCreated(*pRenderPass, &createInfo);
         }
         return vr;
     }
@@ -4307,6 +4317,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4332,6 +4343,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4351,6 +4363,7 @@ namespace VKIntox
                     break;
                 }
             }
+            PassLog::renderPassCreated(*pRenderPass, &createInfo);
         }
         return vr;
     }
@@ -4378,6 +4391,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4403,6 +4417,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4422,6 +4437,7 @@ namespace VKIntox
                     break;
                 }
             }
+            PassLog::renderPassCreated(*pRenderPass, &createInfo);
         }
         return vr;
     }
@@ -4430,11 +4446,15 @@ namespace VKIntox
     {
         scoped_lock l(globalLock);
         renderPassDepthFinalLayouts.erase(renderPass);
+        PassLog::renderPassDestroyed(renderPass);
         if (!device)
             return;
         auto devIt = deviceMap.find(GetKey(device));
         if (devIt != deviceMap.end() && devIt->second)
+        {
+            Hud::renderPassDestroyed(devIt->second.get(), renderPass);
             devIt->second->vkd.DestroyRenderPass(device, renderPass, pAllocator);
+        }
     }
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_CreateImage(VkDevice                     device,
@@ -4553,7 +4573,10 @@ namespace VKIntox
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
             if (logicalDevice == nullptr)
                 return VK_ERROR_DEVICE_LOST;
-            return logicalDevice->vkd.CreateImageView(device, pCreateInfo, pAllocator, view);
+            VkResult result = logicalDevice->vkd.CreateImageView(device, pCreateInfo, pAllocator, view);
+            if (result == VK_SUCCESS && view)
+                PassLog::imageViewCreated(*view, pCreateInfo->image);
+            return result;
         }
 
         scoped_lock l(globalLock);
@@ -4564,6 +4587,8 @@ namespace VKIntox
         VkResult result = logicalDevice->vkd.CreateImageView(device, pCreateInfo, pAllocator, view);
         if (result != VK_SUCCESS)
             return result;
+        if (view)
+            PassLog::imageViewCreated(*view, pCreateInfo->image);
 
         DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromImage(logicalDevice, pCreateInfo->image);
         if (snapshotTarget.swapchain != VK_NULL_HANDLE)
@@ -4658,6 +4683,7 @@ namespace VKIntox
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
             if (logicalDevice == nullptr)
                 return;
+            PassLog::imageViewDestroyed(imageView);
             logicalDevice->vkd.DestroyImageView(device, imageView, pAllocator);
             return;
         }
@@ -4673,6 +4699,7 @@ namespace VKIntox
             || logicalDevice->depthViewStates.count(imageView) != 0;
         logicalDevice->snapshotTargetViewStates.erase(imageView);
         logicalDevice->depthViewStates.erase(imageView);
+        PassLog::imageViewDestroyed(imageView);
         clearTrackedDepthScopesLocked(logicalDevice, [imageView](const DepthState& state) { return state.imageView == imageView; });
 
         for (auto it = logicalDevice->framebufferDepthStates.begin(); it != logicalDevice->framebufferDepthStates.end();)
@@ -4726,7 +4753,10 @@ namespace VKIntox
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
             if (logicalDevice == nullptr)
                 return VK_ERROR_DEVICE_LOST;
-            return logicalDevice->vkd.CreateFramebuffer(device, pCreateInfo, pAllocator, pFramebuffer);
+            VkResult result = logicalDevice->vkd.CreateFramebuffer(device, pCreateInfo, pAllocator, pFramebuffer);
+            if (result == VK_SUCCESS && pFramebuffer)
+                PassLog::framebufferCreated(*pFramebuffer, pCreateInfo);
+            return result;
         }
 
         scoped_lock l(globalLock);
@@ -4737,6 +4767,8 @@ namespace VKIntox
         VkResult result = logicalDevice->vkd.CreateFramebuffer(device, pCreateInfo, pAllocator, pFramebuffer);
         if (result != VK_SUCCESS)
             return result;
+        if (pFramebuffer)
+            PassLog::framebufferCreated(*pFramebuffer, pCreateInfo);
 
         for (uint32_t i = 0; i < pCreateInfo->attachmentCount; i++)
         {
@@ -4782,6 +4814,7 @@ namespace VKIntox
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
             if (logicalDevice == nullptr)
                 return;
+            PassLog::framebufferDestroyed(framebuffer);
             logicalDevice->vkd.DestroyFramebuffer(device, framebuffer, pAllocator);
             return;
         }
@@ -4793,6 +4826,7 @@ namespace VKIntox
             return;
         logicalDevice->framebufferDepthStates.erase(framebuffer);
         logicalDevice->framebufferSnapshotTargets.erase(framebuffer);
+        PassLog::framebufferDestroyed(framebuffer);
         logicalDevice->vkd.DestroyFramebuffer(device, framebuffer, pAllocator);
     }
 
@@ -4824,11 +4858,15 @@ namespace VKIntox
                 auto rpLayoutIt = renderPassDepthFinalLayouts.find(pRenderPassBegin->renderPass);
                 if (rpLayoutIt != renderPassDepthFinalLayouts.end())
                     rpDepthFinalLayout = rpLayoutIt->second;
+                DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin);
                 beginTrackedDepthScope(logicalDevice,
                                        commandBuffer,
                                        selectDepthStateFromRenderPassBegin(logicalDevice, pRenderPassBegin),
-                                       selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin),
+                                       snapshotTarget,
                                        rpDepthFinalLayout);
+                PassLog::begin(commandBuffer, pRenderPassBegin->renderPass, pRenderPassBegin->framebuffer,
+                               pRenderPassBegin->renderArea, snapshotTarget);
+                Hud::beginRenderPass(logicalDevice, commandBuffer, pRenderPassBegin);
             }
         }
 
@@ -4858,11 +4896,15 @@ namespace VKIntox
                 auto rpLayoutIt = renderPassDepthFinalLayouts.find(pRenderPassBegin->renderPass);
                 if (rpLayoutIt != renderPassDepthFinalLayouts.end())
                     rpDepthFinalLayout = rpLayoutIt->second;
+                DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin);
                 beginTrackedDepthScope(logicalDevice,
                                        commandBuffer,
                                        selectDepthStateFromRenderPassBegin(logicalDevice, pRenderPassBegin),
-                                       selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin),
+                                       snapshotTarget,
                                        rpDepthFinalLayout);
+                PassLog::begin(commandBuffer, pRenderPassBegin->renderPass, pRenderPassBegin->framebuffer,
+                               pRenderPassBegin->renderArea, snapshotTarget);
+                Hud::beginRenderPass(logicalDevice, commandBuffer, pRenderPassBegin);
             }
         }
 
@@ -4892,11 +4934,15 @@ namespace VKIntox
                 auto rpLayoutIt = renderPassDepthFinalLayouts.find(pRenderPassBegin->renderPass);
                 if (rpLayoutIt != renderPassDepthFinalLayouts.end())
                     rpDepthFinalLayout = rpLayoutIt->second;
+                DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin);
                 beginTrackedDepthScope(logicalDevice,
                                        commandBuffer,
                                        selectDepthStateFromRenderPassBegin(logicalDevice, pRenderPassBegin),
-                                       selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin),
+                                       snapshotTarget,
                                        rpDepthFinalLayout);
+                PassLog::begin(commandBuffer, pRenderPassBegin->renderPass, pRenderPassBegin->framebuffer,
+                               pRenderPassBegin->renderArea, snapshotTarget);
+                Hud::beginRenderPass(logicalDevice, commandBuffer, pRenderPassBegin);
             }
         }
 
@@ -4912,11 +4958,14 @@ namespace VKIntox
         if (pRenderingInfo && pRenderingInfo->pDepthAttachment)
             depthFinalLayout = pRenderingInfo->pDepthAttachment->imageLayout;
 
+        DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromRenderingInfo(logicalDevice, pRenderingInfo);
         beginTrackedDepthScope(logicalDevice,
                                commandBuffer,
                                selectDepthStateFromRenderingInfo(logicalDevice, pRenderingInfo),
-                               selectDepthSnapshotTargetFromRenderingInfo(logicalDevice, pRenderingInfo),
+                               snapshotTarget,
                                depthFinalLayout);
+        PassLog::beginDynamic(commandBuffer, pRenderingInfo, snapshotTarget);
+        Hud::beginRendering(logicalDevice, commandBuffer, pRenderingInfo);
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdBeginRendering(VkCommandBuffer commandBuffer, const VkRenderingInfo* pRenderingInfo)
@@ -5321,6 +5370,8 @@ namespace VKIntox
         {
             logicalDevice->vkd.CmdCopyImage(commandBuffer, srcImage, srcImageLayout, dstImage, dstImageLayout, regionCount, pRegions);
             scoped_lock l(globalLock);
+            PassLog::copyImage(commandBuffer, srcImage, dstImage, pRegions, regionCount);
+            Hud::copyImage(logicalDevice, commandBuffer, srcImage, dstImage);
             tryActivatePendingTransferLinkedDepthScope(logicalDevice, commandBuffer, dstImage, "CmdCopyImage");
         }
     }
@@ -5379,6 +5430,8 @@ namespace VKIntox
         {
             logicalDevice->vkd.CmdBlitImage(commandBuffer, srcImage, srcImageLayout, dstImage, dstImageLayout, regionCount, pRegions, filter);
             scoped_lock l(globalLock);
+            PassLog::blitImage(commandBuffer, srcImage, dstImage, pRegions, regionCount, filter);
+            Hud::blitImage(logicalDevice, commandBuffer, srcImage, dstImage);
             tryActivatePendingTransferLinkedDepthScope(logicalDevice, commandBuffer, dstImage, "CmdBlitImage");
         }
     }
@@ -5515,12 +5568,15 @@ namespace VKIntox
             if (devIt != deviceMap.end())
             {
                 logicalDevice = devIt->second.get();
-                countTrackedDepthDraw(logicalDevice, commandBuffer);
+                countTrackedDepthDraw(logicalDevice, commandBuffer, 1, vertexCount, false);
             }
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDraw(commandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
+            Hud::draw(logicalDevice, commandBuffer, true, vertexCount, instanceCount);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndexed(VkCommandBuffer commandBuffer,
@@ -5544,12 +5600,15 @@ namespace VKIntox
             if (devIt != deviceMap.end())
             {
                 logicalDevice = devIt->second.get();
-                countTrackedDepthDraw(logicalDevice, commandBuffer);
+                countTrackedDepthDraw(logicalDevice, commandBuffer, 1, indexCount, true);
             }
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndirect(VkCommandBuffer commandBuffer,
@@ -5577,7 +5636,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndirect(commandBuffer, buffer, offset, drawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndexedIndirect(VkCommandBuffer commandBuffer,
@@ -5605,7 +5667,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndexedIndirect(commandBuffer, buffer, offset, drawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndirectCount(VkCommandBuffer commandBuffer,
@@ -5635,7 +5700,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndirectCountKHR(VkCommandBuffer commandBuffer,
@@ -5665,7 +5733,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndirectCountKHR(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer,
@@ -5695,7 +5766,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndexedIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndexedIndirectCountKHR(VkCommandBuffer commandBuffer,
@@ -5725,7 +5799,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndexedIndirectCountKHR(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_BeginCommandBuffer(VkCommandBuffer commandBuffer,
@@ -5758,6 +5835,8 @@ namespace VKIntox
         logicalDevice->commandBufferRecordedDrawCounts[commandBuffer] = 0;
         logicalDevice->commandBufferDepthStates.erase(commandBuffer);
         logicalDevice->pendingTransferLinkedDepthScopes.erase(commandBuffer);
+        PassLog::commandBufferBegan(commandBuffer);
+        Hud::commandBufferBegan(commandBuffer);
 
         return logicalDevice->vkd.BeginCommandBuffer(commandBuffer, pBeginInfo);
     }
@@ -5781,6 +5860,8 @@ namespace VKIntox
                 logicalDevice->commandBufferRecordedDrawCounts.erase(pCommandBuffers[i]);
                 logicalDevice->commandBufferDepthStates.erase(pCommandBuffers[i]);
                 logicalDevice->pendingTransferLinkedDepthScopes.erase(pCommandBuffers[i]);
+                PassLog::commandBufferFreed(pCommandBuffers[i]);
+                Hud::commandBufferFreed(pCommandBuffers[i]);
             }
         }
 

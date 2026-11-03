@@ -109,7 +109,8 @@ namespace VKIntox
                                 const DepthState& depthState,
                                 DepthSnapshotTarget snapshotTarget,
                                 VkImageLayout depthFinalLayout = VK_IMAGE_LAYOUT_UNDEFINED);
-    void countTrackedDepthDraw(LogicalDevice* logicalDevice, VkCommandBuffer commandBuffer, uint32_t drawCount = 1);
+    void countTrackedDepthDraw(LogicalDevice* logicalDevice, VkCommandBuffer commandBuffer, uint32_t drawCount = 1,
+                               uint32_t vertices = 0, bool indexed = false);
     void accumulateExecutedCommandBufferDraws(LogicalDevice* logicalDevice,
                                               VkCommandBuffer primaryCommandBuffer,
                                               const VkCommandBuffer* pCommandBuffers,

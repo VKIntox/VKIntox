@@ -1,4 +1,6 @@
 #include "layer/internal.hh"
+#include "layer/pass_log.hh"
+#include "layer/hud_protection.hh"
 
 #include "render/resources/image_view.hh"
 #include "render/resources/image.hh"
@@ -557,8 +559,11 @@ namespace VKIntox
         scopeState.depthFinalLayout = depthFinalLayout;
     }
 
-    void countTrackedDepthDraw(LogicalDevice* logicalDevice, VkCommandBuffer commandBuffer, uint32_t drawCount)
+    void countTrackedDepthDraw(LogicalDevice* logicalDevice, VkCommandBuffer commandBuffer, uint32_t drawCount,
+                               uint32_t vertices, bool indexed)
     {
+        PassLog::countDraw(commandBuffer, drawCount, vertices, indexed);
+
         // Single hash lookup via try_emplace — returns an iterator to the
         // existing entry (with the inserted flag set to false) or to a freshly
         // inserted entry (zero-initialized). The previous code did operator[]
@@ -594,6 +599,7 @@ namespace VKIntox
         if (additionalDraws == 0)
             return;
 
+        PassLog::countDraw(primaryCommandBuffer, additionalDraws);
         scopeIt->second.drawCount += additionalDraws;
         VKINTOX_LOG_DEBUG([&](std::string& s) {
             s = "accumulated secondary command buffer draws: primary="
@@ -650,6 +656,9 @@ namespace VKIntox
                               DepthSnapshotTarget* snapshotTarget,
                               VkImageLayout* pDepthFinalLayout)
     {
+        PassLog::end(commandBuffer);
+        Hud::endRenderPass(logicalDevice, commandBuffer);
+
         auto scopeIt = logicalDevice->commandBufferDepthStates.find(commandBuffer);
         if (scopeIt == logicalDevice->commandBufferDepthStates.end())
             return false;
@@ -1915,6 +1924,14 @@ namespace VKIntox
                 logicalSwapchain->commandBuffersNoEffect.size(),
                 logicalSwapchain->commandBuffersNoEffect.data());
         }
+        if (pool != VK_NULL_HANDLE && !logicalSwapchain->commandBuffersEffectHud.empty())
+        {
+            logicalDevice->vkd.FreeCommandBuffers(
+                logicalDevice->device, pool,
+                logicalSwapchain->commandBuffersEffectHud.size(),
+                logicalSwapchain->commandBuffersEffectHud.data());
+            logicalSwapchain->commandBuffersEffectHud.clear();
+        }
 
         Logger::debug("reallocateCommandBuffers: old command buffers freed");
 
@@ -1927,6 +1944,7 @@ namespace VKIntox
                             depth);
 
         Logger::debug("reallocateCommandBuffers: effect command buffers written");
+        Hud::rebuildCommandBuffers(logicalDevice, logicalSwapchain, depth, pool);
 
         // Allocate and write no-effect command buffers
         logicalSwapchain->commandBuffersNoEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, pool);

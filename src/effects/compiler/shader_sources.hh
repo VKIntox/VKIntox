@@ -46,4 +46,8 @@ namespace VKIntox
     const std::vector<uint32_t> overlay_blur_frag = {
 #include "overlay_blur.frag.h"
     };
+
+    const std::vector<uint32_t> hud_preserve_frag = {
+#include "hud_preserve.frag.h"
+    };
 } // namespace VKIntox
