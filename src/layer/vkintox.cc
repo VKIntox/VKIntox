@@ -823,6 +823,8 @@ namespace VKIntox
                                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                 namesByFile[filename].push_back(name);
             }
+            for (auto& [filename, names] : namesByFile)
+                std::sort(names.begin(), names.end());
             auto applyParams = [&](const std::vector<ConfigParam>& params) {
             for (const auto& param : params)
             {
