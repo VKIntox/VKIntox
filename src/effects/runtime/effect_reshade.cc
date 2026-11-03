@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <climits>
+#include <cmath>
 #include <cstdlib>
 #include <cassert>
 
@@ -416,6 +417,59 @@ namespace VKIntox
         return logicalDevice->pipelineCache;
     }
 
+    float ReshadeEffect::resolveRenderScale() const
+    {
+        if (!effectRegistry)
+            return 1.0f;
+
+        for (const EffectParam* param : effectRegistry->getParametersForEffect(effectName))
+        {
+            if (!param || (param->name != "MXAO_RENDER_SCALE" && param->name != "SSR_RENDER_SCALE"))
+                continue;
+            if (const auto* scale = dynamic_cast<const FloatParam*>(param))
+                return std::clamp(scale->value, 0.25f, 2.0f);
+        }
+        return 1.0f;
+    }
+
+    void ReshadeEffect::applyRenderScale()
+    {
+        if (renderScale == 1.0f || module.textures.empty())
+            return;
+
+        auto isScaledTarget = [](const reshadefx::texture_info& texture) {
+            if (!texture.semantic.empty())
+                return false;
+            return std::none_of(texture.annotations.begin(), texture.annotations.end(),
+                                [](const auto& annotation) { return annotation.name == "source"; });
+        };
+
+        auto scaledExtent = [this](uint32_t extent) {
+            const uint32_t scaled = std::max(1u, static_cast<uint32_t>(std::lround(extent * renderScale)));
+            if (renderScale < 1.0f && scaled > 1 && scaled + 1 < extent && extent % scaled == 0)
+                return scaled + 1;
+            return scaled;
+        };
+
+        for (auto& texture : module.textures)
+        {
+            if (!isScaledTarget(texture))
+                continue;
+            texture.width = scaledExtent(texture.width);
+            texture.height = scaledExtent(texture.height);
+        }
+
+        if (module.techniques.empty())
+            return;
+        for (auto& pass : module.techniques[0].passes)
+        {
+            if (pass.viewport_width)
+                pass.viewport_width = scaledExtent(pass.viewport_width);
+            if (pass.viewport_height)
+                pass.viewport_height = scaledExtent(pass.viewport_height);
+        }
+    }
+
     ReshadeEffect::ReshadeEffect(LogicalDevice*       logicalDevice,
                                  VkFormat             format,
                                  VkExtent2D           imageExtent,
@@ -451,6 +505,11 @@ namespace VKIntox
 
         createReshadeModule();
 
+        renderScale = resolveRenderScale();
+        applyRenderScale();
+        if (renderScale != 1.0f)
+            Logger::info("[render-scale] " + effectName + " = " + std::to_string(renderScale));
+
         enumerateReshadeUniforms(module);
 
         uniforms = createReshadeUniforms(module);
@@ -475,18 +534,28 @@ namespace VKIntox
             }
         }
 
-        stencilFormat = getStencilFormat(logicalDevice);
-        Logger::debug("Stencil Format: " + std::to_string(stencilFormat));
-        textureMemory.push_back(VK_NULL_HANDLE);
-        stencilImage = createSingleImage(logicalDevice,
-                                    {imageExtent.width, imageExtent.height, 1},
-                                    stencilFormat,
-                                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                    textureMemory.back());
+        usesStencil = !module.techniques.empty()
+            && std::any_of(module.techniques[0].passes.begin(), module.techniques[0].passes.end(),
+                           [](const auto& pass) { return pass.stencil_enable; });
 
-        stencilImageView = createSingleImageView(
-            logicalDevice, stencilFormat, stencilImage, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+        textureMemory.push_back(VK_NULL_HANDLE);
+        if (usesStencil)
+        {
+            stencilFormat = getStencilFormat(logicalDevice);
+            stencilExtent = {
+                std::max(1u, static_cast<uint32_t>(std::lround(imageExtent.width * renderScale))),
+                std::max(1u, static_cast<uint32_t>(std::lround(imageExtent.height * renderScale)))};
+            Logger::debug("Stencil Format: " + std::to_string(stencilFormat));
+            stencilImage = createSingleImage(logicalDevice,
+                                        {stencilExtent.width, stencilExtent.height, 1},
+                                        stencilFormat,
+                                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                        textureMemory.back());
+
+            stencilImageView = createSingleImageView(
+                logicalDevice, stencilFormat, stencilImage, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+        }
 
         std::vector<std::vector<VkImageView>> imageViewVector;
 
@@ -897,6 +966,16 @@ namespace VKIntox
 
         bool firstTimeStencilAccess = true; // Used to clear the sttencil attachment on the first time
 
+        bool sourceHasDiscard = false;
+        if (!effectPath.empty())
+        {
+            std::ifstream source(effectPath);
+            const std::string contents((std::istreambuf_iterator<char>(source)),
+                                       std::istreambuf_iterator<char>());
+            sourceHasDiscard = contents.find("discard") != std::string::npos
+                || contents.find("clip(") != std::string::npos;
+        }
+
         auto buildSpecializationData = [&]() {
             std::vector<VkSpecializationMapEntry> specMapEntrys;
             std::vector<char>                     specData;
@@ -1154,7 +1233,7 @@ namespace VKIntox
 
             uint32_t depthAttachmentCount = 0;
 
-            if (scissor.extent.width == imageExtent.width && scissor.extent.height == imageExtent.height)
+            if (usesStencil && scissor.extent.width == stencilExtent.width && scissor.extent.height == stencilExtent.height)
             {
                 depthAttachmentCount = 1;
 
@@ -1250,11 +1329,19 @@ namespace VKIntox
             {
                 std::vector<VkImageView> backBufferImageViews = pass.srgb_write_enable ? backBufferImageViewsSRGB : backBufferImageViewsUNORM;
                 std::vector<VkImageView> finalOutputImageViews = pass.srgb_write_enable ? outputImageViewsSRGB : outputImageViewsUNORM;
+                std::vector<std::vector<VkImageView>> framebufferViews{
+                    outputToBackBuffer ? backBufferImageViews : finalOutputImageViews};
+                if (usesStencil && imageExtent.width == stencilExtent.width && imageExtent.height == stencilExtent.height)
+                    framebufferViews.push_back(std::vector<VkImageView>(inputImages.size(), stencilImageView));
                 runtime.framebuffers = createFramebuffers(
-                    logicalDevice,
-                    runtime.renderPass,
-                    imageExtent,
-                    {outputToBackBuffer ? backBufferImageViews : finalOutputImageViews, std::vector<VkImageView>(inputImages.size(), stencilImageView)});
+                    logicalDevice, runtime.renderPass, imageExtent, framebufferViews);
+                runtime.writesOutput = true;
+                runtime.overwritesOutput = scissor.extent.width == imageExtent.width
+                    && scissor.extent.height == imageExtent.height
+                    && !pass.blend_enable
+                    && !pass.stencil_enable
+                    && pass.color_write_mask == 0xFu
+                    && runtime.vertexCount == 3;
                 outputToBackBuffer = !outputToBackBuffer;
                 runtime.switchSamplers = true;
             }
@@ -1341,7 +1428,7 @@ namespace VKIntox
             depthStencilStateCreateInfo.depthWriteEnable      = VK_FALSE;
             depthStencilStateCreateInfo.depthCompareOp        = VK_COMPARE_OP_ALWAYS;
             depthStencilStateCreateInfo.depthBoundsTestEnable = VK_FALSE;
-            depthStencilStateCreateInfo.stencilTestEnable     = pass.stencil_enable;
+            depthStencilStateCreateInfo.stencilTestEnable     = pass.stencil_enable && depthAttachmentCount > 0;
             depthStencilStateCreateInfo.front.failOp          = convertReshadeStencilOp(pass.stencil_op_fail);
             depthStencilStateCreateInfo.front.passOp          = convertReshadeStencilOp(pass.stencil_op_pass);
             depthStencilStateCreateInfo.front.depthFailOp     = convertReshadeStencilOp(pass.stencil_op_depth_fail);
@@ -1387,6 +1474,24 @@ namespace VKIntox
             Logger::debug("fragment entry: " + pass.ps_entry_point);
             passRuntimes.push_back(std::move(runtime));
         }
+
+        needsSeedCopy = outputWrites == 0;
+        bool seenOutputTarget[2] = {false, false};
+        bool toBackBuffer = outputWrites % 2 == 0;
+        for (const PassRuntime& runtime : passRuntimes)
+        {
+            if (!runtime.writesOutput)
+                continue;
+            const int target = toBackBuffer ? 0 : 1;
+            if (!seenOutputTarget[target])
+            {
+                seenOutputTarget[target] = true;
+                if (!runtime.overwritesOutput || sourceHasDiscard)
+                    needsSeedCopy = true;
+            }
+            toBackBuffer = !toBackBuffer;
+        }
+
         // Info, not debug, and deliberately here rather than in the destructor:
         // this line is how the smoke test proves an effect was really built
         // instead of the layer quietly falling back to the pass-through path.
@@ -1574,7 +1679,6 @@ namespace VKIntox
         fullCopyRegion.dstSubresource = fullCopyRegion.srcSubresource;
         fullCopyRegion.extent = {imageExtent.width, imageExtent.height, 1};
 
-        // Transition input image for seed copy.
         VkImageMemoryBarrier memoryBarrier;
         memoryBarrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         memoryBarrier.pNext               = nullptr;
@@ -1592,62 +1696,6 @@ namespace VKIntox
         memoryBarrier.subresourceRange.baseArrayLayer = 0;
         memoryBarrier.subresourceRange.layerCount     = 1;
 
-        logicalDevice->vkd.CmdPipelineBarrier(
-            commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, transferStage, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
-
-        // Seed output image from current input so backbuffer/load-based passes never start from undefined data.
-        memoryBarrier.image = outputImages[imageIndex];
-        memoryBarrier.oldLayout = outputImageInitialized[imageIndex] ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
-        memoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        memoryBarrier.srcAccessMask = 0;
-        memoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        logicalDevice->vkd.CmdPipelineBarrier(
-            commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, transferStage, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
-
-        logicalDevice->vkd.CmdCopyImage(commandBuffer,
-                                         inputImages[imageIndex],
-                                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                         outputImages[imageIndex],
-                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                         1,
-                                         &fullCopyRegion);
-        outputImageInitialized[imageIndex] = true;
-
-        if (outputWrites > 1)
-        {
-            memoryBarrier.image = backBufferImages[imageIndex];
-            memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-            memoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            memoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            logicalDevice->vkd.CmdPipelineBarrier(
-                commandBuffer,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | shaderStages,
-                transferStage,
-                0,
-                0,
-                nullptr,
-                0,
-                nullptr,
-                1,
-                &memoryBarrier);
-
-            logicalDevice->vkd.CmdCopyImage(commandBuffer,
-                                             inputImages[imageIndex],
-                                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                             backBufferImages[imageIndex],
-                                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                             1,
-                                             &fullCopyRegion);
-        }
-
-        // Used to make the image accessible by shaders after seed copy.
-        memoryBarrier.image = inputImages[imageIndex];
-        memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        // Reverses the first Barrier
         VkImageMemoryBarrier secondBarrier;
         secondBarrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         secondBarrier.pNext               = nullptr;
@@ -1665,38 +1713,133 @@ namespace VKIntox
         secondBarrier.subresourceRange.baseArrayLayer = 0;
         secondBarrier.subresourceRange.layerCount     = 1;
 
-        logicalDevice->vkd.CmdPipelineBarrier(
-            commandBuffer, transferStage, shaderStages, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
-        memoryBarrier.image     = outputImages[imageIndex];
-        memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        logicalDevice->vkd.CmdPipelineBarrier(
-            commandBuffer, transferStage, shaderStages, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
-        if (outputWrites > 1)
+        if (needsSeedCopy)
         {
-            memoryBarrier.image = backBufferImages[imageIndex];
+            // Transition input image for seed copy.
+            logicalDevice->vkd.CmdPipelineBarrier(
+                commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, transferStage, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
+
+            // Seed output image from current input so backbuffer/load-based passes never start from undefined data.
+            memoryBarrier.image = outputImages[imageIndex];
+            memoryBarrier.oldLayout = outputImageInitialized[imageIndex] ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
+            memoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            memoryBarrier.srcAccessMask = 0;
+            memoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            logicalDevice->vkd.CmdPipelineBarrier(
+                commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, transferStage, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
+
+            logicalDevice->vkd.CmdCopyImage(commandBuffer,
+                                             inputImages[imageIndex],
+                                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                             outputImages[imageIndex],
+                                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                             1,
+                                             &fullCopyRegion);
+
+            if (outputWrites > 1)
+            {
+                memoryBarrier.image = backBufferImages[imageIndex];
+                memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+                memoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                memoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                logicalDevice->vkd.CmdPipelineBarrier(
+                    commandBuffer,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | shaderStages,
+                    transferStage,
+                    0,
+                    0,
+                    nullptr,
+                    0,
+                    nullptr,
+                    1,
+                    &memoryBarrier);
+
+                logicalDevice->vkd.CmdCopyImage(commandBuffer,
+                                                 inputImages[imageIndex],
+                                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                 backBufferImages[imageIndex],
+                                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                                 1,
+                                                 &fullCopyRegion);
+            }
+
+            // Used to make the image accessible by shaders after seed copy.
+            secondBarrier.image = inputImages[imageIndex];
+            memoryBarrier.image = inputImages[imageIndex];
+            memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            logicalDevice->vkd.CmdPipelineBarrier(
+                commandBuffer, transferStage, shaderStages, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
+            memoryBarrier.image     = outputImages[imageIndex];
             memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-            logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
-                                                   transferStage,
-                                                   shaderStages,
-                                                   0,
-                                                   0,
-                                                   nullptr,
-                                                   0,
-                                                   nullptr,
-                                                   1,
-                                                   &memoryBarrier);
+            logicalDevice->vkd.CmdPipelineBarrier(
+                commandBuffer, transferStage, shaderStages, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
+            if (outputWrites > 1)
+            {
+                memoryBarrier.image = backBufferImages[imageIndex];
+                memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                logicalDevice->vkd.CmdPipelineBarrier(commandBuffer,
+                                                       transferStage,
+                                                       shaderStages,
+                                                       0,
+                                                       0,
+                                                       nullptr,
+                                                       0,
+                                                       nullptr,
+                                                       1,
+                                                       &memoryBarrier);
+            }
         }
+        else
+        {
+            memoryBarrier.image = inputImages[imageIndex];
+            memoryBarrier.srcAccessMask = 0;
+            memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            logicalDevice->vkd.CmdPipelineBarrier(
+                commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, shaderStages, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
 
-        const bool hasGraphicsPass = std::any_of(passRuntimes.begin(), passRuntimes.end(), [](const PassRuntime& passRuntime) {
-            return !passRuntime.isCompute;
-        });
-        if (hasGraphicsPass)
+            memoryBarrier.image = outputImages[imageIndex];
+            memoryBarrier.srcAccessMask = 0;
+            memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            memoryBarrier.oldLayout = outputImageInitialized[imageIndex] ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
+            memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            logicalDevice->vkd.CmdPipelineBarrier(
+                commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, shaderStages, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier);
+
+            if (outputWrites > 1)
+            {
+                memoryBarrier.image = backBufferImages[imageIndex];
+                memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+                memoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                memoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                memoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                logicalDevice->vkd.CmdPipelineBarrier(
+                    commandBuffer,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | shaderStages,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | shaderStages,
+                    0,
+                    0,
+                    nullptr,
+                    0,
+                    nullptr,
+                    1,
+                    &memoryBarrier);
+            }
+        }
+        outputImageInitialized[imageIndex] = true;
+
+        if (usesStencil)
         {
             // stencil image
             memoryBarrier.image                       = stencilImage;
