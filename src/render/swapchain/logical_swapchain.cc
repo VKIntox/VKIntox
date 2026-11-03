@@ -33,11 +33,11 @@ namespace VKIntox
             }
             commandBuffersEffect.clear();
             commandBuffersNoEffect.clear();
-            commandBuffersEffectHud.clear();
             Logger::info("[DESTROY-TRACE] command buffers freed");
 
             Logger::info("[DESTROY-TRACE] destroying " + std::to_string(effects.size()) + " effects");
             effects.clear();
+            hudSceneInput.reset();
             hudPreserve.reset();
             defaultTransfer.reset();
             Logger::info("[DESTROY-TRACE] effects destroyed");

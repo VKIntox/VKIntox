@@ -50,4 +50,8 @@ namespace VKIntox
     const std::vector<uint32_t> hud_preserve_frag = {
 #include "hud_preserve.frag.h"
     };
+
+    const std::vector<uint32_t> hud_scene_input_frag = {
+#include "hud_scene_input.frag.h"
+    };
 } // namespace VKIntox

@@ -48,6 +48,16 @@ namespace VKIntox
         std::vector<bool>                 sceneInitialized;
         std::vector<bool>                 finalInitialized;
         std::vector<bool>                 snapshotValid;
+        std::vector<VkImage>              compositeImages;
+        std::vector<VkImageView>          compositeViews;
+        std::vector<VkDeviceMemory>       compositeMemory;
+        std::vector<VkImageView>          sceneInputViews;
+        std::vector<VkImageView>          processedViews;
+        std::vector<VkImage>              validImages;
+        std::vector<VkImageView>          validViews;
+        std::vector<VkDeviceMemory>       validMemory;
+        VkImage                           pendingValidImage = VK_NULL_HANDLE;
+        VkDeviceMemory                    pendingValidMemory = VK_NULL_HANDLE;
         HudPendingImages                  pendingFrame;
     };
 
@@ -64,7 +74,7 @@ namespace VKIntox
         std::vector<VkImage>                 fakeImages;
         HudProtectionState                   hud;
         std::shared_ptr<Effect>              hudPreserve;
-        std::vector<VkCommandBuffer>         commandBuffersEffectHud;
+        std::shared_ptr<Effect>              hudSceneInput;
         // per-swapchain pool: a shared-pool reset invalidated the replacement
         // swapchain's buffers while the old one was still being torn down
         VkCommandPool                        commandPool = VK_NULL_HANDLE;
@@ -72,6 +82,7 @@ namespace VKIntox
         // or fake allocation failed
         bool                                 passthrough = false;
         size_t                               maxEffectSlots = 0;  // Max number of effects supported
+        size_t                               activeChainSlots = 0;  // Enabled effects currently owning a slot
         std::vector<VkCommandBuffer>         commandBuffersEffect;
         std::vector<VkCommandBuffer>         commandBuffersNoEffect;
         std::vector<VkSemaphore>             semaphores;
