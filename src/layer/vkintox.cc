@@ -1112,6 +1112,17 @@ namespace VKIntox
         });
     }
 
+    void refreshDepthBuffers(LogicalDevice* logicalDevice)
+    {
+        if (!logicalDevice)
+            return;
+        logicalDevice->activeDepthState = DepthState{};
+        logicalDevice->bestDepthCandidate = LogicalDevice::DepthCandidateTrackingState{};
+        logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+        logicalDevice->depthReallocPending = true;
+        Logger::debug("preset switch: refreshing depth buffers and command buffers");
+    }
+
     // Switch to a new config (called from overlay)
     void switchConfig(const std::string& configPath, const std::string& shaderPath = "")
     {
@@ -1482,6 +1493,7 @@ namespace VKIntox
 
         // Create effects using centralized helper
         createEffectsForSwapchain(logicalSwapchain, logicalDevice, config, effectStrings, true);
+        Hud::refresh(logicalSwapchain, logicalSwapchain->activeChainSlots);
 
         // Create default transfer effect (needed for no-effect command buffers)
         logicalSwapchain->defaultTransfer = std::make_shared<TransferEffect>(
@@ -3607,6 +3619,7 @@ namespace VKIntox
                 {
                     std::string newConfigPath = logicalDevice->imguiOverlay->getPendingConfigPath();
                     switchConfig(newConfigPath, overlayShaderPath);
+                    refreshDepthBuffers(logicalDevice);
                     // Update overlay with effects from the new config
                     std::vector<std::string> newEffects = config->getOption<std::vector<std::string>>("effects", {});
                     std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects", {});
@@ -3620,6 +3633,7 @@ namespace VKIntox
                     if (!shaderPath.empty())
                     {
                         switchConfig(config->getConfigFilePath(), shaderPath);
+                        refreshDepthBuffers(logicalDevice);
                         std::vector<std::string> newEffects = config->getOption<std::vector<std::string>>("effects", {});
                         std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects", {});
                         logicalDevice->imguiOverlay->setSelectedEffects(newEffects, disabledEffects);
@@ -3627,6 +3641,7 @@ namespace VKIntox
                     else
                     {
                         switchConfig(config->getConfigFilePath(), "");
+                        refreshDepthBuffers(logicalDevice);
                         const std::vector<std::string> newEffects = config->getOption<std::vector<std::string>>("effects", {});
                         const std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects", {});
                         logicalDevice->imguiOverlay->setSelectedEffects(newEffects, disabledEffects);
@@ -3643,6 +3658,8 @@ namespace VKIntox
                     {
                         config->reload();
                         applyShaderProfile(config.get(), overlayShaderPath);
+                        effectRegistry.initializeSelectedEffectsFromConfig();
+                        refreshDepthBuffers(logicalDevice);
                     }
                     reloadSelectedEffects();
                 }
