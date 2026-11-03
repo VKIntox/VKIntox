@@ -268,7 +268,8 @@ static void wk_keymap(void* data, wl_keyboard* kb, uint32_t format, int32_t fd, 
 static void wk_enter(void* data, wl_keyboard* kb, uint32_t serial, wl_surface* s, wl_array* keys)
 {
     // Forward enter so the game's keyboard state stays consistent; individual
-    // keys are withheld in wk_key while the pointer is over the overlay.
+    // keys are withheld in wk_key while the pointer is over the overlay or the
+    // interactive shell owns the keyboard.
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gameKeyboards.find(kb);
     if (it != gameKeyboards.end() && it->second.original.enter)
@@ -295,8 +296,8 @@ static void wk_key(void* data, wl_keyboard* kb, uint32_t serial, uint32_t time, 
             held.erase(key);
     }
 
-    // keys follow the pointer hitbox plus the overlay's own key consumption
-    if (pointerBlocked() || VKIntox::isOverlayConsumingKeys())
+    // keys follow the pointer hitbox plus the open interactive shell
+    if (pointerBlocked() || VKIntox::isOverlayHoldingKeyboard())
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gameKeyboards.find(kb);
@@ -379,9 +380,9 @@ static int wd_keyboard(const void* data, void* target, uint32_t opcode, const st
             held.erase(args[2].u);
     }
 
-    // keyboard has no coordinates; it follows the hitbox and the overlay's
-    // own key consumption
-    if (opcode == 3 && (pointerBlocked() || VKIntox::isOverlayConsumingKeys()))
+    // keyboard has no coordinates; it follows the hitbox and the open
+    // interactive shell
+    if (opcode == 3 && (pointerBlocked() || VKIntox::isOverlayHoldingKeyboard()))
         return 0;
 
     std::lock_guard<std::mutex> lock(gameDataMutex);
