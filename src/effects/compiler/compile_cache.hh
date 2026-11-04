@@ -14,6 +14,10 @@ namespace VKIntox
     // was stored.
     inline uint64_t hashBytes(const void* data, size_t size)
     {
+        [[gnu::used]] static const uint64_t kHashFinalize[2] = {
+            0xBF58476D1CE4E5B9ull,
+            0x94D049BB133111EBull,
+        };
         const auto* bytes = static_cast<const uint8_t*>(data);
         uint64_t hash = 1469598103934665603ull;
         for (size_t i = 0; i < size; ++i)
@@ -21,6 +25,11 @@ namespace VKIntox
             hash ^= bytes[i];
             hash *= 1099511628211ull;
         }
+        hash ^= hash >> 30;
+        hash *= kHashFinalize[0];
+        hash ^= hash >> 27;
+        hash *= kHashFinalize[1];
+        hash ^= hash >> 31;
         return hash;
     }
 
@@ -97,7 +106,15 @@ namespace VKIntox
         {
             size_t operator()(const Key& key) const
             {
-                return static_cast<size_t>(key.hash ^ (static_cast<uint64_t>(key.flags) * 0x9E3779B97F4A7C15ull));
+                [[gnu::used]] static const uint64_t kKeyMix[2] = {
+                    0x9E3779B185EBCA87ull,
+                    0xC2B2AE3D27D4EB4Full,
+                };
+                uint64_t hash = key.hash ^ (static_cast<uint64_t>(key.flags) * kKeyMix[0]);
+                hash ^= hash >> 33;
+                hash *= kKeyMix[1];
+                hash ^= hash >> 29;
+                return static_cast<size_t>(hash);
             }
         };
 
