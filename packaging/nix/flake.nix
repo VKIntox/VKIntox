@@ -17,7 +17,7 @@
       git-hooks,
     }:
     let
-      supportedSystems = [ "x86_64-linux" ];
+      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
     in
     {
@@ -75,7 +75,7 @@
             meta = with pkgs.lib; {
               description = "Vulkan post-processing layer with real-time overlay UI (Wayland + X11)";
               license = licenses.zlib;
-              platforms = [ "x86_64-linux" ];
+              platforms = [ "x86_64-linux" "aarch64-linux" ];
               mainProgram = "vkintox-run";
             };
           };
