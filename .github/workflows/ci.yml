@@ -125,3 +125,78 @@ jobs:
             echo "=== $log ==="
             cat "$log"
           done
+
+  build-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            clang \
+            glslang-tools \
+            libvulkan-dev \
+            libx11-dev \
+            libxi-dev \
+            libxtst-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            meson \
+            pkg-config \
+            spirv-headers \
+            wayland-protocols
+
+      - name: Generate build inputs
+        run: CC=clang CXX=clang++ meson setup --buildtype=release --prefix=/usr build
+
+      - name: Build project and tests
+        run: meson compile -C build
+
+      - name: Run config serialization tests
+        run: meson test -C build --print-errorlogs
+
+      - name: Compile ReShade EffectPackages shaders
+        run: python3 src/tests/test_reshade_shaders.py --shader-check build/src/vkintox-shader-check
+
+      - name: Compile built-in shaders
+        run: python3 src/tests/test_reshade_shaders.py --shader-check build/src/vkintox-shader-check --shader-dir assets/builtInShaders --include src/tests/fixtures
+
+      - name: Install smoke test dependencies
+        run: |
+          sudo apt-get install --no-install-recommends -y \
+            mesa-vulkan-drivers \
+            vulkan-tools \
+            xauth \
+            xvfb
+
+      - name: Smoke test the layer under vkcube
+        run: |
+          command -v xauth >/dev/null || { echo "xauth missing; xvfb-run cannot work" >&2; exit 1; }
+          ICD_DIR=/usr/share/vulkan/icd.d
+          LVP_ICD="$ICD_DIR/lvp_icd.$(uname -m).json"
+          if [ ! -f "$LVP_ICD" ]; then
+            LVP_ICD="$ICD_DIR/lvp_icd.json"
+          fi
+          if [ ! -f "$LVP_ICD" ]; then
+            LVP_ICD=$(ls "$ICD_DIR"/lvp_icd*.json 2>/dev/null | head -1)
+          fi
+          if [ -z "$LVP_ICD" ] || [ ! -f "$LVP_ICD" ]; then
+            echo "lavapipe ICD not found; mesa-vulkan-drivers did not install" >&2
+            ls "$ICD_DIR" >&2
+            exit 1
+          fi
+          echo "using software vulkan: $LVP_ICD"
+          VK_ICD_FILENAMES="$LVP_ICD" xvfb-run -a src/tests/smoke_vkcube.sh build/src/libvkintox.so 11
+
+      - name: Report smoke test diagnostics
+        if: failure()
+        run: |
+          for log in /tmp/tmp.*/vkcube.log; do
+            [ -f "$log" ] || continue
+            echo "=== $log ==="
+            cat "$log"
+          done
