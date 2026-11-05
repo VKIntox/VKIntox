@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       version:
-        description: "Version without the v (e.g. 0.2.0); notes go in docs/releases/<version>.md"
+        description: "Version without the v (e.g. 0.2.0 or 0.2.2-preview.1); notes go in docs/releases/<version>.md"
         required: true
         type: string
       reuse_run:
@@ -57,6 +57,8 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
+      display: ${{ steps.meta.outputs.display }}
+      pkg_version: ${{ steps.meta.outputs.pkg_version }}
       notes: ${{ steps.meta.outputs.notes }}
     steps:
       - uses: actions/checkout@v7
@@ -87,11 +89,21 @@ jobs:
           fi
 
           version="${RAW_VERSION#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::version must look like 0.2.0 (no v, no suffix)"
+          optional_suffix="(-[a-z0-9._]+)?"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$optional_suffix$ ]]; then
+            echo "::error::version must look like 0.2.0 or 0.2.2-preview.1 (no v)"
             exit 1
           fi
           tag="v$version"
+          # the release title reads "Preview" aloud; the tag keeps the machine
+          # form so the setup script can parse the suffix into a prerelease row
+          display="$tag"
+          if [[ "$tag" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)-preview\.[0-9._]+$ ]]; then
+            display="$(echo "$tag" | sed -E 's/-preview[._]([0-9]+)$/ Preview \1/I')"
+          fi
+          # pkgver in Arch and Version in RPM forbid hyphens; the underscore
+          # form also names their artifacts, everything else keeps the tag form
+          pkg_version="${version//-/_}"
           if [ -n "${REUSE_RUN:-}" ]; then
             IFS=',' read -ra reuse_runs <<< "$REUSE_RUN"
             for run in "${reuse_runs[@]}"; do
@@ -104,9 +116,8 @@ jobs:
           fi
 
           repo_version="$(tr -d '\r\n' < VERSION)"
-          repo_version="${repo_version#v}"
-          if [ "$repo_version" != "$version" ]; then
-            echo "::error::VERSION says $repo_version, not $version"
+          if [ "$repo_version" != "$tag" ]; then
+            echo "::error::VERSION says $repo_version, not $tag"
             exit 1
           fi
 
@@ -141,6 +152,8 @@ jobs:
           {
             echo "version=$version"
             echo "tag=$tag"
+            echo "display=$display"
+            echo "pkg_version=$pkg_version"
             echo "notes=$notes"
           } >> "$GITHUB_OUTPUT"
 
@@ -164,24 +177,24 @@ jobs:
           submodules: recursive
       - name: Build package
         env:
-          VERSION: ${{ needs.validate.outputs.version }}
+          PKG_VERSION: ${{ needs.validate.outputs.pkg_version }}
         run: |
           set -euo pipefail
           export CC=clang CXX=clang++
           pacman -S --noconfirm --needed base-devel meson ninja pkgconf clang glslang \
             vulkan-headers spirv-headers vulkan-icd-loader libx11 libxi libxtst wayland \
             wayland-protocols libxkbcommon glib2 xz
-          packaging/scripts/make-source-tarball.sh "$VERSION" build
+          packaging/scripts/make-source-tarball.sh "$PKG_VERSION" build
           cp packaging/arch/PKGBUILD build/PKGBUILD
-          sed -i "s/^pkgver=.*/pkgver=$VERSION/" build/PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=$PKG_VERSION/" build/PKGBUILD
           useradd -m builder
           chown -R builder:builder "$PWD"
           su builder -s /bin/bash -c "cd '$PWD/build' && makepkg --noconfirm --nocheck"
-          ls -l "build/vkintox-$VERSION-1-x86_64.pkg.tar.zst"
+          ls -l "build/vkintox-$PKG_VERSION-1-x86_64.pkg.tar.zst"
       - uses: actions/upload-artifact@v7
         with:
           name: arch
-          path: build/vkintox-${{ needs.validate.outputs.version }}-1-x86_64.pkg.tar.zst
+          path: build/vkintox-${{ needs.validate.outputs.pkg_version }}-1-x86_64.pkg.tar.zst
           if-no-files-found: error
 
   rpm:
@@ -218,7 +231,7 @@ jobs:
           submodules: recursive
       - name: Build package
         env:
-          VERSION: ${{ needs.validate.outputs.version }}
+          PKG_VERSION: ${{ needs.validate.outputs.pkg_version }}
           DISTRO: ${{ matrix.distro }}
         run: |
           set -euo pipefail
@@ -235,10 +248,10 @@ jobs:
           fi
           export CC=clang CXX=clang++
 
-          packaging/scripts/make-source-tarball.sh "$VERSION" build
+          packaging/scripts/make-source-tarball.sh "$PKG_VERSION" build
           mkdir -p rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-          cp "build/vkintox-$VERSION.tar.xz" rpmbuild/SOURCES/
-          sed "s/^Version:.*/Version:        $VERSION/" packaging/rpm/vkintox.spec > rpmbuild/SPECS/vkintox.spec
+          cp "build/vkintox-$PKG_VERSION.tar.xz" rpmbuild/SOURCES/
+          sed "s/^Version:.*/Version:        $PKG_VERSION/" packaging/rpm/vkintox.spec > rpmbuild/SPECS/vkintox.spec
           rpmbuild --define "_topdir $PWD/rpmbuild" -bb rpmbuild/SPECS/vkintox.spec
           cp rpmbuild/RPMS/x86_64/*.rpm build/
           ls -l build/*.rpm
@@ -427,6 +440,7 @@ jobs:
       - name: Check the selected artifacts
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          PKG_VERSION: ${{ needs.validate.outputs.pkg_version }}
           BUILD_ARCH: ${{ inputs.build_arch }}
           BUILD_RPM: ${{ inputs.build_rpm }}
           BUILD_DEB: ${{ inputs.build_deb }}
@@ -450,16 +464,16 @@ jobs:
             fi
           }
 
-          maybe_require "$BUILD_ARCH" "vkintox-$VERSION-1-x86_64.pkg.tar.zst"
-          maybe_require "$BUILD_RPM" "vkintox-$VERSION-1*.x86_64.rpm"
+          maybe_require "$BUILD_ARCH" "vkintox-$PKG_VERSION-1-x86_64.pkg.tar.zst"
+          maybe_require "$BUILD_RPM" "vkintox-$PKG_VERSION-1*.x86_64.rpm"
           maybe_require "$BUILD_DEB" "vkintox_${VERSION}-1_amd64.deb"
           maybe_require "$BUILD_FLATPAK" "vkintox-$VERSION-x86_64.flatpak"
           maybe_require "$BUILD_NIX" "vkintox-$VERSION-x86_64-nix.tar.xz"
 
           if [ -n "${REUSE_RUN:-}" ]; then
             echo "reused run ids: $REUSE_RUN"
-            require "vkintox-$VERSION-1-x86_64.pkg.tar.zst"
-            require "vkintox-$VERSION-1*.x86_64.rpm"
+            require "vkintox-$PKG_VERSION-1-x86_64.pkg.tar.zst"
+            require "vkintox-$PKG_VERSION-1*.x86_64.rpm"
             require "vkintox_${VERSION}-1_amd64.deb"
             require "vkintox-$VERSION-x86_64.flatpak"
             require "vkintox-$VERSION-x86_64-nix.tar.xz"
@@ -470,6 +484,7 @@ jobs:
           # touch .github/workflows; RELEASE_TOKEN is a PAT with workflows: write.
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
+          DISPLAY: ${{ needs.validate.outputs.display }}
           VERSION: ${{ needs.validate.outputs.version }}
           NOTES: ${{ needs.validate.outputs.notes }}
           COMMIT: ${{ inputs.commit }}
@@ -477,6 +492,6 @@ jobs:
           set -euo pipefail
           gh release create "$TAG" \
             --target "$COMMIT" \
-            --title "VKIntox v$VERSION" \
+            --title "VKIntox $DISPLAY" \
             --notes-file "$NOTES" \
             dist/*
