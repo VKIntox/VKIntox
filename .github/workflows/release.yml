@@ -158,12 +158,16 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   arch:
-    name: Arch package
+    name: Arch package (${{ matrix.arch }})
     needs: validate
     if: ${{ inputs.build_arch }}
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 90
     container: archlinux:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
     defaults:
       run:
         shell: bash
@@ -190,28 +194,28 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$PWD"
           su builder -s /bin/bash -c "cd '$PWD/build' && makepkg --noconfirm --nocheck"
-          ls -l "build/vkintox-$PKG_VERSION-1-x86_64.pkg.tar.zst"
+          ls -l "build/vkintox-$PKG_VERSION-1-${{ matrix.arch }}.pkg.tar.zst"
       - uses: actions/upload-artifact@v7
         with:
-          name: arch
-          path: build/vkintox-${{ needs.validate.outputs.pkg_version }}-1-x86_64.pkg.tar.zst
+          name: arch-${{ matrix.arch }}
+          path: build/vkintox-${{ needs.validate.outputs.pkg_version }}-1-${{ matrix.arch }}.pkg.tar.zst
           if-no-files-found: error
 
   rpm:
-    name: RPM (${{ matrix.distro }})
+    name: RPM (${{ matrix.distro }}, ${{ matrix.arch }})
     needs: validate
     if: ${{ inputs.build_rpm }}
-    runs-on: ubuntu-26.04
-    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          - distro: fedora
-            container: fedora:latest
-          - distro: opensuse
-            container: opensuse/tumbleweed:latest
-    container: ${{ matrix.container }}
+          - { distro: fedora, arch: x86_64, runner: ubuntu-26.04 }
+          - { distro: fedora, arch: aarch64, runner: ubuntu-24.04-arm }
+          - { distro: opensuse, arch: x86_64, runner: ubuntu-26.04 }
+          - { distro: opensuse, arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    container: ${{ matrix.distro == 'fedora' && 'fedora:latest' || 'opensuse/tumbleweed:latest' }}
     defaults:
       run:
         shell: bash
@@ -253,21 +257,27 @@ jobs:
           cp "build/vkintox-$PKG_VERSION.tar.xz" rpmbuild/SOURCES/
           sed "s/^Version:.*/Version:        $PKG_VERSION/" packaging/rpm/vkintox.spec > rpmbuild/SPECS/vkintox.spec
           rpmbuild --define "_topdir $PWD/rpmbuild" -bb rpmbuild/SPECS/vkintox.spec
-          cp rpmbuild/RPMS/x86_64/*.rpm build/
+          cp "rpmbuild/RPMS/${{ matrix.arch }}/"*.rpm build/
           ls -l build/*.rpm
       - uses: actions/upload-artifact@v7
         with:
-          name: rpm-${{ matrix.distro }}
+          name: rpm-${{ matrix.distro }}-${{ matrix.arch }}
           path: build/*.rpm
           if-no-files-found: error
 
   deb:
-    name: Debian package
+    name: Debian package (${{ matrix.arch }})
     needs: validate
     if: ${{ inputs.build_deb }}
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 90
     container: ubuntu:26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    env:
+      DEB_ARCH: ${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }}
     defaults:
       run:
         shell: bash
@@ -298,20 +308,24 @@ jobs:
           cp -a packaging/debian "$src/debian"
           sed -i "1s/.*/vkintox ($VERSION-1) unstable; urgency=medium/" "$src/debian/changelog"
           (cd "$src" && dpkg-buildpackage -us -uc -b)
-          cp "$RUNNER_TEMP/deb-build/vkintox_${VERSION}-1_amd64.deb" build/
+          cp "$RUNNER_TEMP/deb-build/vkintox_${VERSION}-1_${DEB_ARCH}.deb" build/
           ls -l build/*.deb
       - uses: actions/upload-artifact@v7
         with:
-          name: deb
+          name: deb-${{ matrix.arch }}
           path: build/*.deb
           if-no-files-found: error
 
   flatpak:
-    name: Flatpak
+    name: Flatpak (${{ matrix.arch }})
     needs: validate
     if: ${{ inputs.build_flatpak }}
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
     defaults:
       run:
         shell: bash
@@ -329,8 +343,8 @@ jobs:
         run: |
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --noninteractive -y flathub \
-            runtime/org.freedesktop.Platform/x86_64/26.08 \
-            runtime/org.freedesktop.Sdk/x86_64/26.08
+            runtime/org.freedesktop.Platform/${{ matrix.arch }}/26.08 \
+            runtime/org.freedesktop.Sdk/${{ matrix.arch }}/26.08
       - name: Build bundle
         env:
           VERSION: ${{ needs.validate.outputs.version }}
@@ -345,7 +359,7 @@ jobs:
           mkdir -p build
           flatpak build-bundle --runtime \
             "$RUNNER_TEMP/vkintox-flatpak-repo" \
-            "build/vkintox-$VERSION-x86_64.flatpak" \
+            "build/vkintox-$VERSION-${{ matrix.arch }}.flatpak" \
             org.freedesktop.Platform.VulkanLayer.VKIntox 26.08
           ls -l build/*.flatpak
       - name: Verify the bundle installs as a layer
@@ -353,22 +367,26 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          flatpak install --user --noninteractive -y "build/vkintox-$VERSION-x86_64.flatpak"
-          flatpak info --show-metadata runtime/org.freedesktop.Platform.VulkanLayer.VKIntox/x86_64/26.08 \
+          flatpak install --user --noninteractive -y "build/vkintox-$VERSION-${{ matrix.arch }}.flatpak"
+          flatpak info --show-metadata "runtime/org.freedesktop.Platform.VulkanLayer.VKIntox/${{ matrix.arch }}/26.08" \
             | grep -q '^\[ExtensionOf\]'
-          flatpak uninstall --user --noninteractive -y runtime/org.freedesktop.Platform.VulkanLayer.VKIntox/x86_64/26.08
+          flatpak uninstall --user --noninteractive -y "runtime/org.freedesktop.Platform.VulkanLayer.VKIntox/${{ matrix.arch }}/26.08"
       - uses: actions/upload-artifact@v7
         with:
-          name: flatpak
+          name: flatpak-${{ matrix.arch }}
           path: build/*.flatpak
           if-no-files-found: error
 
   nix:
-    name: Nix build
+    name: Nix build (${{ matrix.arch }})
     needs: validate
     if: ${{ inputs.build_nix }}
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -390,11 +408,11 @@ jobs:
           nix build "path:$RUNNER_TEMP/nix-src/vkintox-$VERSION#vkintox" --print-build-logs
           mkdir -p build/nix
           cp -a result/. build/nix/
-          tar -C build/nix -cJf "build/vkintox-$VERSION-x86_64-nix.tar.xz" .
+          tar -C build/nix -cJf "build/vkintox-$VERSION-${{ matrix.arch }}-nix.tar.xz" .
           ls -l build/*nix.tar.xz
       - uses: actions/upload-artifact@v7
         with:
-          name: nix
+          name: nix-${{ matrix.arch }}
           path: build/*nix.tar.xz
           if-no-files-found: error
 
@@ -465,18 +483,28 @@ jobs:
           }
 
           maybe_require "$BUILD_ARCH" "vkintox-$PKG_VERSION-1-x86_64.pkg.tar.zst"
+          maybe_require "$BUILD_ARCH" "vkintox-$PKG_VERSION-1-aarch64.pkg.tar.zst"
           maybe_require "$BUILD_RPM" "vkintox-$PKG_VERSION-1*.x86_64.rpm"
+          maybe_require "$BUILD_RPM" "vkintox-$PKG_VERSION-1*.aarch64.rpm"
           maybe_require "$BUILD_DEB" "vkintox_${VERSION}-1_amd64.deb"
+          maybe_require "$BUILD_DEB" "vkintox_${VERSION}-1_arm64.deb"
           maybe_require "$BUILD_FLATPAK" "vkintox-$VERSION-x86_64.flatpak"
+          maybe_require "$BUILD_FLATPAK" "vkintox-$VERSION-aarch64.flatpak"
           maybe_require "$BUILD_NIX" "vkintox-$VERSION-x86_64-nix.tar.xz"
+          maybe_require "$BUILD_NIX" "vkintox-$VERSION-aarch64-nix.tar.xz"
 
           if [ -n "${REUSE_RUN:-}" ]; then
             echo "reused run ids: $REUSE_RUN"
             require "vkintox-$PKG_VERSION-1-x86_64.pkg.tar.zst"
+            require "vkintox-$PKG_VERSION-1-aarch64.pkg.tar.zst"
             require "vkintox-$PKG_VERSION-1*.x86_64.rpm"
+            require "vkintox-$PKG_VERSION-1*.aarch64.rpm"
             require "vkintox_${VERSION}-1_amd64.deb"
+            require "vkintox_${VERSION}-1_arm64.deb"
             require "vkintox-$VERSION-x86_64.flatpak"
+            require "vkintox-$VERSION-aarch64.flatpak"
             require "vkintox-$VERSION-x86_64-nix.tar.xz"
+            require "vkintox-$VERSION-aarch64-nix.tar.xz"
           fi
       - name: Create the GitHub release
         env:
