@@ -86,6 +86,8 @@ cd VKIntox
 
 enable with `ENABLE_VKINTOX=1 /path/to/game-executable`.
 
+VKIntox builds on x86_64 and aarch64. On x86_64, `scripts/arm64-smoke.sh` runs an aarch64 build through vkcube in an Arch Linux ARM container using podman and qemu-user.
+
 ## Why VKIntox over vkBasalt?
 
 - VKIntox supports **depth effects**, fully. This means you can get effects like **SSR** and **ambient occlusion**... on Linux! The depth resolving uses an advanced, very likely functioning approach.
