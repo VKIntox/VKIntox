@@ -270,7 +270,11 @@ confirm() {
 detect_system() {
     local arch id like
     arch="$(uname -m)"
-    [[ "$arch" == "x86_64" ]] || die "vkintox is x86_64 only (this machine is $arch)"
+    case "$arch" in
+        x86_64)  HOST_ARCH="x86_64" ;;
+        aarch64) HOST_ARCH="aarch64" ;;
+        *) die "vkintox ships x86_64 and aarch64 packages (this machine is $arch)" ;;
+    esac
     id=""
     like=""
     if [[ -r /etc/os-release ]]; then
@@ -297,9 +301,16 @@ detect_system() {
             ;;
     esac
     case "$SYSTEM_KIND" in
-        rpm) ASSET_GLOB='*.x86_64.rpm' ;;
-        deb) ASSET_GLOB='*_amd64.deb' ;;
-        arch) ASSET_GLOB='*x86_64.pkg.tar.zst' ;;
+        rpm) ASSET_GLOB="*.$HOST_ARCH.rpm" ;;
+        deb)
+            # debian names its arches amd64 and arm64, not uname's x86_64/aarch64
+            if [[ "$HOST_ARCH" == "aarch64" ]]; then
+                ASSET_GLOB='*_arm64.deb'
+            else
+                ASSET_GLOB='*_amd64.deb'
+            fi
+            ;;
+        arch) ASSET_GLOB="*$HOST_ARCH.pkg.tar.zst" ;;
     esac
 }
 
@@ -414,7 +425,7 @@ load_releases() {
         esac
         if [[ "$METHOD" == "system" && "$SYSTEM_KIND" == "rpm" ]]; then
             if [[ "$RPM_FLAVOR" == "fedora" ]]; then
-                [[ "$name" == *".fc"*".x86_64.rpm" ]] || continue
+                [[ "$name" == *".fc"*".$HOST_ARCH.rpm" ]] || continue
             else
                 [[ "$name" != *".fc"* ]] || continue
             fi
@@ -1026,7 +1037,14 @@ fi
 if [[ "$METHOD" == "system" ]]; then
     detect_system
 else
-    ASSET_GLOB='*.flatpak'
+    # flatpak arches share uname's naming; pick the bundle that matches the
+    # installed apps' arch instead of the generic glob
+    case "$(uname -m)" in
+        x86_64)  ASSET_GLOB='*.x86_64.flatpak' ;;
+        aarch64) ASSET_GLOB='*.aarch64.flatpak' ;;
+        armv7l|armv8l) ASSET_GLOB='*.arm.flatpak' ;;
+        *) ASSET_GLOB='*.x86_64.flatpak' ;;
+    esac
     select_flatpak_app
 fi
 MARKER="$(marker_path)"
