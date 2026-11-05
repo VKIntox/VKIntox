@@ -5,7 +5,7 @@
   "runtime-version": "26.08",
   "sdk": "org.freedesktop.Sdk",
   "sdk-extensions": [
-    "org.freedesktop.Sdk.Extension.llvm-22"
+    "org.freedesktop.Sdk.Extension.llvm22"
   ],
   "build-extension": true,
   "modules": [

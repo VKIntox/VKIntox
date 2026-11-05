@@ -208,9 +208,9 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Register qemu-aarch64 binfmt emulation
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user-static
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit }}
@@ -376,9 +376,9 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Register qemu-aarch64 binfmt emulation
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user-static
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit }}
