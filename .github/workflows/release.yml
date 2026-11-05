@@ -158,16 +158,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   arch:
-    name: Arch package (${{ matrix.arch }})
+    name: Arch package (x86_64)
     needs: validate
     if: ${{ inputs.build_arch }}
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-26.04' }}
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     container: archlinux:latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86_64, aarch64]
     defaults:
       run:
         shell: bash
@@ -194,11 +190,68 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$PWD"
           su builder -s /bin/bash -c "cd '$PWD/build' && makepkg --noconfirm --nocheck"
-          ls -l "build/vkintox-$PKG_VERSION-1-${{ matrix.arch }}.pkg.tar.zst"
+          ls -l "build/vkintox-$PKG_VERSION-1-x86_64.pkg.tar.zst"
       - uses: actions/upload-artifact@v7
         with:
-          name: arch-${{ matrix.arch }}
-          path: build/vkintox-${{ needs.validate.outputs.pkg_version }}-1-${{ matrix.arch }}.pkg.tar.zst
+          name: arch-x86_64
+          path: build/vkintox-${{ needs.validate.outputs.pkg_version }}-1-x86_64.pkg.tar.zst
+          if-no-files-found: error
+
+  arch-aarch64:
+    name: Arch package (aarch64, emulated)
+    needs: validate
+    if: ${{ inputs.build_arch }}
+    # no arm64 archlinux image exists on docker hub, so build the aarch64
+    # package on an x86_64 host: ArchLinuxARM rootfs + qemu-user emulation,
+    # the same approach scripts/arm64-smoke.sh takes
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - name: Register qemu-aarch64 binfmt emulation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          submodules: recursive
+      - name: Build package in an ArchLinuxARM rootfs
+        env:
+          PKG_VERSION: ${{ needs.validate.outputs.pkg_version }}
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o /tmp/ArchLinuxARM-aarch64.tar.gz \
+            https://archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
+          docker import --platform linux/arm64 /tmp/ArchLinuxARM-aarch64.tar.gz vkintox-aarch64-arch
+
+          packaging/scripts/make-source-tarball.sh "$PKG_VERSION" build
+          cp packaging/arch/PKGBUILD build/PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=$PKG_VERSION/" build/PKGBUILD
+
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD":/work -w /work vkintox-aarch64-arch /bin/bash -c '
+              set -euo pipefail
+              export CC=clang CXX=clang++
+              if [[ ! -d /etc/pacman.d/gnupg ]]; then
+                  pacman-key --init
+                  pacman-key --populate archlinuxarm
+              fi
+              pacman --disable-sandbox -Syy --noconfirm
+              pacman --disable-sandbox -S --noconfirm --needed \
+                base-devel meson ninja pkgconf clang glslang \
+                vulkan-headers spirv-headers vulkan-icd-loader libx11 libxi libxtst wayland \
+                wayland-protocols libxkbcommon glib2 xz
+              useradd -m builder || true
+              chown -R builder:builder /work
+              su builder -s /bin/bash -c "cd /work/build && makepkg --noconfirm --nocheck"
+            '
+
+          ls -l "build/vkintox-$PKG_VERSION-1-aarch64.pkg.tar.zst"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arch-aarch64
+          path: build/vkintox-${{ needs.validate.outputs.pkg_version }}-1-aarch64.pkg.tar.zst
           if-no-files-found: error
 
   rpm:
@@ -266,18 +319,17 @@ jobs:
           if-no-files-found: error
 
   deb:
-    name: Debian package (${{ matrix.arch }})
+    name: Debian package (x86_64)
     needs: validate
     if: ${{ inputs.build_deb }}
-    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-26.04' }}
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     container: ubuntu:26.04
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86_64, aarch64]
     env:
-      DEB_ARCH: ${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }}
+      DEB_ARCH: amd64
+      # dwz chokes on the clang-built binaries in the rolling 26.04 container;
+      # release packages don't need compressed debug sections
+      DEB_BUILD_OPTIONS: nodwz
     defaults:
       run:
         shell: bash
@@ -312,8 +364,60 @@ jobs:
           ls -l build/*.deb
       - uses: actions/upload-artifact@v7
         with:
-          name: deb-${{ matrix.arch }}
-          path: build/*.deb
+          name: deb-x86_64
+          path: "build/vkintox_*-1_amd64.deb"
+          if-no-files-found: error
+
+  deb-aarch64:
+    name: Debian package (aarch64, emulated)
+    needs: validate
+    if: ${{ inputs.build_deb }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - name: Register qemu-aarch64 binfmt emulation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          submodules: recursive
+      - name: Build package in an emulated arm64 ubuntu container
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          packaging/scripts/make-source-tarball.sh "$VERSION" build
+
+          docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work \
+            ubuntu:26.04 /bin/bash -c '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                git ca-certificates build-essential debhelper dpkg-dev fakeroot \
+                meson ninja-build pkg-config clang glslang-tools libvulkan-dev \
+                spirv-headers libx11-dev libxi-dev libxtst-dev libwayland-dev \
+                libxkbcommon-dev wayland-protocols libgio-2.0-dev xz-utils
+              export CC=clang CXX=clang++
+
+              mkdir -p /tmp/deb-build
+              tar -C /tmp/deb-build -xf "/work/build/vkintox-$VERSION.tar.xz"
+              src="/tmp/deb-build/vkintox-$VERSION"
+              cp -a /work/packaging/debian "$src/debian"
+              sed -i "1s/.*/vkintox ($VERSION-1) unstable; urgency=medium/" "$src/debian/changelog"
+              export DEB_BUILD_OPTIONS=nodwz
+              (cd "$src" && dpkg-buildpackage -us -uc -b)
+              cp /tmp/deb-build/vkintox_${VERSION}-1_arm64.deb /work/build/
+            '
+
+          ls -l build/vkintox_${VERSION}-1_arm64.deb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-aarch64
+          path: "build/vkintox_*-1_arm64.deb"
           if-no-files-found: error
 
   flatpak:
@@ -342,9 +446,20 @@ jobs:
       - name: Install matching Flatpak SDKs
         run: |
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user --noninteractive -y flathub \
-            runtime/org.freedesktop.Platform/${{ matrix.arch }}/26.08 \
-            runtime/org.freedesktop.Sdk/${{ matrix.arch }}/26.08
+          # flathub's summary sometimes reports "Nothing matches" for freshly
+          # requested refs; a few patient attempts covers the CDN catching up
+          for attempt in 1 2 3 4 5; do
+            if flatpak install --user --noninteractive -y flathub \
+              runtime/org.freedesktop.Platform/${{ matrix.arch }}/26.08 \
+              runtime/org.freedesktop.Sdk/${{ matrix.arch }}/26.08; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              echo "::error::flathub would not serve the 26.08 runtimes after five attempts"
+              exit 1
+            fi
+            sleep 60
+          done
       - name: Build bundle
         env:
           VERSION: ${{ needs.validate.outputs.version }}
@@ -418,8 +533,8 @@ jobs:
 
   release:
     name: Publish release
-    needs: [validate, arch, rpm, deb, flatpak, nix]
-    if: ${{ always() && needs.validate.result == 'success' && (needs.arch.result == 'success' || needs.arch.result == 'skipped') && (needs.rpm.result == 'success' || needs.rpm.result == 'skipped') && (needs.deb.result == 'success' || needs.deb.result == 'skipped') && (needs.flatpak.result == 'success' || needs.flatpak.result == 'skipped') && (needs.nix.result == 'success' || needs.nix.result == 'skipped') }}
+    needs: [validate, arch, arch-aarch64, rpm, deb, deb-aarch64, flatpak, nix]
+    if: ${{ always() && needs.validate.result == 'success' && (needs.arch.result == 'success' || needs.arch.result == 'skipped') && (needs.arch-aarch64.result == 'success' || needs.arch-aarch64.result == 'skipped') && (needs.rpm.result == 'success' || needs.rpm.result == 'skipped') && (needs.deb.result == 'success' || needs.deb.result == 'skipped') && (needs.deb-aarch64.result == 'success' || needs.deb-aarch64.result == 'skipped') && (needs.flatpak.result == 'success' || needs.flatpak.result == 'skipped') && (needs.nix.result == 'success' || needs.nix.result == 'skipped') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
