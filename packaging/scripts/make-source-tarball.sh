@@ -18,8 +18,8 @@ outdir="${2:-build}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 prefix="vkintox-$version"
 
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-    echo "version must look like 0.2.0, got: $version" >&2
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-_][a-z0-9.]+)?$ ]] || {
+    echo "version must look like 0.2.0 or 0.2.2-preview.1, got: $version" >&2
     exit 2
 }
 
