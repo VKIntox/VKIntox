@@ -53,17 +53,26 @@ namespace VKIntox
             && wantsKeyboard.load(std::memory_order_acquire);
     }
 
+    // The interactive shell owns the keyboard for as long as it is up. This is
+    // what keeps game keybinds from firing behind the overlay; wantsKeyboard
+    // remains the narrower "a text field or popup is focused" signal.
+    static bool overlayOwnsKeyboard()
+    {
+        return blocked.load(std::memory_order_acquire)
+            && interactive.load(std::memory_order_acquire);
+    }
+
     // X11: the pointer grab follows the cursor, the keyboard grab follows the
-    // overlay actually consuming keys. Both make the server emit
-    // NotifyGrab/NotifyUngrab focus events on the game window, and Wine reads
-    // those as a window-manager grab and drops the game's cursor capture, so a
-    // mere pointer crossing must never engage the keyboard grab. The grab
-    // helpers hand held keys and buttons across each transition.
+    // open overlay. Both make the server emit NotifyGrab/NotifyUngrab focus
+    // events on the game window, and Wine reads those as a window-manager grab
+    // and drops the game's cursor capture, so a mere pointer crossing must
+    // never engage the keyboard grab. The grab helpers hand held keys and
+    // buttons across each transition.
     static void applyX11Blocking()
     {
         const bool enabled = blockingEnabled.load(std::memory_order_acquire);
         const bool pointerGrab = enabled && pointerOverOverlay();
-        const bool keyboardGrab = enabled && overlayConsumingKeys();
+        const bool keyboardGrab = enabled && overlayOwnsKeyboard();
 
         x11SetGrabState(pointerGrab);
         x11SetKeyboardGrabState(keyboardGrab);
@@ -75,7 +84,7 @@ namespace VKIntox
     static void applyWaylandBlocking()
     {
         const bool enabled = blockingEnabled.load(std::memory_order_acquire);
-        const bool withhold = enabled && (pointerOverOverlay() || overlayConsumingKeys());
+        const bool withhold = enabled && (pointerOverOverlay() || overlayOwnsKeyboard());
 
         if (withhold != keyboardWithheld)
         {
@@ -134,6 +143,11 @@ namespace VKIntox
     bool isOverlayConsumingKeys()
     {
         return overlayConsumingKeys();
+    }
+
+    bool isOverlayHoldingKeyboard()
+    {
+        return overlayOwnsKeyboard();
     }
 
     bool inputBlockingEnabled()

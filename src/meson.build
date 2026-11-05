@@ -15,6 +15,8 @@ glsl_shader_src = files(
     'shaders/glsl/depth_resolve_universal_msaa.frag.glsl',
     'shaders/glsl/full_screen_triangle.vert.glsl',
     'shaders/glsl/overlay_blur.frag.glsl',
+    'shaders/glsl/hud_preserve.frag.glsl',
+    'shaders/glsl/hud_scene_input.frag.glsl',
 )
 glsl_compiler = find_program('glslangValidator')
 glsl_generator = generator(glsl_compiler,
@@ -56,6 +58,8 @@ overlay_src = [
 
 VKIntox_src = [
     'layer/vkintox.cc',
+    'layer/pass_log.cc',
+    'layer/hud_protection.cc',
     'depth/depth.cc',
     'util/async_writer.cc',
     'render/resources/buffer.cc',
@@ -70,6 +74,7 @@ VKIntox_src = [
     'effects/runtime/effect_registry.cc',
     'effects/runtime/effect_reshade.cc',
     'effects/runtime/effect_transfer.cc',
+    'effects/runtime/hud_preserve.cc',
     'effects/compiler/reshade_parser.cc',
     'render/swapchain/fake_swapchain.cc',
     'render/resources/format.cc',

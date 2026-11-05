@@ -24,14 +24,15 @@ namespace VKIntox
     // Global gate: is the overlay on screen at all. Cheap to check.
     void setInputBlocked(bool blocked);
 
-    // The interactive shell is up (toasts alone do not count). The keyboard is
-    // only taken away from the game while this is on: every grab transition
-    // makes Wine drop the game's cursor capture, so the keyboard grab must not
-    // follow a bare pointer crossing.
+    // The interactive shell is up (toasts alone do not count). While this is
+    // on, the keyboard belongs to the overlay: game keybinds must not fire
+    // behind it. A bare pointer crossing without the shell leaves the keyboard
+    // with the game.
     void setInputInteractive(bool interactive);
 
     // The overlay is consuming keys right now (a text field is active or a popup
-    // is open); with the shell up, this is what engages the keyboard grab.
+    // is open). Kept as the narrower focus signal; the grab follows
+    // setInputInteractive.
     void setOverlayWantsKeyboard(bool wantsKeyboard);
 
     // Newest pointer position in surface pixels. Drives the x11 grabs and the
@@ -45,8 +46,12 @@ namespace VKIntox
     bool isInputBlocked();
 
     // True while the overlay consumes keys (a text field is active or a popup
-    // is open). Wayland withholds key events on this, hitbox or not.
+    // is open).
     bool isOverlayConsumingKeys();
+
+    // True while the interactive shell owns the keyboard. Wayland withholds
+    // game key events on this, hitbox or not.
+    bool isOverlayHoldingKeyboard();
 
     // Diagnostics: the configured gate plus the live per-backend state.
     bool inputBlockingEnabled();
