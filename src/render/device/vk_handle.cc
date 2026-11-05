@@ -138,7 +138,7 @@ namespace VKIntox
                      + (reason ? reason : "unspecified")
                      + "; a submission that never completes is holding the queue");
 
-        // the batches the queue might be stuck on, oldest first with fence state
+        // the batches the queue might be stuck on, oldest first
         const uint64_t journalSeq = logicalDevice->submitJournalSeq.load(std::memory_order_relaxed);
         const uint32_t journalCount = journalSeq < LogicalDevice::kSubmitJournalSize
             ? static_cast<uint32_t>(journalSeq) : LogicalDevice::kSubmitJournalSize;
@@ -146,16 +146,12 @@ namespace VKIntox
         for (uint32_t i = 0; i < journalCount; i++)
         {
             const auto& entry = logicalDevice->submitJournal[(journalSeq - journalCount + i) % LogicalDevice::kSubmitJournalSize];
-            const VkResult fenceStatus = entry.fence != VK_NULL_HANDLE
-                ? logicalDevice->vkd.GetFenceStatus(logicalDevice->device, entry.fence)
-                : VK_SUCCESS;
             Logger::warn("  #" + std::to_string(entry.seq)
                          + " " + std::string(entry.kind ? entry.kind : "?")
                          + " img=" + std::to_string(entry.imageIndex)
                          + " wait=" + convertToString(entry.waitSemaphore)
                          + " signal=" + convertToString(entry.signalSemaphore)
-                         + " fence=" + convertToString(entry.fence)
-                         + " fenceStatus=" + std::to_string(fenceStatus));
+                         + " fence=" + convertToString(entry.fence));
         }
         return false;
     }
