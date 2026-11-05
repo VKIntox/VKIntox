@@ -47,8 +47,10 @@ build: submodules
 
 # Configure a native build with Clang and ccache. Meson records the compiler
 # in the build directory, so use a separate build dir if changing toolchains.
+# c++2a is pinned here as well: meson only falls back to the project default
+# when a build is configured without it, and code needs C++20 features.
 configure: submodules
-    CC='ccache clang' CXX='ccache clang++' meson setup --buildtype=release --prefix=/usr {{ build_dir }}
+    CC='ccache clang' CXX='ccache clang++' meson setup --buildtype=release --prefix=/usr -Dcpp_std=c++2a {{ build_dir }}
 
 prepare-layer:
     mkdir -p {{ dev_layer_dir }}
