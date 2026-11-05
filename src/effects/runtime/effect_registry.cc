@@ -216,6 +216,8 @@ namespace VKIntox
         // Build set for quick lookup
         std::set<std::string> disabledSet(disabledEffects.begin(), disabledEffects.end());
 
+        std::vector<std::string> ordered;
+        ordered.reserve(effectNames.size());
         for (const auto& name : effectNames)
         {
             std::string effectPath = findEffectPath(name, config);
@@ -228,12 +230,15 @@ namespace VKIntox
                     Logger::err("EffectRegistry: could not find effect file for: " + name);
                 continue;
             }
+            ordered.push_back(name);
             initReshadeEffect(name, effectPath);
 
             // Set enabled state based on disabledEffects list
             if (!effects.empty() && disabledSet.count(name))
                 effects.back().enabled = false;
         }
+        selectedEffects = std::move(ordered);
+        initializedFromConfig = false;
 
         Logger::debug("EffectRegistry: initialized " + std::to_string(effects.size()) + " effects");
     }
@@ -673,7 +678,7 @@ namespace VKIntox
     {
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (initializedFromConfig || !rootConfig)
+            if (!rootConfig)
                 return;
         }
 

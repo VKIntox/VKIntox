@@ -97,6 +97,8 @@ namespace VKIntox
             std::vector<VkFramebuffer>  framebuffers;
             std::vector<std::string>    renderTargets;
             bool                        switchSamplers = false;
+            bool                        writesOutput = false;
+            bool                        overwritesOutput = false;
             uint32_t                    vertexCount = 3;
             uint32_t                    dispatchSizeX = 1;
             uint32_t                    dispatchSizeY = 1;
@@ -124,11 +126,15 @@ namespace VKIntox
         VkFormat    inputOutputFormatUNORM = VK_FORMAT_UNDEFINED;
         VkFormat    inputOutputFormatSRGB = VK_FORMAT_UNDEFINED;
         VkFormat    stencilFormat = VK_FORMAT_UNDEFINED;
+        VkExtent2D  stencilExtent = {};
         VkImage     stencilImage = VK_NULL_HANDLE;
         VkImageView stencilImageView = VK_NULL_HANDLE;
         // how often the shader writes to the reshade back buffer
         // we need to flip the "backbuffer" after each write if there is a next one
         int                      outputWrites = 0;
+        bool                     needsSeedCopy = true;
+        bool                     usesStencil = false;
+        float                    renderScale = 1.0f;
         std::vector<VkImage>     backBufferImages;
         std::vector<bool>        outputImageInitialized;
         std::vector<VkImageView> backBufferImageViewsUNORM;
@@ -154,6 +160,8 @@ namespace VKIntox
 
         void          buildUiParamCache();
         void          createReshadeModule();
+        float         resolveRenderScale() const;
+        void          applyRenderScale();
         VkFormat      convertReshadeFormat(reshadefx::texture_format texFormat);
         VkCompareOp   convertReshadeCompareOp(reshadefx::pass_stencil_func compareOp);
         VkStencilOp   convertReshadeStencilOp(reshadefx::pass_stencil_op stencilOp);

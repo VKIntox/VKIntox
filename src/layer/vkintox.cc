@@ -39,6 +39,8 @@
 #include "render/device/logical_device.hh"
 #include "render/device/vk_handle.hh"
 #include "render/swapchain/logical_swapchain.hh"
+#include "layer/pass_log.hh"
+#include "layer/hud_protection.hh"
 
 #include "render/command_buffer.hh"
 #include "config/config.hh"
@@ -821,6 +823,8 @@ namespace VKIntox
                                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                 namesByFile[filename].push_back(name);
             }
+            for (auto& [filename, names] : namesByFile)
+                std::sort(names.begin(), names.end());
             auto applyParams = [&](const std::vector<ConfigParam>& params) {
             for (const auto& param : params)
             {
@@ -1108,6 +1112,17 @@ namespace VKIntox
         });
     }
 
+    void refreshDepthBuffers(LogicalDevice* logicalDevice)
+    {
+        if (!logicalDevice)
+            return;
+        logicalDevice->activeDepthState = DepthState{};
+        logicalDevice->bestDepthCandidate = LogicalDevice::DepthCandidateTrackingState{};
+        logicalDevice->pinnedDepthImageView = VK_NULL_HANDLE;
+        logicalDevice->depthReallocPending = true;
+        Logger::debug("preset switch: refreshing depth buffers and command buffers");
+    }
+
     // Switch to a new config (called from overlay)
     void switchConfig(const std::string& configPath, const std::string& shaderPath = "")
     {
@@ -1310,6 +1325,8 @@ namespace VKIntox
         bool checkEnabledState = true)
     {
         const bool useMutableFormat = logicalSwapchain->useMutableFormat;
+        const bool hudCompose = logicalSwapchain->hud.initialized;
+        const bool writeToSwapchain = useMutableFormat && !hudCompose;
 
         if (logicalSwapchain->imageCount == 0)
         {
@@ -1317,9 +1334,32 @@ namespace VKIntox
             return;
         }
 
-        const size_t requiredSlots = effectStrings.empty()
-            ? 1
-            : effectStrings.size() + (useMutableFormat ? 0u : 1u);
+        logicalSwapchain->activeChainSlots = 0;
+
+        std::vector<std::string> activeEffects;
+        activeEffects.reserve(effectStrings.size());
+        for (const auto& name : effectStrings)
+        {
+            const bool failed = effectRegistry.hasEffectFailed(name);
+            const bool disabled = checkEnabledState && !effectRegistry.isEffectEnabled(name);
+            if (!failed && !disabled)
+                activeEffects.push_back(name);
+        }
+
+        if (activeEffects.empty())
+        {
+            if (!hudCompose)
+            {
+                std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin(),
+                                                 logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount);
+                logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
+                    logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
+                    firstImages, logicalSwapchain->images, config));
+            }
+            return;
+        }
+
+        const size_t requiredSlots = activeEffects.size() + 1;
         const size_t requiredFakeImages = static_cast<size_t>(logicalSwapchain->imageCount) * requiredSlots;
         if (logicalSwapchain->fakeImages.size() < requiredFakeImages)
         {
@@ -1329,55 +1369,28 @@ namespace VKIntox
             return;
         }
 
-        // If no effects, add pass-through so rendering still works
-        if (effectStrings.empty())
+        auto slotImages = [&](size_t slot) {
+            return std::vector<VkImage>(logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * slot,
+                                        logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * (slot + 1));
+        };
+
+        for (uint32_t i = 0; i < activeEffects.size(); i++)
         {
-            std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin(),
-                                             logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount);
-            logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
-                logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                firstImages, logicalSwapchain->images, config));
-            return;
-        }
+            Logger::debug("creating effect " + std::to_string(i) + ": " + activeEffects[i]);
 
-        for (uint32_t i = 0; i < effectStrings.size(); i++)
-        {
-            Logger::debug("creating effect " + std::to_string(i) + ": " + effectStrings[i]);
-
-            // Calculate input images for this effect
-            std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * i,
-                                             logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * (i + 1));
-
-            // Calculate output images - last effect writes to swapchain or final fake images
+            std::vector<VkImage> firstImages = slotImages(i);
             std::vector<VkImage> secondImages;
-            if (i == effectStrings.size() - 1)
-            {
-                secondImages = useMutableFormat
-                    ? logicalSwapchain->images
-                    : std::vector<VkImage>(logicalSwapchain->fakeImages.end() - logicalSwapchain->imageCount,
-                                           logicalSwapchain->fakeImages.end());
-            }
+            if (i == activeEffects.size() - 1)
+                secondImages = writeToSwapchain ? logicalSwapchain->images : slotImages(activeEffects.size());
             else
-            {
-                secondImages = std::vector<VkImage>(logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * (i + 1),
-                                                    logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount * (i + 2));
-            }
+                secondImages = slotImages(i + 1);
 
-            // Check if effect should be skipped (disabled or failed)
-            bool effectFailed = effectRegistry.hasEffectFailed(effectStrings[i]);
-            bool effectDisabled = checkEnabledState && !effectRegistry.isEffectEnabled(effectStrings[i]);
-
-            if (effectFailed || effectDisabled)
-            {
-                Logger::debug("effect " + std::string(effectFailed ? "failed" : "disabled") + ", using pass-through: " + effectStrings[i]);
-                logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
-                continue;
-            }
+            const std::string& effectName = activeEffects[i];
 
             // ReShade effect - wrap in try-catch + signal handler to handle compilation failures gracefully
             // The embedded reshadefx compiler can trigger SIGFPE/SIGABRT in edge cases
-            std::string effectPath = effectRegistry.getEffectFilePath(effectStrings[i]);
-            auto customDefs = effectRegistry.getPreprocessorDefs(effectStrings[i]);
+            std::string effectPath = effectRegistry.getEffectFilePath(effectName);
+            auto customDefs = effectRegistry.getPreprocessorDefs(effectName);
 
             installCrashHandlers();
             bool signalCrash = false;
@@ -1394,13 +1407,13 @@ namespace VKIntox
                 std::string sigName = (caughtSignal == SIGFPE) ? "SIGFPE"
                                     : (caughtSignal == SIGABRT) ? "SIGABRT"
                                     : (caughtSignal == SIGSEGV) ? "SIGSEGV" : "SIGNAL";
-                Logger::err("Caught " + sigName + " creating ReshadeEffect " + effectStrings[i]);
-                effectRegistry.setEffectError(effectStrings[i], sigName + " during shader compilation");
+                Logger::err("Caught " + sigName + " creating ReshadeEffect " + effectName);
+                effectRegistry.setEffectError(effectName, sigName + " during shader compilation");
                 logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
                 // Soft-disable: reshadefx native crash means we can't
                 // trust the compiler. Don't risk another one.
                 panicLayer(logicalDevice, std::string("reshadefx native crash (") + sigName
-                           + ") while compiling " + effectStrings[i]);
+                           + ") while compiling " + effectName);
             }
 
             if (!signalCrash)
@@ -1410,33 +1423,33 @@ namespace VKIntox
                 {
                     auto reshadeEffect = std::make_shared<ReshadeEffect>(
                         logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                        firstImages, secondImages, &effectRegistry, effectStrings[i], effectPath, customDefs,
-                        effectRegistry.effectUniformsBaked(effectStrings[i]));
+                        firstImages, secondImages, &effectRegistry, effectName, effectPath, customDefs,
+                        effectRegistry.effectUniformsBaked(effectName));
                     logicalSwapchain->effects.push_back(reshadeEffect);
                     if (reshadeEffect->getOutputWrites() == 0)
                     {
-                        Logger::debug("deterministic forwarding for zero-output-write effect: " + effectStrings[i]);
+                        Logger::debug("deterministic forwarding for zero-output-write effect: " + effectName);
                         logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
                                                firstImages, secondImages, config));
                     }
                 }
                 catch (const std::exception& e)
                 {
-                    Logger::err("Failed to create ReshadeEffect " + effectStrings[i] + ": " + e.what());
-                    effectRegistry.setEffectError(effectStrings[i], e.what());
+                    Logger::err("Failed to create ReshadeEffect " + effectName + ": " + e.what());
+                    effectRegistry.setEffectError(effectName, e.what());
                     logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent, firstImages, secondImages, config));
                 }
                 signalJmpActive = 0;
             }
         }
 
-        // If device doesn't support mutable format, add final transfer to swapchain
-        if (!useMutableFormat)
+        logicalSwapchain->activeChainSlots = activeEffects.size();
+
+        if (!writeToSwapchain && !hudCompose)
         {
             logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
                 logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                std::vector<VkImage>(logicalSwapchain->fakeImages.end() - logicalSwapchain->imageCount, logicalSwapchain->fakeImages.end()),
-                logicalSwapchain->images, config));
+                slotImages(activeEffects.size()), logicalSwapchain->images, config));
         }
     }
 
@@ -1480,6 +1493,7 @@ namespace VKIntox
 
         // Create effects using centralized helper
         createEffectsForSwapchain(logicalSwapchain, logicalDevice, config, effectStrings, true);
+        Hud::refresh(logicalSwapchain, logicalSwapchain->activeChainSlots);
 
         // Create default transfer effect (needed for no-effect command buffers)
         logicalSwapchain->defaultTransfer = std::make_shared<TransferEffect>(
@@ -2704,8 +2718,9 @@ namespace VKIntox
         size_t effectSlots = std::max(selectedEffects.size(), static_cast<size_t>(maxEffects));
         logicalSwapchain->maxEffectSlots = effectSlots;
 
-        // create 1 more set of images when we can't use the swapchain itself
-        const uint64_t slotCount = static_cast<uint64_t>(effectSlots) + (logicalSwapchain->useMutableFormat ? 0u : 1u);
+        // one spare slot: the final transfer needs it when the swapchain cannot
+        // be written directly, and the HUD composite needs a stable last slot
+        const uint64_t slotCount = static_cast<uint64_t>(effectSlots) + 1u;
         const uint64_t fakeImageCount64 = static_cast<uint64_t>(logicalSwapchain->imageCount) * slotCount;
         if (fakeImageCount64 == 0 || fakeImageCount64 > std::numeric_limits<uint32_t>::max())
         {
@@ -2728,15 +2743,21 @@ namespace VKIntox
         }
         Logger::debug("created fake swapchain images");
 
+        Hud::init(logicalSwapchain);
+
         if (!isFirstRun && !selectedEffects.empty())
         {
             // Resize with effects - use pass-through and debounce for smooth resize
             Logger::debug("using pass-through during resize, will restore effects after debounce");
-            std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin(),
-                                             logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount);
-            logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
-                logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
-                firstImages, logicalSwapchain->images, config.get()));
+            if (!logicalSwapchain->hud.initialized)
+            {
+                std::vector<VkImage> firstImages(logicalSwapchain->fakeImages.begin(),
+                                                 logicalSwapchain->fakeImages.begin() + logicalSwapchain->imageCount);
+                logicalSwapchain->effects.push_back(std::make_shared<TransferEffect>(
+                    logicalDevice, logicalSwapchain->format, logicalSwapchain->imageExtent,
+                    firstImages, logicalSwapchain->images, config.get()));
+            }
+            logicalSwapchain->activeChainSlots = 0;
 
             resizeDebounce.pending = true;
             resizeDebounce.lastResizeTime = std::chrono::steady_clock::now();
@@ -2751,6 +2772,7 @@ namespace VKIntox
 
         Logger::debug("selected effect count: " + std::to_string(selectedEffects.size()));
         Logger::debug("effect count: " + std::to_string(logicalSwapchain->effects.size()));
+        Hud::refresh(logicalSwapchain, logicalSwapchain->activeChainSlots);
 
         logicalSwapchain->commandBuffersEffect = allocateCommandBuffer(logicalDevice, logicalSwapchain->imageCount, logicalSwapchain->commandPool);
         Logger::debug("allocated ComandBuffers " + std::to_string(logicalSwapchain->commandBuffersEffect.size()) + " for swapchain "
@@ -2759,7 +2781,7 @@ namespace VKIntox
         ensureDepthResolveResources(logicalSwapchain, depth);
         writeCommandBuffers(logicalDevice,
                             logicalSwapchain,
-                            logicalSwapchain->effects,
+                            Hud::composeEffects(logicalSwapchain, logicalSwapchain->effects),
                             logicalSwapchain->commandBuffersEffect,
                             depth);
         Logger::debug("wrote CommandBuffers");
@@ -3455,6 +3477,7 @@ namespace VKIntox
                 return devIt->second->vkd.QueuePresentKHR(queue, pPresentInfo);
 
             LogicalDevice* deviceForSettings = devIt->second.get();
+            PassLog::present(pPresentInfo);
 
             // Check if settings were saved (re-read from settingsManager which is already updated by UI)
             if (deviceForSettings && deviceForSettings->imguiOverlay && deviceForSettings->imguiOverlay->hasSettingsSaved())
@@ -3596,6 +3619,7 @@ namespace VKIntox
                 {
                     std::string newConfigPath = logicalDevice->imguiOverlay->getPendingConfigPath();
                     switchConfig(newConfigPath, overlayShaderPath);
+                    refreshDepthBuffers(logicalDevice);
                     // Update overlay with effects from the new config
                     std::vector<std::string> newEffects = config->getOption<std::vector<std::string>>("effects", {});
                     std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects", {});
@@ -3609,6 +3633,7 @@ namespace VKIntox
                     if (!shaderPath.empty())
                     {
                         switchConfig(config->getConfigFilePath(), shaderPath);
+                        refreshDepthBuffers(logicalDevice);
                         std::vector<std::string> newEffects = config->getOption<std::vector<std::string>>("effects", {});
                         std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects", {});
                         logicalDevice->imguiOverlay->setSelectedEffects(newEffects, disabledEffects);
@@ -3616,6 +3641,7 @@ namespace VKIntox
                     else
                     {
                         switchConfig(config->getConfigFilePath(), "");
+                        refreshDepthBuffers(logicalDevice);
                         const std::vector<std::string> newEffects = config->getOption<std::vector<std::string>>("effects", {});
                         const std::vector<std::string> disabledEffects = config->getOption<std::vector<std::string>>("disabledEffects", {});
                         logicalDevice->imguiOverlay->setSelectedEffects(newEffects, disabledEffects);
@@ -3632,6 +3658,8 @@ namespace VKIntox
                     {
                         config->reload();
                         applyShaderProfile(config.get(), overlayShaderPath);
+                        effectRegistry.initializeSelectedEffectsFromConfig();
+                        refreshDepthBuffers(logicalDevice);
                     }
                     reloadSelectedEffects();
                 }
@@ -4236,6 +4264,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4261,6 +4290,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4280,6 +4310,7 @@ namespace VKIntox
                     break;
                 }
             }
+            PassLog::renderPassCreated(*pRenderPass, &createInfo);
         }
         return vr;
     }
@@ -4307,6 +4338,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4332,6 +4364,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4351,6 +4384,7 @@ namespace VKIntox
                     break;
                 }
             }
+            PassLog::renderPassCreated(*pRenderPass, &createInfo);
         }
         return vr;
     }
@@ -4378,6 +4412,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4403,6 +4438,7 @@ namespace VKIntox
                         break;
                     }
                 }
+                PassLog::renderPassCreated(*pRenderPass, pCreateInfo);
             }
             return vr;
         }
@@ -4422,6 +4458,7 @@ namespace VKIntox
                     break;
                 }
             }
+            PassLog::renderPassCreated(*pRenderPass, &createInfo);
         }
         return vr;
     }
@@ -4430,11 +4467,15 @@ namespace VKIntox
     {
         scoped_lock l(globalLock);
         renderPassDepthFinalLayouts.erase(renderPass);
+        PassLog::renderPassDestroyed(renderPass);
         if (!device)
             return;
         auto devIt = deviceMap.find(GetKey(device));
         if (devIt != deviceMap.end() && devIt->second)
+        {
+            Hud::renderPassDestroyed(devIt->second.get(), renderPass);
             devIt->second->vkd.DestroyRenderPass(device, renderPass, pAllocator);
+        }
     }
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_CreateImage(VkDevice                     device,
@@ -4553,7 +4594,10 @@ namespace VKIntox
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
             if (logicalDevice == nullptr)
                 return VK_ERROR_DEVICE_LOST;
-            return logicalDevice->vkd.CreateImageView(device, pCreateInfo, pAllocator, view);
+            VkResult result = logicalDevice->vkd.CreateImageView(device, pCreateInfo, pAllocator, view);
+            if (result == VK_SUCCESS && view)
+                PassLog::imageViewCreated(*view, pCreateInfo->image);
+            return result;
         }
 
         scoped_lock l(globalLock);
@@ -4564,6 +4608,8 @@ namespace VKIntox
         VkResult result = logicalDevice->vkd.CreateImageView(device, pCreateInfo, pAllocator, view);
         if (result != VK_SUCCESS)
             return result;
+        if (view)
+            PassLog::imageViewCreated(*view, pCreateInfo->image);
 
         DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromImage(logicalDevice, pCreateInfo->image);
         if (snapshotTarget.swapchain != VK_NULL_HANDLE)
@@ -4658,6 +4704,7 @@ namespace VKIntox
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
             if (logicalDevice == nullptr)
                 return;
+            PassLog::imageViewDestroyed(imageView);
             logicalDevice->vkd.DestroyImageView(device, imageView, pAllocator);
             return;
         }
@@ -4673,6 +4720,7 @@ namespace VKIntox
             || logicalDevice->depthViewStates.count(imageView) != 0;
         logicalDevice->snapshotTargetViewStates.erase(imageView);
         logicalDevice->depthViewStates.erase(imageView);
+        PassLog::imageViewDestroyed(imageView);
         clearTrackedDepthScopesLocked(logicalDevice, [imageView](const DepthState& state) { return state.imageView == imageView; });
 
         for (auto it = logicalDevice->framebufferDepthStates.begin(); it != logicalDevice->framebufferDepthStates.end();)
@@ -4726,7 +4774,10 @@ namespace VKIntox
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
             if (logicalDevice == nullptr)
                 return VK_ERROR_DEVICE_LOST;
-            return logicalDevice->vkd.CreateFramebuffer(device, pCreateInfo, pAllocator, pFramebuffer);
+            VkResult result = logicalDevice->vkd.CreateFramebuffer(device, pCreateInfo, pAllocator, pFramebuffer);
+            if (result == VK_SUCCESS && pFramebuffer)
+                PassLog::framebufferCreated(*pFramebuffer, pCreateInfo);
+            return result;
         }
 
         scoped_lock l(globalLock);
@@ -4737,6 +4788,8 @@ namespace VKIntox
         VkResult result = logicalDevice->vkd.CreateFramebuffer(device, pCreateInfo, pAllocator, pFramebuffer);
         if (result != VK_SUCCESS)
             return result;
+        if (pFramebuffer)
+            PassLog::framebufferCreated(*pFramebuffer, pCreateInfo);
 
         for (uint32_t i = 0; i < pCreateInfo->attachmentCount; i++)
         {
@@ -4782,6 +4835,7 @@ namespace VKIntox
             LogicalDevice* logicalDevice = deviceMap[GetKey(device)].get();
             if (logicalDevice == nullptr)
                 return;
+            PassLog::framebufferDestroyed(framebuffer);
             logicalDevice->vkd.DestroyFramebuffer(device, framebuffer, pAllocator);
             return;
         }
@@ -4793,6 +4847,7 @@ namespace VKIntox
             return;
         logicalDevice->framebufferDepthStates.erase(framebuffer);
         logicalDevice->framebufferSnapshotTargets.erase(framebuffer);
+        PassLog::framebufferDestroyed(framebuffer);
         logicalDevice->vkd.DestroyFramebuffer(device, framebuffer, pAllocator);
     }
 
@@ -4824,11 +4879,15 @@ namespace VKIntox
                 auto rpLayoutIt = renderPassDepthFinalLayouts.find(pRenderPassBegin->renderPass);
                 if (rpLayoutIt != renderPassDepthFinalLayouts.end())
                     rpDepthFinalLayout = rpLayoutIt->second;
+                DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin);
                 beginTrackedDepthScope(logicalDevice,
                                        commandBuffer,
                                        selectDepthStateFromRenderPassBegin(logicalDevice, pRenderPassBegin),
-                                       selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin),
+                                       snapshotTarget,
                                        rpDepthFinalLayout);
+                PassLog::begin(commandBuffer, pRenderPassBegin->renderPass, pRenderPassBegin->framebuffer,
+                               pRenderPassBegin->renderArea, snapshotTarget);
+                Hud::beginRenderPass(logicalDevice, commandBuffer, pRenderPassBegin);
             }
         }
 
@@ -4858,11 +4917,15 @@ namespace VKIntox
                 auto rpLayoutIt = renderPassDepthFinalLayouts.find(pRenderPassBegin->renderPass);
                 if (rpLayoutIt != renderPassDepthFinalLayouts.end())
                     rpDepthFinalLayout = rpLayoutIt->second;
+                DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin);
                 beginTrackedDepthScope(logicalDevice,
                                        commandBuffer,
                                        selectDepthStateFromRenderPassBegin(logicalDevice, pRenderPassBegin),
-                                       selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin),
+                                       snapshotTarget,
                                        rpDepthFinalLayout);
+                PassLog::begin(commandBuffer, pRenderPassBegin->renderPass, pRenderPassBegin->framebuffer,
+                               pRenderPassBegin->renderArea, snapshotTarget);
+                Hud::beginRenderPass(logicalDevice, commandBuffer, pRenderPassBegin);
             }
         }
 
@@ -4892,11 +4955,15 @@ namespace VKIntox
                 auto rpLayoutIt = renderPassDepthFinalLayouts.find(pRenderPassBegin->renderPass);
                 if (rpLayoutIt != renderPassDepthFinalLayouts.end())
                     rpDepthFinalLayout = rpLayoutIt->second;
+                DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin);
                 beginTrackedDepthScope(logicalDevice,
                                        commandBuffer,
                                        selectDepthStateFromRenderPassBegin(logicalDevice, pRenderPassBegin),
-                                       selectDepthSnapshotTargetFromRenderPassBegin(logicalDevice, pRenderPassBegin),
+                                       snapshotTarget,
                                        rpDepthFinalLayout);
+                PassLog::begin(commandBuffer, pRenderPassBegin->renderPass, pRenderPassBegin->framebuffer,
+                               pRenderPassBegin->renderArea, snapshotTarget);
+                Hud::beginRenderPass(logicalDevice, commandBuffer, pRenderPassBegin);
             }
         }
 
@@ -4912,11 +4979,14 @@ namespace VKIntox
         if (pRenderingInfo && pRenderingInfo->pDepthAttachment)
             depthFinalLayout = pRenderingInfo->pDepthAttachment->imageLayout;
 
+        DepthSnapshotTarget snapshotTarget = selectDepthSnapshotTargetFromRenderingInfo(logicalDevice, pRenderingInfo);
         beginTrackedDepthScope(logicalDevice,
                                commandBuffer,
                                selectDepthStateFromRenderingInfo(logicalDevice, pRenderingInfo),
-                               selectDepthSnapshotTargetFromRenderingInfo(logicalDevice, pRenderingInfo),
+                               snapshotTarget,
                                depthFinalLayout);
+        PassLog::beginDynamic(commandBuffer, pRenderingInfo, snapshotTarget);
+        Hud::beginRendering(logicalDevice, commandBuffer, pRenderingInfo);
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdBeginRendering(VkCommandBuffer commandBuffer, const VkRenderingInfo* pRenderingInfo)
@@ -5321,6 +5391,8 @@ namespace VKIntox
         {
             logicalDevice->vkd.CmdCopyImage(commandBuffer, srcImage, srcImageLayout, dstImage, dstImageLayout, regionCount, pRegions);
             scoped_lock l(globalLock);
+            PassLog::copyImage(commandBuffer, srcImage, dstImage, pRegions, regionCount);
+            Hud::copyImage(logicalDevice, commandBuffer, srcImage, dstImage);
             tryActivatePendingTransferLinkedDepthScope(logicalDevice, commandBuffer, dstImage, "CmdCopyImage");
         }
     }
@@ -5379,6 +5451,8 @@ namespace VKIntox
         {
             logicalDevice->vkd.CmdBlitImage(commandBuffer, srcImage, srcImageLayout, dstImage, dstImageLayout, regionCount, pRegions, filter);
             scoped_lock l(globalLock);
+            PassLog::blitImage(commandBuffer, srcImage, dstImage, pRegions, regionCount, filter);
+            Hud::blitImage(logicalDevice, commandBuffer, srcImage, dstImage);
             tryActivatePendingTransferLinkedDepthScope(logicalDevice, commandBuffer, dstImage, "CmdBlitImage");
         }
     }
@@ -5515,12 +5589,15 @@ namespace VKIntox
             if (devIt != deviceMap.end())
             {
                 logicalDevice = devIt->second.get();
-                countTrackedDepthDraw(logicalDevice, commandBuffer);
+                countTrackedDepthDraw(logicalDevice, commandBuffer, 1, vertexCount, false);
             }
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDraw(commandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
+            Hud::draw(logicalDevice, commandBuffer, true, vertexCount, instanceCount);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndexed(VkCommandBuffer commandBuffer,
@@ -5544,12 +5621,15 @@ namespace VKIntox
             if (devIt != deviceMap.end())
             {
                 logicalDevice = devIt->second.get();
-                countTrackedDepthDraw(logicalDevice, commandBuffer);
+                countTrackedDepthDraw(logicalDevice, commandBuffer, 1, indexCount, true);
             }
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndexed(commandBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndirect(VkCommandBuffer commandBuffer,
@@ -5577,7 +5657,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndirect(commandBuffer, buffer, offset, drawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndexedIndirect(VkCommandBuffer commandBuffer,
@@ -5605,7 +5688,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndexedIndirect(commandBuffer, buffer, offset, drawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndirectCount(VkCommandBuffer commandBuffer,
@@ -5635,7 +5721,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndirectCountKHR(VkCommandBuffer commandBuffer,
@@ -5665,7 +5754,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndirectCountKHR(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer,
@@ -5695,7 +5787,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndexedIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR void VKAPI_CALL VKIntox_CmdDrawIndexedIndirectCountKHR(VkCommandBuffer commandBuffer,
@@ -5725,7 +5820,10 @@ namespace VKIntox
         }
 
         if (logicalDevice)
+        {
             logicalDevice->vkd.CmdDrawIndexedIndirectCountKHR(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+            Hud::draw(logicalDevice, commandBuffer, false, 0, 0);
+        }
     }
 
     VKAPI_ATTR VkResult VKAPI_CALL VKIntox_BeginCommandBuffer(VkCommandBuffer commandBuffer,
@@ -5758,6 +5856,8 @@ namespace VKIntox
         logicalDevice->commandBufferRecordedDrawCounts[commandBuffer] = 0;
         logicalDevice->commandBufferDepthStates.erase(commandBuffer);
         logicalDevice->pendingTransferLinkedDepthScopes.erase(commandBuffer);
+        PassLog::commandBufferBegan(commandBuffer);
+        Hud::commandBufferBegan(commandBuffer);
 
         return logicalDevice->vkd.BeginCommandBuffer(commandBuffer, pBeginInfo);
     }
@@ -5781,6 +5881,8 @@ namespace VKIntox
                 logicalDevice->commandBufferRecordedDrawCounts.erase(pCommandBuffers[i]);
                 logicalDevice->commandBufferDepthStates.erase(pCommandBuffers[i]);
                 logicalDevice->pendingTransferLinkedDepthScopes.erase(pCommandBuffers[i]);
+                PassLog::commandBufferFreed(pCommandBuffers[i]);
+                Hud::commandBufferFreed(pCommandBuffers[i]);
             }
         }
 

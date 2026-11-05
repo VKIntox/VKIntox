@@ -1,8 +1,8 @@
 // X11 input blocking, against the layer's real blocker: the pointer grab must
-// follow the cursor, the keyboard grab must only engage when the overlay consumes
-// keys (a grab transition makes Wine drop the game's cursor capture), and held
-// keys and buttons must be handed to the game across each grab, or the game keeps
-// holding whatever was down when the overlay was used.
+// follow the cursor, the keyboard grab must engage while the interactive shell
+// is up and release when it closes, and held keys and buttons must be handed to
+// the game across each grab, or the game keeps holding whatever was down when
+// the overlay was used.
 //
 // It synthesises real input on the developer's display, so it only runs with
 // VKINTOX_X11_INPUT_TEST=1 set; otherwise it reports SKIP (exit 77).
@@ -135,8 +135,9 @@ int main(int argc, char** argv)
     printf("    keyboard grab: %s\n", grabStatus(probe, root, 1));
     int ok2 = r > 0 && strcmp(grabStatus(probe, root, 1), "held by the layer") == 0;
 
-    printf("\n3. releasing the keyboard hands still-held keys back\n");
+    printf("\n3. closing the interactive shell hands still-held keys back\n");
     setOverlayWantsKeyboard(false);
+    setInputInteractive(false);
     usleep(200000);
     p = r = f = 0;
     pump(game, "grab-released", &p, &r, &f);

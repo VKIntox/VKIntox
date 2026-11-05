@@ -2022,10 +2022,10 @@ namespace VKIntox
             else
                 setInputRects(nullptr, 0);
 
-            // Keys are only taken from the game while the overlay consumes them:
-            // a text field is active or a popup is open. Taking them for a bare
-            // pointer crossing makes Wine drop the game's cursor capture (it
-            // reads the grab's focus events as a window-manager grab).
+            // The open shell owns the keyboard: game keybinds must not fire
+            // behind it. A bare pointer crossing without the shell still passes
+            // keys through, because Wine reads a grab's focus events as a
+            // window-manager grab and drops the game's cursor capture.
             const bool interactive = shellActive && blocking;
             setInputInteractive(interactive);
             setOverlayWantsKeyboard(interactive
