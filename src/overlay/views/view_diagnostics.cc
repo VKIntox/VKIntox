@@ -1,6 +1,8 @@
 #include "overlay/shell/imgui_overlay.hh"
 #include "config/config_serializer.hh"
+#include "depth/depth_dump.hh"
 #include "util/logger.hh"
+#include "util/util.hh"
 #include "overlay/theme/ui_theme.hh"
 #include "overlay/theme/ui_icons.hh"
 #include "input/common/input_blocker.hh"
@@ -710,6 +712,78 @@ namespace VKIntox
                     ImGui::TextColored(UI::Success(), "yes");
                 else
                     ImGui::TextDisabled("no");
+            }
+        }
+        ImGui::M3CardEnd();
+
+        // --- Depth buffer ---
+        ImGui::Spacing();
+        ImGui::M3CardBegin("diag_depth", "Frame dumping", Icon::LayersUtf8);
+        {
+            // the readback rides the depth copy, so a nameless fallback keeps
+            // the button useful where the portal is off
+            auto dumpTo = [&](std::string path) {
+                if (path.find('.') == std::string::npos)
+                    path += ".png";
+                DepthDump::request(path);
+                pushToast(LogLevel::Info, "Dumping the next depth frame to " + path);
+            };
+
+            auto dumpFallbackName = []() {
+                std::string dir = ConfigSerializer::getBaseConfigDir();
+                if (dir.empty())
+                    return std::string();
+                dir += "/depth-dumps";
+                std::error_code ec;
+                std::filesystem::create_directories(dir, ec);
+                const auto epoch = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                return dir + "/VKINTOX_depth_" + std::to_string(epoch) + ".png";
+            };
+
+            FileDialogResult dialogResult = FileDialogResult::Cancelled;
+            std::string picked;
+            if (pollFileDialog(FileDialogKind::SaveFile, dialogResult, picked))
+            {
+                if (dialogResult == FileDialogResult::Success && !picked.empty())
+                    dumpTo(picked);
+                else if (dialogResult == FileDialogResult::Unavailable)
+                {
+                    const std::string fallback = dumpFallbackName();
+                    if (fallback.empty())
+                        pushToast(LogLevel::Error, "No file picker and no config directory to write to.");
+                    else
+                        dumpTo(fallback);
+                }
+            }
+
+            std::string dumpMessage;
+            bool dumpOk = false;
+            if (DepthDump::pollResult(dumpMessage, dumpOk))
+                pushToast(dumpOk ? LogLevel::Info : LogLevel::Error, dumpMessage);
+
+
+            const bool busy = fileDialogPending() || DepthDump::wanted();
+            const bool capturable = settingsManager.getDepthCapture();
+            ImGui::BeginDisabled(busy || !capturable);
+            if (ImGui::M3Button(busy ? "Waiting for a depth frame" : "Dump current frame as a packed PNG", ImGuiM3Button_Tonal))
+            {
+                if (!settingsManager.getUsePortalIntegration()
+                    || !startSaveFileDialog("Dump depth buffer", {"*.png"}, "VKINTOX_depth.png"))
+                {
+                    const std::string fallback = dumpFallbackName();
+                    if (fallback.empty())
+                        pushToast(LogLevel::Error, "No file picker and no config directory to write to.");
+                    else
+                        dumpTo(fallback);
+                }
+            }
+            ImGui::EndDisabled();
+
+            if (!capturable)
+            {
+                ImGui::Spacing();
+                UI::TextSupport("Depth capture is off, so there is nothing to read back.");
             }
         }
         ImGui::M3CardEnd();

@@ -228,7 +228,8 @@ namespace VKIntox
         }
 
         bool startPortalRequest(const std::string& title, FileDialogKind kind,
-                                const std::vector<std::string>& globFilters)
+                                const std::vector<std::string>& globFilters,
+                                const std::string& suggestedName = {})
         {
             if (g_portal.pending)
                 return true;
@@ -266,10 +267,17 @@ namespace VKIntox
             GVariantBuilder options;
             g_variant_builder_init(&options, G_VARIANT_TYPE("a{sv}"));
             g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token.c_str()));
-            g_variant_builder_add(&options, "{sv}", "directory", g_variant_new_boolean(kind == FileDialogKind::OpenDirectory));
-            g_variant_builder_add(&options, "{sv}", "multiple", g_variant_new_boolean(FALSE));
             g_variant_builder_add(&options, "{sv}", "modal", g_variant_new_boolean(TRUE));
-            if (kind == FileDialogKind::OpenFile && !globFilters.empty())
+            if (kind != FileDialogKind::SaveFile)
+            {
+                g_variant_builder_add(&options, "{sv}", "directory", g_variant_new_boolean(kind == FileDialogKind::OpenDirectory));
+                g_variant_builder_add(&options, "{sv}", "multiple", g_variant_new_boolean(FALSE));
+            }
+            else if (!suggestedName.empty())
+            {
+                g_variant_builder_add(&options, "{sv}", "current_name", g_variant_new_string(suggestedName.c_str()));
+            }
+            if ((kind == FileDialogKind::OpenFile || kind == FileDialogKind::SaveFile) && !globFilters.empty())
             {
                 // filters is a(sa(us)): (name, [(0 = glob, pattern)]). all the
                 // patterns share one user-visible filter.
@@ -287,7 +295,8 @@ namespace VKIntox
             // handle from inside the sandbox would be rejected. Async so we return now.
             g_dbus_connection_call(
                 bus, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
-                "org.freedesktop.portal.FileChooser", "OpenFile",
+                "org.freedesktop.portal.FileChooser",
+                kind == FileDialogKind::SaveFile ? "SaveFile" : "OpenFile",
                 g_variant_new("(ssa{sv})", "", title.c_str(), &options),
                 G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr, onPortalCallDone, nullptr);
             return true;
@@ -343,6 +352,19 @@ namespace VKIntox
         return startPortalRequest(title, FileDialogKind::OpenDirectory, {});
 #else
         (void)title;
+        return false;
+#endif
+    }
+
+    bool startSaveFileDialog(const std::string& title, const std::vector<std::string>& globFilters,
+                             const std::string& suggestedName)
+    {
+#ifdef VKINTOX_HAVE_GIO
+        return startPortalRequest(title, FileDialogKind::SaveFile, globFilters, suggestedName);
+#else
+        (void)title;
+        (void)globFilters;
+        (void)suggestedName;
         return false;
 #endif
     }

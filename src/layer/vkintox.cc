@@ -43,6 +43,7 @@
 #include "layer/hud_protection.hh"
 
 #include "render/command_buffer.hh"
+#include "depth/depth_dump.hh"
 #include "config/config.hh"
 #include "config/config_serializer.hh"
 #include "config/settings_manager.hh"
@@ -2313,6 +2314,7 @@ namespace VKIntox
 
         // Destroy persistent depth storage
         destroyPersistentDepthStorage(logicalDevice);
+        DepthDump::destroyStaging(logicalDevice);
 
         // Destroy depth copy ring buffer pool and its fences. The teardown takes
         // the ring's own lock so it cannot race a QueueSubmit mid-copy; lock
@@ -3226,6 +3228,7 @@ namespace VKIntox
                 copySubmitInfo.commandBufferCount = 1;
                 copySubmitInfo.pCommandBuffers = &copyCB;
                 submitResult = logicalDevice->vkd.QueueSubmit(queue, 1, &copySubmitInfo, slotFence);
+
             }
         });
 
@@ -3445,6 +3448,70 @@ namespace VKIntox
         if (isWayland())
             beginWaylandInputFrame();
         beginKeyboardInputFrame();
+
+        // Diagnostics depth dump. It rides present rather than submit (the
+        // layer does not intercept vkQueueSubmit2), and writes the scene and
+        // the depth of the same frame into one packed PNG.
+        if (DepthDump::wanted() && pPresentInfo && pPresentInfo->swapchainCount > 0)
+        {
+            std::shared_ptr<LogicalDevice> dumpDevice;
+            DepthState dumpSource = {};
+            VkImage backbuffer = VK_NULL_HANDLE;
+            VkFormat backbufferFormat = VK_FORMAT_UNDEFINED;
+            VkExtent2D backbufferExtent = {0, 0};
+            bool transformed = false;
+            {
+                scoped_lock l(globalLock);
+                auto devIt = deviceMap.find(GetKey(queue));
+                if (devIt != deviceMap.end() && devIt->second)
+                {
+                    dumpDevice = devIt->second;
+                    const DepthState& active = dumpDevice->activeDepthState;
+                    if (hasDepthState(active) && !dumpDevice->depthTransitionHold)
+                        dumpSource = active;
+                }
+
+                auto scIt = swapchainMap.find(pPresentInfo->pSwapchains[0]);
+                if (scIt != swapchainMap.end() && scIt->second)
+                {
+                    LogicalSwapchain* sc = scIt->second.get();
+                    const uint32_t index = pPresentInfo->pImageIndices[0];
+                    if (index < sc->images.size())
+                    {
+                        backbuffer = sc->images[index];
+                        backbufferFormat = sc->format;
+                        backbufferExtent = sc->imageExtent;
+                    }
+
+                    if (!hasDepthState(dumpSource) && index < sc->depthResolvePerImage.size()
+                        && sc->depthResolveFormat != VK_FORMAT_UNDEFINED)
+                    {
+                        const bool msaaTransform = sc->depthResolveMsaaTransform;
+                        const DepthResolvePerImage& target = (msaaTransform
+                                && index < sc->depthResolveTransformedPerImage.size())
+                            ? sc->depthResolveTransformedPerImage[index]
+                            : sc->depthResolvePerImage[index];
+                        if (target.image != VK_NULL_HANDLE)
+                        {
+                            dumpSource.image = target.image;
+                            dumpSource.imageView = target.imageView;
+                            dumpSource.format = msaaTransform ? VK_FORMAT_R32_SFLOAT : sc->depthResolveFormat;
+                            dumpSource.extent = sc->depthResolveExtent;
+                            dumpSource.samples = VK_SAMPLE_COUNT_1_BIT;
+                            dumpSource.observedLayout = (sc->depthResolveUsesShader || msaaTransform)
+                                ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                : (isStencilFormat(sc->depthResolveFormat)
+                                    ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                    : VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+                            transformed = (sc->depthResolveUsesShader || msaaTransform);
+                        }
+                    }
+                }
+            }
+            if (dumpDevice && hasDepthState(dumpSource))
+                DepthDump::readBackAtPresent(dumpDevice.get(), queue, dumpSource, transformed,
+                                             backbuffer, backbufferFormat, backbufferExtent);
+        }
 
         // Keybindings - read from settingsManager (can be updated when settings are saved)
         static uint32_t keySymbol = convertToKeySym(settingsManager.getToggleKey());

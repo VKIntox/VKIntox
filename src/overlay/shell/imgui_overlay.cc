@@ -1,4 +1,5 @@
 #include "overlay/shell/imgui_overlay.hh"
+#include "depth/depth_dump.hh"
 
 #include "render/device/vk_handle.hh"
 #include "effects/runtime/effect_registry.hh"
@@ -1836,6 +1837,11 @@ namespace VKIntox
 
     VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height)
     {
+        // a frame dump must not bake the UI into the file; the request arms a
+        // hold long enough for the overlay to be gone for the whole capture
+        if (DepthDump::overlaySuppressed())
+            return VK_NULL_HANDLE;
+
         sampleDiagnostics();
         // Shell appear/disappear. The clock lives on steady_clock so it runs even
         // on frames where ImGui hasn't ticked yet. Same curve and rise as the

@@ -33,11 +33,16 @@ namespace VKIntox
     enum class FileDialogKind
     {
         OpenFile,
-        OpenDirectory
+        OpenDirectory,
+        SaveFile
     };
 
     bool startOpenFileDialog(const std::string& title, const std::vector<std::string>& globFilters);
     bool startOpenDirectoryDialog(const std::string& title);
+    // picker for a file that does not exist yet. suggestedName is what the
+    // dialog pre-fills into the name field.
+    bool startSaveFileDialog(const std::string& title, const std::vector<std::string>& globFilters,
+                             const std::string& suggestedName);
     // only reports a request of the given kind, so a dialog started from
     // another tab can't be mistaken for this one's result.
     bool pollFileDialog(FileDialogKind kind, FileDialogResult& outResult, std::string& outPath);

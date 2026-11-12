@@ -61,6 +61,7 @@ VKIntox_src = [
     'layer/pass_log.cc',
     'layer/hud_protection.cc',
     'depth/depth.cc',
+    'depth/depth_dump.cc',
     'util/async_writer.cc',
     'render/resources/buffer.cc',
     'render/command_buffer.cc',

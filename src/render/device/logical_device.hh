@@ -41,6 +41,17 @@ namespace VKIntox
         bool           valid = false;  // True when depth has been blitted this frame
     };
 
+    // Host-visible readback target for the Diagnostics depth dump.
+    struct DepthDumpStaging
+    {
+        VkBuffer       buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkDeviceSize   size = 0;
+        VkFormat       format = VK_FORMAT_UNDEFINED;
+        VkExtent3D     extent = {0, 0, 1};
+        uint32_t       bytesPerTexel = 0;
+    };
+
     struct DepthImageMetadata
     {
         VkImageUsageFlags     usage = 0;
@@ -149,6 +160,10 @@ namespace VKIntox
         // depthImages/depthFormats/depthImageViews vectors.
         PersistentDepthStorage depthCaptureStorage;
         bool persistentStorageTracked = false;
+
+        // Diagnostics depth dump readback target; only non-null between the
+        // frame the user asked for and the file being written.
+        DepthDumpStaging depthDumpStaging;
 
         // v3 deferred copy: depth that needs blitting at QueueSubmit time.
         // Owns its own mutex; see DepthCopyState for the lock-order contract.
