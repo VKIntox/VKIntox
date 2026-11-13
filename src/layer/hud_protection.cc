@@ -619,7 +619,9 @@ namespace VKIntox::Hud
         auto sceneInput = std::make_shared<HudSceneInputEffect>(
             device, swapchain->format, swapchain->imageExtent,
             swapchain->hud.sceneInputViews, swapchain->hud.sceneViews,
-            swapchain->hud.validViews, count);
+            swapchain->hud.validViews,
+            std::vector<VkImage>(swapchain->fakeImages.begin(), swapchain->fakeImages.begin() + count),
+            swapchain->hud.finalImages, count);
         if (!sceneInput || !sceneInput->valid())
         {
             destroy(swapchain);

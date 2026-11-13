@@ -348,6 +348,8 @@ namespace VKIntox
                                              std::vector<VkImageView> outputImageViews,
                                              std::vector<VkImageView> sceneViews,
                                              std::vector<VkImageView> validViews,
+                                             std::vector<VkImage>     appImages,
+                                             std::vector<VkImage>     presentFinalImages,
                                              uint32_t                 imageCount)
         : logicalDevice(logicalDevice),
           format(format),
@@ -355,6 +357,8 @@ namespace VKIntox
           outputImageViews(std::move(outputImageViews)),
           sceneViews(std::move(sceneViews)),
           validViews(std::move(validViews)),
+          appImages(std::move(appImages)),
+          presentFinalImages(std::move(presentFinalImages)),
           imageCount(imageCount)
     {
         initialized = initialize();
@@ -436,6 +440,50 @@ namespace VKIntox
         {
             logged = true;
             Logger::info("HUD protection: scene-only input active");
+        }
+
+        if (imageIndex < appImages.size() && imageIndex < presentFinalImages.size()
+            && appImages[imageIndex] != VK_NULL_HANDLE && presentFinalImages[imageIndex] != VK_NULL_HANDLE)
+        {
+            auto barrier = [&](VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
+                               VkAccessFlags srcAccess, VkAccessFlags dstAccess,
+                               VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage) {
+                VkImageMemoryBarrier b{};
+                b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                b.image = image;
+                b.oldLayout = oldLayout;
+                b.newLayout = newLayout;
+                b.srcAccessMask = srcAccess;
+                b.dstAccessMask = dstAccess;
+                b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                logicalDevice->vkd.CmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0,
+                                                      0, nullptr, 0, nullptr, 1, &b);
+            };
+
+            const VkImage app = appImages[imageIndex];
+            const VkImage dst = presentFinalImages[imageIndex];
+            barrier(app, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            barrier(dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+            VkImageCopy copy{};
+            copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            copy.dstSubresource = copy.srcSubresource;
+            copy.extent = {imageExtent.width, imageExtent.height, 1};
+            logicalDevice->vkd.CmdCopyImage(commandBuffer, app, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                            dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+            barrier(dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+            barrier(app, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                    VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
         }
 
         VkRenderPassBeginInfo begin{};

@@ -67,6 +67,8 @@ namespace VKIntox
                             std::vector<VkImageView>  outputImageViews,
                             std::vector<VkImageView>  sceneViews,
                             std::vector<VkImageView>  validViews,
+                            std::vector<VkImage>      appImages,
+                            std::vector<VkImage>      presentFinalImages,
                             uint32_t                 imageCount);
         ~HudSceneInputEffect() override;
 
@@ -83,6 +85,8 @@ namespace VKIntox
         std::vector<VkImageView>   outputImageViews;
         std::vector<VkImageView>   sceneViews;
         std::vector<VkImageView>   validViews;
+        std::vector<VkImage>       appImages;
+        std::vector<VkImage>       presentFinalImages;
         std::vector<VkFramebuffer> framebuffers;
         std::vector<VkDescriptorSet> descriptorSets;
         uint32_t                   imageCount = 0;
