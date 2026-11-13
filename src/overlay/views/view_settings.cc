@@ -98,6 +98,15 @@ namespace VKIntox
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("If enabled, effects are active when the game starts.");
 
+        bool fxOverUi = settingsManager.getFxOverUi();
+        if (ImGui::Checkbox("Enable FX-Over-UI", &fxOverUi))
+        {
+            settingsManager.setFxOverUi(fxOverUi);
+            saveSettings();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Effects draw before the game's HUD, so overlays and menus stay untouched. Applied on the next launch.");
+
         bool autoApply = settingsManager.getAutoApply();
         if (ImGui::Checkbox("Auto-apply changes", &autoApply))
         {

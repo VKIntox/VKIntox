@@ -71,6 +71,7 @@ namespace VKIntox::DefaultConfig
         settings.reloadKey = "F10";
         settings.overlayKey = "Home";
         settings.enableOnLaunch = true;
+        settings.fxOverUi = false;
         settings.depthCapture = true;
         settings.autoApply = true;
         settings.autoApplyDelay = 200;

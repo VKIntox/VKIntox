@@ -1,5 +1,6 @@
 #include "layer/hud_protection.hh"
 
+#include "config/settings_manager.hh"
 #include "layer/internal.hh"
 #include "layer/pass_log.hh"
 
@@ -17,10 +18,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
-#include <iterator>
 #include <string>
-#include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -60,68 +58,6 @@ namespace VKIntox::Hud
             std::transform(result.begin(), result.end(), result.begin(),
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             return result;
-        }
-
-        std::string trim(const std::string& text)
-        {
-            size_t begin = text.find_first_not_of(" \t\r\n");
-            if (begin == std::string::npos)
-                return {};
-            size_t end = text.find_last_not_of(" \t\r\n");
-            return text.substr(begin, end - begin + 1);
-        }
-
-        std::string baseNameLower(const std::string& path)
-        {
-            size_t slash = path.find_last_of('/');
-            std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
-            return lowerCopy(name);
-        }
-
-        bool readFirstLine(const char* path, std::string& out)
-        {
-            std::ifstream file(path);
-            if (!file.is_open())
-                return false;
-            std::getline(file, out);
-            out = trim(out);
-            return !out.empty();
-        }
-
-        bool readFirstArgument(const char* path, std::string& out)
-        {
-            std::ifstream file(path, std::ios::binary);
-            if (!file.is_open())
-                return false;
-            std::string data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            size_t end = data.find('\0');
-            out = end == std::string::npos ? data : data.substr(0, end);
-            return !out.empty();
-        }
-
-        bool isRoselineProcess()
-        {
-            const char* flatpakId = getenv("FLATPAK_ID");
-            if (flatpakId && lowerCopy(flatpakId) == "net.buwryy.roseline")
-                return true;
-
-            std::string comm;
-            if (readFirstLine("/proc/self/comm", comm) && lowerCopy(comm) == "roseline")
-                return true;
-
-            std::string argument;
-            if (readFirstArgument("/proc/self/cmdline", argument) && baseNameLower(argument) == "roseline")
-                return true;
-
-            char exePath[4096] = {};
-            ssize_t length = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
-            if (length > 0)
-            {
-                exePath[length] = '\0';
-                if (baseNameLower(exePath) == "roseline")
-                    return true;
-            }
-            return false;
         }
 
         void imageBarrier(LogicalDevice* device, VkCommandBuffer commandBuffer, VkImage image,
@@ -499,7 +435,7 @@ namespace VKIntox::Hud
                     return false;
                 return true;
             }
-            return isRoselineProcess();
+            return settingsManager.getFxOverUi();
         }();
         return value;
     }

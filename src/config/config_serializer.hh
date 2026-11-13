@@ -56,6 +56,9 @@ namespace VKIntox
         std::string reloadKey;
         std::string overlayKey;
         bool enableOnLaunch;
+        // Apply effects to the scene before the HUD is drawn, then composite
+        // the untouched HUD back over it (FX-Over-UI / HUD protection).
+        bool fxOverUi;
         bool depthCapture;
         bool autoApply;  // Auto-apply changes without clicking Apply
         int autoApplyDelay;  // ms delay before auto-applying changes

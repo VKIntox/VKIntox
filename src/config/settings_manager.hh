@@ -83,6 +83,11 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.enableOnLaunch;
         }
+        bool getFxOverUi() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.fxOverUi;
+        }
         bool getDepthCapture() const
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -205,6 +210,11 @@ namespace VKIntox
         {
             std::lock_guard<std::mutex> lock(mutex);
             settings.enableOnLaunch = value;
+        }
+        void setFxOverUi(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.fxOverUi = value;
         }
         void setDepthCapture(bool value)
         {

@@ -49,9 +49,14 @@ int main()
     VKIntox::ConfigSerializer::ensureConfigExists();
     expect(VKIntox::ConfigSerializer::loadSettings().enableOnLaunch,
            "missing global config defaults enableOnLaunch to true");
+    expect(!VKIntox::ConfigSerializer::loadSettings().fxOverUi,
+           "missing global config defaults fxOverUi to false");
     expect(readFile(VKIntox::ConfigSerializer::getBaseConfigDir() + "/VKIntox.conf")
                    .find("enableOnLaunch = true") != std::string::npos,
            "generated global config writes enableOnLaunch as true");
+    expect(readFile(VKIntox::ConfigSerializer::getBaseConfigDir() + "/VKIntox.conf")
+                   .find("fxOverUi = false") != std::string::npos,
+           "generated global config writes fxOverUi as false");
 
     // Accept the capitalized boolean spelling used by older bundled configs.
     {
@@ -71,6 +76,7 @@ int main()
     settings.reloadKey = "F9";
     settings.overlayKey = "F11";
     settings.enableOnLaunch = true;
+    settings.fxOverUi = false;
     settings.depthCapture = true;
     settings.autoApply = false;
     settings.autoApplyDelay = 375;
@@ -94,6 +100,7 @@ int main()
                loaded.overlayKey == settings.overlayKey,
            "settings preserve key bindings");
     expect(loaded.enableOnLaunch == settings.enableOnLaunch, "settings preserve enableOnLaunch");
+    expect(loaded.fxOverUi == settings.fxOverUi, "settings preserve fxOverUi");
     expect(loaded.depthCapture == settings.depthCapture, "settings preserve depthCapture");
     expect(loaded.autoApply == settings.autoApply && loaded.autoApplyDelay == settings.autoApplyDelay,
            "settings preserve auto-apply options");

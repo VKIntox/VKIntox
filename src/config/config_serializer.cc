@@ -278,6 +278,13 @@ namespace VKIntox
                 });
                 settings.enableOnLaunch = (value == "true" || value == "1" || value == "on");
             }
+            else if (key == "fxOverUi")
+            {
+                std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                settings.fxOverUi = (value == "true" || value == "1" || value == "on");
+            }
             else if (key == "depthCapture")
                 settings.depthCapture = (value == "on");
             else if (key == "autoApply")
@@ -383,6 +390,7 @@ namespace VKIntox
 
         file << "\n# Startup behavior\n";
         file << "enableOnLaunch = " << (settings.enableOnLaunch ? "true" : "false") << "\n";
+        file << "fxOverUi = " << (settings.fxOverUi ? "true" : "false") << "\n";
         file << "depthCapture = " << (settings.depthCapture ? "on" : "off") << "\n";
 
         file << "\n# Debug\n";
