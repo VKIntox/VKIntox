@@ -291,6 +291,27 @@ namespace VKIntox
                 try { settings.autoApplyDelay = std::stoi(value); }
                 catch (...) { Logger::err("invalid autoApplyDelay value: " + value); }
             }
+            else if (key == "showFps")
+                settings.showFps = (value == "true" || value == "1");
+            else if (key == "fpsCorner")
+            {
+                if (value == "top-left") settings.fpsCorner = 0;
+                else if (value == "top-right") settings.fpsCorner = 1;
+                else if (value == "bottom-left") settings.fpsCorner = 2;
+                else if (value == "bottom-right") settings.fpsCorner = 3;
+            }
+            else if (key == "overlayX" || key == "overlayY" || key == "overlayWidth" || key == "overlayHeight")
+            {
+                try
+                {
+                    const int v = std::stoi(value);
+                    if (key == "overlayX") settings.overlayX = v;
+                    else if (key == "overlayY") settings.overlayY = v;
+                    else if (key == "overlayWidth") settings.overlayWidth = std::max(0, v);
+                    else settings.overlayHeight = std::max(0, v);
+                }
+                catch (...) { Logger::err("invalid " + key + " value: " + value); }
+            }
             else if (key == "showDebugWindow")
                 settings.showDebugWindow = (value == "true" || value == "1");
             else if (key == "separateEffectParams")
@@ -379,6 +400,12 @@ namespace VKIntox
         file << "maxEffects = " << clampedMaxEffects << "\n";
         file << "autoApply = " << (settings.autoApply ? "true" : "false") << "\n";
         file << "autoApplyDelay = " << settings.autoApplyDelay << "\n";
+        file << "# showFps: floating FPS counter; fpsCorner: top-right (default), top-left, bottom-left, bottom-right\n";
+        file << "showFps = " << (settings.showFps ? "true" : "false") << "\n";
+        {
+            static const char* const kCorners[] = {"top-left", "top-right", "bottom-left", "bottom-right"};
+            file << "fpsCorner = " << kCorners[std::clamp(settings.fpsCorner, 0, 3)] << "\n";
+        }
 
         file << "\n# Key bindings\n";
         file << "toggleKey = " << settings.toggleKey << "\n";
@@ -395,6 +422,11 @@ namespace VKIntox
 
         file << "\n# Overlay layout\n";
         file << "separateEffectParams = " << (settings.separateEffectParams ? "true" : "false") << "\n";
+        file << "# overlay window position and size in pixels; width/height 0 = default layout\n";
+        file << "overlayX = " << settings.overlayX << "\n";
+        file << "overlayY = " << settings.overlayY << "\n";
+        file << "overlayWidth = " << settings.overlayWidth << "\n";
+        file << "overlayHeight = " << settings.overlayHeight << "\n";
 
         file << "\n# Advanced (depth buffer)\n";
         file << "# depthResolveMode: 0=auto (prefer average), 1=sample-zero, 2=average\n";

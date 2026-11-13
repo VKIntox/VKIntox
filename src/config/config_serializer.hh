@@ -62,6 +62,14 @@ namespace VKIntox
         bool depthCapture;
         bool autoApply;  // Auto-apply changes without clicking Apply
         int autoApplyDelay;  // ms delay before auto-applying changes
+        bool showFps;        // floating FPS counter in a screen corner
+        int fpsCorner;       // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
+        // Overlay window geometry in framebuffer pixels, kept across launches.
+        // A width/height of 0 means "never placed": use the default layout.
+        int overlayX;
+        int overlayY;
+        int overlayWidth;
+        int overlayHeight;
         bool showDebugWindow;  // Show debug window with raw effect registry data
         // Split effect parameters into their own tabbed card at the bottom
         // (default) or keep them inline in the effect list (all-in-one card).
