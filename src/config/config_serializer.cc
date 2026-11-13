@@ -171,6 +171,9 @@ namespace VKIntox
     {
         VkBasaltSettings settings = DefaultConfig::appSettings();
         const std::string gameName = detectGameName();
+        // Seed per-game defaults before the file is parsed so configs written
+        // before a setting existed inherit it.
+        DefaultConfig::applyGameDefaults(settings, gameName);
 
         // Check user config first, then fall back to system paths (same order as Config)
         std::string userConfig = getBaseConfigDir() + "/VKIntox.conf";
@@ -193,19 +196,13 @@ namespace VKIntox
         }
 
         if (configPath.empty())
-        {
-            DefaultConfig::applyGameDefaults(settings, gameName);
             return settings;
-        }
 
         Logger::info("SettingsManager loading from: " + configPath);
 
         std::ifstream file(configPath);
         if (!file.is_open())
-        {
-            DefaultConfig::applyGameDefaults(settings, gameName);
             return settings;
-        }
 
         bool sawDepthInvert = false;
         bool sawDepthFlip = false;

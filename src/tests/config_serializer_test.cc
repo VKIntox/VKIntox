@@ -58,6 +58,15 @@ int main()
                    .find("fxOverUi = false") != std::string::npos,
            "generated global config writes fxOverUi as false");
 
+    expect(VKIntox::DefaultConfig::fxOverUiForGame("sober"),
+           "sober enables FX-Over-UI by default");
+    expect(VKIntox::DefaultConfig::fxOverUiForGame("Roseline"),
+           "Roseline enables FX-Over-UI by default");
+    expect(VKIntox::DefaultConfig::fxOverUiForGame("rosemary"),
+           "rosemary enables FX-Over-UI by default");
+    expect(!VKIntox::DefaultConfig::fxOverUiForGame("firefox"),
+           "other processes leave FX-Over-UI off");
+
     // Accept the capitalized boolean spelling used by older bundled configs.
     {
         std::ofstream legacy(VKIntox::ConfigSerializer::getBaseConfigDir() + "/VKIntox.conf");

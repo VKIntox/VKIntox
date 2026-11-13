@@ -106,8 +106,21 @@ namespace VKIntox::DefaultConfig
         return executableName == "mldr";
     }
 
+    // FX-Over-UI needs the app to hand VKIntox the HUD-free scene. Sober and
+    // Roseline are the tested targets; everything else starts with it off.
+    inline bool fxOverUiForGame(const std::string& executableName)
+    {
+        const std::string appId = flatpakAppId();
+        if (appId == "org.vinegarhq.Sober" || appId == "net.buwryy.Roseline")
+            return true;
+        return executableName == "sober" || executableName == "Sober"
+            || executableName == "rosemary" || executableName == "Rosemary"
+            || executableName == "Roseline" || executableName == "roseline";
+    }
+
     inline void applyGameDefaults(VkBasaltSettings& settings, const std::string& executableName)
     {
+        settings.fxOverUi = fxOverUiForGame(executableName);
         settings.depthInvert = depthInvertForGame(executableName);
         settings.depthFlip = depthFlipForGame(executableName);
         settings.depthFlop = false;
