@@ -462,6 +462,11 @@ namespace VKIntox
         }
     }
 
+    float ImGuiOverlay::displayedFps() const
+    {
+        return g_dispFps;
+    }
+
     void ImGuiOverlay::sampleDiagnostics()
     {
         const auto now = std::chrono::steady_clock::now();

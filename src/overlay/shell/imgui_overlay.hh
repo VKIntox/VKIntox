@@ -219,6 +219,11 @@ namespace VKIntox
         // Samples frame time, FPS and GPU stats. Called every overlay frame, not
         // just while the Diagnostics tab is open, so the tab has real history.
         void sampleDiagnostics();
+        // FPS over the last second, as sampled above.
+        float displayedFps() const;
+        // Floating FPS pill pinned to a screen corner (Settings picks which).
+        // Drawn on its own so it stays up while the overlay is hidden.
+        void renderFpsCounter();
         void renderAboutView();
         void renderAdvancedView();  // Depth buffer switching (Advanced tab)
         // Sub-views: pages pushed inside a tab. They slide in over the dock (which
@@ -393,6 +398,11 @@ namespace VKIntox
         float  shellBaseX = 0.0f;
         float  shellBaseY = 0.0f;
         bool backendInitialized = false;
+        // last overlay geometry written to VKIntox.conf; only a change is saved
+        int savedGeometryX = 0, savedGeometryY = 0, savedGeometryW = 0, savedGeometryH = 0;
+        bool geometryMouseHeld = false;
+        // saved geometry is re-applied each frame until the user grabs the window
+        bool geometryRestorePending = false;
         bool resetLayoutRequested = false;  // When true, reset window position/size next frame
         bool titleRightDragging = false;
         float titleRightDragOffsetX = 0.0f;

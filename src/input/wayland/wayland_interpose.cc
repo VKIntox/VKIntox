@@ -18,6 +18,7 @@
 #include "input/common/input_blocker.hh"
 #include "input/wayland/wayland_display.hh"
 #include "input/wayland/wayland_syncobj_gate.hh"
+#include "input/wayland/wayland_input_common.hh"
 #include "util/logger.hh"
 
 // Forward-declare to avoid pulling in mouse_input_wayland.hh (which
@@ -132,8 +133,20 @@ static std::unordered_map<wl_proxy*, GameKeyboardDispatcherData> gameKeyboardDis
 
 // ── Wrapper pointer listener ─────────────────────────────────────────────────
 
+// The overlay's input capture surface belongs to the game's connection, so the
+// game's wl_pointer also hears enter/leave for it. Keep those to ourselves: a
+// game seeing focus land on a surface it never made may skip re-applying its
+// cursor (or mis-handle the foreign surface), which left the system cursor up.
+static bool isOverlaySurface(const void* surface)
+{
+    const void* overlay = VKIntox::getWaylandInputSurface();
+    return overlay && surface == overlay;
+}
+
 static void wp_enter(void* data, wl_pointer* p, uint32_t serial, wl_surface* s, wl_fixed_t x, wl_fixed_t y)
 {
+    if (isOverlaySurface(s))
+        return;
     g_lastPointerX.store(wl_fixed_to_double(x), std::memory_order_release);
     g_lastPointerY.store(wl_fixed_to_double(y), std::memory_order_release);
     std::lock_guard<std::mutex> lock(gameDataMutex);
@@ -144,6 +157,8 @@ static void wp_enter(void* data, wl_pointer* p, uint32_t serial, wl_surface* s, 
 
 static void wp_leave(void* data, wl_pointer* p, uint32_t serial, wl_surface* s)
 {
+    if (isOverlaySurface(s))
+        return;
     // Always forward leave — the game needs to know it lost focus
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -353,6 +368,10 @@ static int wd_pointer(const void* data, void* target, uint32_t opcode, const str
 
     if (opcode == 3 && VKIntox::isWayland())
         VKIntox::mirrorButtonState(args[2].u, args[3].u == WL_POINTER_BUTTON_STATE_PRESSED);
+
+    // enter/leave on the overlay's own surface stay with the overlay
+    if ((opcode == 0 || opcode == 1) && isOverlaySurface(args[1].o))
+        return 0;
 
     // forward enter/leave so the game tracks the pointer, withhold everything
     // positional while it sits over the overlay.

@@ -526,8 +526,17 @@ namespace VKIntox
         const float cardSpacing = ImGui::GetStyle().ItemSpacing.y;
         const float sheetHeaderH = ImGui::GetFrameHeight() + 24.0f * listMetrics.density;
         const float resizeHandleH = 12.0f * listMetrics.density;
-        const float footerRowH = ImGui::GetFrameHeight();
-        const float footerHeight = footerRowH + cardSpacing;
+        // the footer holds the floating Apply pill: the button plus an even inset
+        // all round it, so the pill has room to cast its shadow
+        // the footer box: a 36dp action button (the hero row's height) with an
+        // even 8dp inset, so the pill sits concentric in the box's corners
+        const float footerBtnH = 36.0f * listMetrics.density;
+        const float applyPillInset = 8.0f * listMetrics.density;
+        const float footerRowH = footerBtnH + applyPillInset * 2.0f;
+        // extra air above the footer box: it belongs with the nav bar under it, so
+        // the gap to the cards is wider than the one to the bar
+        const float footerLift = 12.0f * listMetrics.density;
+        const float footerHeight = footerRowH + cardSpacing + footerLift;
 
         const float availH = ImGui::GetContentRegionAvail().y;
         const float minListH = 110.0f * listMetrics.density;
@@ -1106,7 +1115,10 @@ namespace VKIntox
             }
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow));
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGuiM3Radius(ImGuiM3Shape_LargeIncreased));
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f * listMetrics.density, 16.0f * listMetrics.density));
+            // vertical padding is half of what the folded sheet has to spare around
+            // the header row, so the title sits centred in the folded card
+            const float sheetPadY = (sheetHeaderH - (ImGui::GetFrameHeight() + 4.0f * listMetrics.density)) * 0.5f;
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f * listMetrics.density, sheetPadY));
             ImGui::BeginChild("EffectParamsCard", ImVec2(0, sheetHeight),
                               ImGuiChildFlags_AlwaysUseWindowPadding,
                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -1276,26 +1288,118 @@ namespace VKIntox
             ImGui::PopStyleColor();
         }
 
-        // Apply lives in the band reserved below the cards: flush right, above the
-        // dock. Positioned with SetCursorPos - SameLine() would snap it back onto
-        // whatever row happened to be submitted last.
-        const std::string applyLabel = std::string(Icon::CheckUtf8) + "  Apply";
-        const float applyPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * listMetrics.density;
-        ImGui::PushFont(ImGuiM3FontBold(), applyPx);
-        const float applyTextW = ImGui::CalcTextSize(applyLabel.c_str()).x;
-        ImGui::PopFont();
-        const float applyWidth = ImMax(applyTextW + 44.0f * listMetrics.density,
-                                       132.0f * listMetrics.density);
-        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footerRowH);
-        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - applyWidth - ImGui::GetStyle().WindowPadding.x);
-
-        if (ImGui::M3Button(applyLabel.c_str(), ImGuiM3Button_Filled, ImVec2(applyWidth, footerRowH)))
+        // The footer band below the cards: one dark floating box, like the cards
+        // above it. The FPS counter button sits at its left edge; Apply sits at
+        // the right with the auto-apply checkbox just left of it. Laid out with
+        // SetCursorPos since SameLine() would snap back onto whatever row was
+        // submitted last.
         {
-            applyRequested = true;
-            paramsDirty = false;
-            profileDirty = true;  // Mark for auto-save to profile
+            const ImGuiStyle& style = ImGui::GetStyle();
+            const float dens = listMetrics.density;
+            auto saveSettings = [&]() {
+                settingsManager.save();
+                settingsSaved = true;
+            };
+
+            const float bandY = ImGui::GetWindowHeight() - footerRowH;
+            // the box spans exactly what the cards above span: the window's work
+            // rect (inside its padding and any scrollbar), in SetCursorPos space
+            const ImGuiWindow* footerWin = ImGui::GetCurrentWindowRead();
+            const float boxX = footerWin->WorkRect.Min.x - footerWin->Pos.x + footerWin->Scroll.x;
+            const float boxW = ImMax(footerWin->WorkRect.GetWidth(), 1.0f);
+            const float btnH = footerBtnH;
+            const float gap = 12.0f * dens;
+            // card content starts 18dp in; the FPS checkbox lines up with it
+            const float contentInsetX = 18.0f * dens;
+
+            // the box itself: the card surface and elevation, so it reads as part
+            // of the same family. Elevation reaches past the content rect, so the
+            // clip is lifted for it.
+            {
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+                ImGui::SetCursorPos(ImVec2(boxX, bandY));
+                const ImVec2 boxScreen = ImGui::GetCursorScreenPos();
+                const ImRect boxBb(boxScreen, ImVec2(boxScreen.x + boxW, boxScreen.y + footerRowH));
+                const int elevation = 2;
+                const float reach = ImCeil((ImMax(m.ambient_shadow_blur[elevation] * 2.0f + m.ambient_shadow_spread[elevation],
+                                                  m.key_shadow_blur[elevation] * 2.0f) +
+                                            ImMax(m.ambient_shadow_y[elevation], m.key_shadow_y[elevation])) * m.density) + 1.0f;
+                ImGui::PushClipRect(ImVec2(boxBb.Min.x - reach, boxBb.Min.y - reach),
+                                    ImVec2(boxBb.Max.x + reach, boxBb.Max.y + reach), false);
+                const float cr = ImGuiM3Radius(ImGuiM3Shape_LargeIncreased);
+                const ImGuiM3ShapeRounding rounding{ cr, cr, cr, cr };
+                ImGuiM3DrawElevation(dl, boxBb, rounding, elevation);
+                ImGuiM3DrawContainer(dl, boxBb, rounding,
+                                     ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerLow), 0, 0.0f);
+                ImGui::PopClipRect();
+            }
+
+            // checkbox labels use the overlay's label face (bold body-large, as
+            // the effect names and "Profile:"), and sit a few dp from their box:
+            // the M3 box is drawn small inside a frame-height square, so the
+            // stock inner spacing leaves the label floating away from it
+            ImFont* labelFont = ImGuiM3FontBold();
+            const float labelPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * dens;
+            ImGui::PushFont(labelFont, labelPx);
+            const float checkSq = ImGui::GetFrameHeight();
+            ImGui::PopFont();
+            const float checkBoxPx = listMetrics.checkbox_size * dens;
+            const float checkPad = (checkSq - checkBoxPx) * 0.5f;   // square edge -> drawn box
+            const float checkInnerX = 8.0f * dens - checkPad;
+            auto footerCheckbox = [&](const char* label, bool* value) {
+                ImGui::PushFont(labelFont, labelPx);
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(checkInnerX, style.ItemInnerSpacing.y));
+                const bool changed = ImGui::Checkbox(label, value);
+                ImGui::PopStyleVar();
+                ImGui::PopFont();
+                return changed;
+            };
+            auto checkboxWidth = [&](const char* label) {
+                ImGui::PushFont(labelFont, labelPx);
+                const float w = checkSq + checkInnerX + ImGui::CalcTextSize(label, nullptr, true).x;
+                ImGui::PopFont();
+                return w;
+            };
+            const float checkY = bandY + (footerRowH - checkSq) * 0.5f;
+
+            // FPS counter: far left
+            ImGui::SetCursorPos(ImVec2(boxX + contentInsetX - checkPad, checkY));
+            bool showFps = settingsManager.getShowFps();
+            if (footerCheckbox("Show FPS", &showFps))
+            {
+                settingsManager.setShowFps(showFps);
+                saveSettings();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Show an FPS counter in a corner of the screen (the corner is set in Settings).");
+
+            // Apply: far right
+            const std::string applyLabel = std::string(Icon::CheckUtf8) + "  Apply";
+            // sized like the hero row's actions: M3Button's own measurement
+            const float applyBtnW = ImGui::M3ButtonWidth(applyLabel.c_str());
+            const float applyX = boxX + boxW - applyPillInset - applyBtnW;
+            ImGui::SetCursorPos(ImVec2(applyX, bandY + applyPillInset));
+            if (ImGui::M3Button(applyLabel.c_str(), ImGuiM3Button_Filled, ImVec2(applyBtnW, btnH)))
+            {
+                applyRequested = true;
+                paramsDirty = false;
+                profileDirty = true;  // Mark for auto-save to profile
+            }
+
+            // auto-apply checkbox, just left of Apply and centred on the row
+            const char* const autoLabel = "Auto-apply";
+            ImGui::SetCursorPos(ImVec2(applyX - gap - checkboxWidth(autoLabel), checkY));
+            bool autoApply = settingsManager.getAutoApply();
+            if (footerCheckbox(autoLabel, &autoApply))
+            {
+                settingsManager.setAutoApply(autoApply);
+                saveSettings();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Automatically apply parameter changes after a short delay.");
+            // Note: Auto-apply itself is handled globally in imgui_overlay.cc
         }
-        // Note: Auto-apply is handled globally in imgui_overlay.cpp
 
         // The fallback picker is modal and must be displayed every frame.
         presetBrowser.Display();
