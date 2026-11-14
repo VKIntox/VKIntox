@@ -35,6 +35,7 @@ imgui_src = [
 
 overlay_src = [
     'overlay/shell/imgui_overlay.cc',
+    'overlay/shell/fps_metrics.cc',
     'overlay/views/view_add_effects.cc',
     'overlay/views/view_advanced.cc',
     'overlay/views/view_configs.cc',
