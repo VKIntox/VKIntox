@@ -269,9 +269,12 @@ namespace VKIntox
             // the field starts after the label and stops before the actions
             const float fieldX = rowPos.x + profileLabelSize.x + 20.0f * profileD;
             // fixed at its widest unless the panel is too narrow: it used to grow
-            // with the window, so dragging the shell looked like resizing the field
-            const float fieldRoom = actionsX - fieldX - 16.0f * profileD;
-            const float fieldW = ImClamp(220.0f * profileD, 90.0f * profileD, ImMax(fieldRoom, 90.0f * profileD));
+            // with the window, so dragging the shell looked like resizing the field.
+            // fieldX is screen-space but actionsX is window-local; compare in
+            // window-local coords or the room tracks the window's screen position
+            const float fieldXLocal = fieldX - ImGui::GetCurrentWindowRead()->Pos.x;
+            const float fieldRoom = actionsX - fieldXLocal - 16.0f * profileD;
+            const float fieldW = ImClamp(280.0f * profileD, 90.0f * profileD, ImMax(fieldRoom, 90.0f * profileD));
             ImGui::SetCursorScreenPos(ImVec2(fieldX, rowPos.y));
             // the pill the elevated buttons use: a small radius here put a tight
             // ring at the field's corners and read as a cut-off shadow

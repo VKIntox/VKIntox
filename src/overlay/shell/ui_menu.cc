@@ -16,7 +16,7 @@ namespace VKIntox
             // M3 menus: 112dp floor, 240dp ceiling, spacious rows whose width is
             // locked to the surface, so every highlight spans the same span.
             constexpr float kMenuMinWidthDp = 112.0f;
-            constexpr float kMenuMaxWidthDp = 240.0f;
+            constexpr float kMenuMaxWidthDp = 280.0f;
             constexpr float kMenuMaxHeightDp = 340.0f;
             constexpr float kItemPadXDp = 12.0f;
             constexpr float kItemPadYDp = 8.0f;
