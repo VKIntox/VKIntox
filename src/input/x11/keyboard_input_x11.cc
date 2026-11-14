@@ -128,7 +128,9 @@ namespace VKIntox
         if (keycode == 0)
             return false;
 
-        return !!(cachedKeymap[keycode >> 3] & (1 << (keycode & 7)));
+        // the grab handoff clears held keys server-side; report the hold so the
+        // toggle-key edge tracker never sees a synthetic up/down pair
+        return !!(cachedKeymap[keycode >> 3] & (1 << (keycode & 7))) || x11KeySynthHeld(keycode);
     }
 
     KeyboardState getKeyboardStateX11()

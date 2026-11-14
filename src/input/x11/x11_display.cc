@@ -36,6 +36,26 @@ namespace VKIntox
         std::vector<unsigned int> g_handedKeys;
         std::vector<unsigned int> g_handedButtons;
 
+        // The subset the player still holds: the server state says up but the
+        // physical device says down. The layer polls that same state for its
+        // own hotkeys and ImGui's mask, so it must OR this in or every grab
+        // engage looks like the key was let go and every handback like a fresh
+        // press — which re-fired the overlay toggle on close.
+        std::vector<unsigned int> g_synthHeldKeys;
+        std::vector<unsigned int> g_synthHeldButtons;
+
+        template <typename T>
+        static bool setContains(const std::vector<T>& set, T value)
+        {
+            return std::find(set.begin(), set.end(), value) != set.end();
+        }
+
+        template <typename T>
+        static void setErase(std::vector<T>& set, T value)
+        {
+            set.erase(std::remove(set.begin(), set.end(), value), set.end());
+        }
+
         void initX11()
         {
             if (g_tried)
@@ -136,16 +156,34 @@ namespace VKIntox
         {
             if (g_handedKeys.empty())
                 return;
+            char keys[32] = {0};
+            XQueryKeymap(g_display, keys);
+            int repressed = 0, dropped = 0;
             for (unsigned int keycode : g_handedKeys)
+            {
+                // the player let go and the release landed after the ungrab:
+                // the game already saw it, so re-pressing would leave a key
+                // down that nothing will ever release
+                const bool bitDown = keys[keycode >> 3] & (1 << (keycode & 7));
+                if (!bitDown && !setContains(g_synthHeldKeys, keycode))
+                {
+                    dropped++;
+                    continue;
+                }
                 XTestFakeKeyEvent(g_display, keycode, True, 0);
+                repressed++;
+            }
             XSync(g_display, False);
-            Logger::debug("X11 input: re-pressed " + std::to_string(g_handedKeys.size())
-                          + " held key(s) after the keyboard grab");
+            Logger::debug("X11 input: re-pressed " + std::to_string(repressed)
+                          + " held key(s) after the keyboard grab"
+                          + (dropped ? (" (dropped " + std::to_string(dropped) + " already released)") : ""));
             g_handedKeys.clear();
+            g_synthHeldKeys.clear();
             return;
         }
 
         g_handedKeys.clear();
+        g_synthHeldKeys.clear();
         if (!xtestReady(g_display))
             return;
 
@@ -157,6 +195,7 @@ namespace VKIntox
                 continue;
             XTestFakeKeyEvent(g_display, (unsigned int)keycode, False, 0);
             g_handedKeys.push_back((unsigned int)keycode);
+            g_synthHeldKeys.push_back((unsigned int)keycode);
         }
         XSync(g_display, False);
 
@@ -176,16 +215,37 @@ namespace VKIntox
         {
             if (g_handedButtons.empty())
                 return;
-            for (unsigned int button : g_handedButtons)
-                XTestFakeButtonEvent(g_display, button, True, 0);
+            Window rootRet = 0, childRet = 0;
+            int rootX = 0, rootY = 0, winX = 0, winY = 0;
+            unsigned int mask = 0;
+            int repressed = 0, dropped = 0;
+            if (XQueryPointer(g_display, DefaultRootWindow(g_display), &rootRet, &childRet,
+                              &rootX, &rootY, &winX, &winY, &mask))
+            {
+                for (unsigned int button : g_handedButtons)
+                {
+                    // released after the ungrab: the game already saw it
+                    const bool bitDown = mask & (Button1Mask << (button - 1));
+                    if (!bitDown && !setContains(g_synthHeldButtons, button))
+                    {
+                        dropped++;
+                        continue;
+                    }
+                    XTestFakeButtonEvent(g_display, button, True, 0);
+                    repressed++;
+                }
+            }
             XSync(g_display, False);
-            Logger::debug("X11 input: re-pressed " + std::to_string(g_handedButtons.size())
-                          + " held button(s) after the pointer grab");
+            Logger::debug("X11 input: re-pressed " + std::to_string(repressed)
+                          + " held button(s) after the pointer grab"
+                          + (dropped ? (" (dropped " + std::to_string(dropped) + " already released)") : ""));
             g_handedButtons.clear();
+            g_synthHeldButtons.clear();
             return;
         }
 
         g_handedButtons.clear();
+        g_synthHeldButtons.clear();
         if (!xtestReady(g_display))
             return;
 
@@ -202,6 +262,7 @@ namespace VKIntox
                 continue;
             XTestFakeButtonEvent(g_display, button, False, 0);
             g_handedButtons.push_back(button);
+            g_synthHeldButtons.push_back(button);
         }
         XSync(g_display, False);
 
@@ -216,6 +277,7 @@ namespace VKIntox
     static void trackGrabbedInput(uint32_t keycode, uint32_t button, bool key, bool pressed)
     {
         std::vector<unsigned int>& set = key ? g_handedKeys : g_handedButtons;
+        std::vector<unsigned int>& synth = key ? g_synthHeldKeys : g_synthHeldButtons;
         const unsigned int code = key ? keycode : button;
         auto it = std::find(set.begin(), set.end(), code);
 
@@ -223,11 +285,14 @@ namespace VKIntox
         {
             if (it == set.end())
                 set.push_back(code);
+            // re-pressed by the player: the server bit is down again
+            setErase(synth, code);
         }
         else if (it != set.end())
         {
             set.erase(it);
         }
+        setErase(synth, code);
     }
 
     // Only select for what the active grabs actually redirect. Dropping back to
@@ -323,6 +388,18 @@ namespace VKIntox
     void x11SetGrabState(bool grab)
     {
         applyGrabs(grab, g_keyboardGrabActive);
+    }
+
+    // the handoff cleared these server-side while the player still holds them;
+    // keymap and button-mask polls must OR them in to see one unbroken hold
+    bool x11KeySynthHeld(unsigned int keycode)
+    {
+        return setContains(g_synthHeldKeys, keycode);
+    }
+
+    bool x11ButtonSynthHeld(unsigned int button)
+    {
+        return setContains(g_synthHeldButtons, button);
     }
 
     void x11SetKeyboardGrabState(bool grab)

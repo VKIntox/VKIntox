@@ -39,5 +39,8 @@ namespace VKIntox
     // releases and leave the game holding them.
     void x11SetGrabState(bool grab);
     void x11SetKeyboardGrabState(bool grab);
+    // keys/buttons the grab handoff cleared server-side while still held
+    bool x11KeySynthHeld(unsigned int keycode);
+    bool x11ButtonSynthHeld(unsigned int button);
     bool x11GrabActive();
 } // namespace VKIntox
