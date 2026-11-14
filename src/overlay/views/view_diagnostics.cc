@@ -1,4 +1,5 @@
 #include "overlay/shell/imgui_overlay.hh"
+#include "overlay/shell/fps_metrics.hh"
 #include "config/config_serializer.hh"
 #include "depth/depth_dump.hh"
 #include "util/logger.hh"
@@ -321,7 +322,6 @@ namespace VKIntox
         static RingBuffer<float, 300> gpuUsageHistory;
         static RingBuffer<float, 300> vramUsageHistory;
         static RingBuffer<float, 300> gttUsageHistory;
-        static std::chrono::steady_clock::time_point lastFrameTime;
         static GpuInfo gpuInfo;
         static std::string detectedGameName;
         static std::string autoDetectedConfig;
@@ -332,11 +332,6 @@ namespace VKIntox
         static bool g_diagInitialized = false;
         static std::string g_diagResolvedSlot;
         static std::chrono::steady_clock::time_point g_lastGpuSampleTime = std::chrono::steady_clock::now();
-        static std::chrono::steady_clock::time_point g_fpsWindowStart = std::chrono::steady_clock::now();
-        static int   g_fpsFrameCount = 0;
-        static float g_dispFps = 0.0f;
-        static float g_dispFps1Low = 0.0f;
-        static float g_dispFps01Low = 0.0f;
         static float g_dispGpuUsage = -1.0f;
         static float g_dispVramUsed = 0.0f, g_dispVramTotal = 0.0f;
         static float g_dispGttUsed = 0.0f, g_dispGttTotal = 0.0f;
@@ -464,7 +459,7 @@ namespace VKIntox
 
     float ImGuiOverlay::displayedFps() const
     {
-        return g_dispFps;
+        return FpsMetrics::fps();
     }
 
     void ImGuiOverlay::sampleDiagnostics()
@@ -479,9 +474,6 @@ namespace VKIntox
             g_diagResolvedSlot = deviceInfo.gpuPciSlot;
             detectedGameName = ConfigSerializer::detectGameName();
             autoDetectedConfig = ConfigSerializer::autoDetectConfig();
-            lastFrameTime = now;
-            g_fpsWindowStart = now;
-            g_fpsFrameCount = 0;
             g_diagInitialized = true;
 
             if (gpuInfo.vendor != GpuVendor::Unknown)
@@ -491,27 +483,20 @@ namespace VKIntox
         }
 
         // measured every overlay frame from launch, not only while the tab is open
-        const float frameTimeMs = std::chrono::duration<float, std::milli>(now - lastFrameTime).count();
-        lastFrameTime = now;
-        if (frameTimeMs > 0.1f && frameTimeMs < 500.0f)
-            frameTimeHistory.push(frameTimeMs);
+        FpsMetrics::sample();
+        // the graph ring mirrors the sampler so the curve and the numbers agree
+        float ringSamples[FpsMetrics::ringCapacity];
+        const int ringCount = FpsMetrics::copyFrameTimes(ringSamples);
+        for (int i = 0; i < ringCount; i++)
+            frameTimeHistory.push(ringSamples[i]);
 
-        g_fpsFrameCount++;
-        const double windowSeconds = std::chrono::duration<double>(now - g_fpsWindowStart).count();
-        if (windowSeconds >= 1.0)
+        static std::chrono::steady_clock::time_point g_lastStatsTime = now;
+        if (std::chrono::duration<double>(now - g_lastStatsTime).count() >= 1.0)
         {
-            g_dispFps = static_cast<float>(g_fpsFrameCount) / static_cast<float>(windowSeconds);
-            // frametime percentiles: the worst 1% / 0.1% of frames expressed as FPS.
-            const float p99  = frameTimeHistory.percentile(0.99f);
-            const float p999 = frameTimeHistory.percentile(0.999f);
-            g_dispFps1Low  = p99  > 0.0f ? 1000.0f / p99  : 0.0f;
-            g_dispFps01Low = p999 > 0.0f ? 1000.0f / p999 : 0.0f;
+            g_lastStatsTime = now;
             g_dispGpuUsage = gpuInfo.hasGpuUsage ? getGpuUsage() : -1.0f;
             g_dispHasVram = getVramUsage(g_dispVramUsed, g_dispVramTotal);
             g_dispHasGtt = getGttUsage(g_dispGttUsed, g_dispGttTotal);
-            // keep the leftover rather than snapping to exactly 1.0s, which under-counts.
-            g_fpsWindowStart += std::chrono::milliseconds(static_cast<int64_t>(windowSeconds * 1000.0));
-            g_fpsFrameCount = 0;
         }
 
         // Sample GPU stats at a fixed wall-clock interval (~200ms) so overhead
@@ -546,11 +531,11 @@ namespace VKIntox
 
         ImGui::BeginChild("DiagnosticsContent", ImVec2(0, 0), false);
 
-        // FPS is sampled every frame in sampleDiagnostics(); this view only reads
-        // the latest values, so opening the tab shows real history, not zeros.
-        const float fps = g_dispFps;
-        const float fps1Low = g_dispFps1Low;
-        const float fps01Low = g_dispFps01Low;
+        // sampled every frame by FpsMetrics; this view only reads the latest
+        // values, so opening the tab shows real history, not zeros.
+        const float fps = FpsMetrics::fps();
+        const float fps1Low = FpsMetrics::low1Percent();
+        const float fps01Low = FpsMetrics::low01Percent();
 
         // --- Performance ---
         ImGui::M3CardBegin("diag_perf", "Performance", Icon::SpeedUtf8);
