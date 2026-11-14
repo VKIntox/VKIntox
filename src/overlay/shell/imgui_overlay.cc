@@ -2014,9 +2014,11 @@ namespace VKIntox
         }
 
         // hitboxes are rebuilt below; the gate is only on while the overlay (or
-        // a toast) is actually on screen.
+        // a toast) is actually on screen. Gate on visible, not shellActive:
+        // grabs held through the disappear animation ping-pong the handoff and
+        // re-open the shell via a phantom key press.
         frameInputRects.clear();
-        setInputBlocked((shellActive || hasToasts) && settingsManager.getOverlayBlockInput());
+        setInputBlocked(visible && settingsManager.getOverlayBlockInput());
 
         // Store current resolution for VRAM estimates in settings
         currentWidth = width;
