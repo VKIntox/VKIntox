@@ -104,6 +104,9 @@ namespace VKIntox
 
         // Push a toast notification. Thread-safe, auto-dismissed after ~5s.
         void pushToast(LogLevel level, const std::string& message);
+        // same, but a toast already on screen is left alone instead of
+        // having its fade timer restarted
+        void pushToastOnce(LogLevel level, const std::string& message);
         bool hasPendingToasts() const;
 
         void updateState(OverlayState newState);

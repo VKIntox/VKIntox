@@ -467,9 +467,7 @@ namespace VKIntox
             markSettingsDirty();
             Logger::info(std::string("depth capture ") + (depthCapture ? "enabled" : "disabled") +
                          " (saved; takes effect on restart)");
-            pushToast(LogLevel::Info, depthCapture
-                ? "Depth buffer capture on. Restart to apply."
-                : "Depth buffer capture off. Restart to apply.");
+            pushToastOnce(LogLevel::Info, "Depth buffer toggled. Applies on next launch.");
         }
         // status describer: smaller, dimmed, body bold, tucked under the label
         {

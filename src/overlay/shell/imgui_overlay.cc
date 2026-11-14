@@ -513,6 +513,19 @@ namespace VKIntox
             toasts.erase(toasts.begin(), toasts.end() - 8);
     }
 
+    void ImGuiOverlay::pushToastOnce(LogLevel level, const std::string& message)
+    {
+        std::lock_guard<std::mutex> lock(toastsMutex);
+        for (const auto& t : toasts)
+        {
+            if (t.message == message && t.level == level)
+                return;
+        }
+        toasts.push_back({message, level, std::chrono::steady_clock::now()});
+        if (toasts.size() > 8)
+            toasts.erase(toasts.begin(), toasts.end() - 8);
+    }
+
     bool ImGuiOverlay::hasPendingToasts() const
     {
         std::lock_guard<std::mutex> lock(toastsMutex);

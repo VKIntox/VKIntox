@@ -103,6 +103,7 @@ namespace VKIntox
         {
             settingsManager.setFxOverUi(fxOverUi);
             saveSettings();
+            pushToastOnce(LogLevel::Info, "FX-Over-UI toggled. Applies on next launch.");
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Effects draw before the game's HUD, so overlays and menus stay untouched. Applied on the next launch.");
