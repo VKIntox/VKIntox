@@ -42,14 +42,25 @@ namespace VKIntox
     static bool mouseInitialized = false;
 
     // Pointer listener callbacks
-    static void pointerEnter(void* /*data*/, wl_pointer* /*pointer*/,
-                             uint32_t /*serial*/, wl_surface* surface,
+    static void pointerEnter(void* /*data*/, wl_pointer* pointer,
+                             uint32_t serial, wl_surface* surface,
                              wl_fixed_t sx, wl_fixed_t sy)
     {
         pointerFocusSurface = surface;
         // events on our capture surface are surface-local; shift them into the
         // game's framebuffer space, which is what ImGui draws in.
         const bool onInputSurface = (surface == getWaylandInputSurface());
+
+        // over the overlay ImGui draws the pointer itself, so hide the system
+        // cursor there: left alone the compositor shows its default arrow under
+        // the drawn one. The game sets its own cursor again when it gets the
+        // enter for its surface on the way back.
+        if (onInputSurface && pointer)
+        {
+            wl_pointer_set_cursor(pointer, serial, nullptr, 0, 0);
+            if (wl_display* display = getWaylandDisplay())
+                wl_display_flush(display);
+        }
         const int originX = onInputSurface ? static_cast<int>(getWaylandInputSurfaceX()) : 0;
         const int originY = onInputSurface ? static_cast<int>(getWaylandInputSurfaceY()) : 0;
         pointerX = wl_fixed_to_int(sx) + originX;

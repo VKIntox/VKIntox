@@ -18,7 +18,9 @@
 #include "input/common/input_blocker.hh"
 #include "input/wayland/wayland_display.hh"
 #include "input/wayland/wayland_syncobj_gate.hh"
+#include "input/wayland/wayland_input_common.hh"
 #include "util/logger.hh"
+#include "cursor-shape-v1-client-protocol.h"
 
 // Forward-declare to avoid pulling in mouse_input_wayland.hh (which
 // transitively includes mouse_input.hh → X11 headers in some targets).
@@ -132,8 +134,58 @@ static std::unordered_map<wl_proxy*, GameKeyboardDispatcherData> gameKeyboardDis
 
 // ── Wrapper pointer listener ─────────────────────────────────────────────────
 
+// The overlay's input capture surface belongs to the game's connection, so the
+// game's wl_pointer also hears enter/leave for it. Keep those to ourselves: a
+// game seeing focus land on a surface it never made may skip re-applying its
+// cursor (or mis-handle the foreign surface), which left the system cursor up.
+static bool isOverlaySurface(const void* surface)
+{
+    const void* overlay = VKIntox::getWaylandInputSurface();
+    return overlay && surface == overlay;
+}
+
+// ── game cursor memory ──────────────────────────────────────────────────────
+// The overlay hides the system cursor over its input surface with a null
+// wl_pointer.set_cursor, and compositors keep the last image across focus
+// changes: a game that does not re-issue its cursor on re-enter is left with
+// no cursor at all. Remember whatever the game last set (a bitmap via
+// set_cursor or a named shape via wp_cursor_shape_device_v1.set_shape) and
+// re-issue it on the next enter of a game surface, with that enter's serial.
+// An empty memory means the game never set a cursor; the compositor default
+// is not re-requestable from the client side, so nothing can be done there.
+struct GameCursor
+{
+    enum class Kind { none, surface, shape } kind = Kind::none;
+    struct wl_proxy* surface = nullptr;     // Kind::surface
+    int32_t hotX = 0, hotY = 0;
+    struct wl_proxy* shapeDevice = nullptr;  // Kind::shape
+    uint32_t shape = 0;
+};
+static GameCursor gameCursor;
+static bool gameCursorHiddenByOverlay = false;
+
+static void restoreGameCursor(struct wl_proxy* pointer, uint32_t serial)
+{
+    if (!gameCursorHiddenByOverlay)
+        return;
+    gameCursorHiddenByOverlay = false;
+    if (gameCursor.kind == GameCursor::Kind::shape && gameCursor.shapeDevice)
+        wp_cursor_shape_device_v1_set_shape(
+            reinterpret_cast<wp_cursor_shape_device_v1*>(gameCursor.shapeDevice),
+            serial, gameCursor.shape);
+    else if (gameCursor.kind == GameCursor::Kind::surface && gameCursor.surface)
+        wl_pointer_set_cursor(reinterpret_cast<wl_pointer*>(pointer), serial,
+                              reinterpret_cast<wl_surface*>(gameCursor.surface),
+                              gameCursor.hotX, gameCursor.hotY);
+    if (wl_display* display = VKIntox::getWaylandDisplay())
+        wl_display_flush(display);
+}
+
 static void wp_enter(void* data, wl_pointer* p, uint32_t serial, wl_surface* s, wl_fixed_t x, wl_fixed_t y)
 {
+    if (isOverlaySurface(s))
+        return;
+    restoreGameCursor(reinterpret_cast<struct wl_proxy*>(p), serial);
     g_lastPointerX.store(wl_fixed_to_double(x), std::memory_order_release);
     g_lastPointerY.store(wl_fixed_to_double(y), std::memory_order_release);
     std::lock_guard<std::mutex> lock(gameDataMutex);
@@ -144,6 +196,8 @@ static void wp_enter(void* data, wl_pointer* p, uint32_t serial, wl_surface* s, 
 
 static void wp_leave(void* data, wl_pointer* p, uint32_t serial, wl_surface* s)
 {
+    if (isOverlaySurface(s))
+        return;
     // Always forward leave — the game needs to know it lost focus
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -353,6 +407,14 @@ static int wd_pointer(const void* data, void* target, uint32_t opcode, const str
 
     if (opcode == 3 && VKIntox::isWayland())
         VKIntox::mirrorButtonState(args[2].u, args[3].u == WL_POINTER_BUTTON_STATE_PRESSED);
+
+    // enter/leave on the overlay's own surface stay with the overlay
+    if ((opcode == 0 || opcode == 1) && isOverlaySurface(args[1].o))
+        return 0;
+
+    // back on a game surface: put the game's cursor back before it looks
+    if (opcode == 0)
+        restoreGameCursor(proxy, args[0].u);
 
     // forward enter/leave so the game tracks the pointer, withhold everything
     // positional while it sits over the overlay.
@@ -564,6 +626,42 @@ wl_proxy* wl_proxy_marshal_array_flags(struct wl_proxy* proxy,
                 struct wl_proxy* result = real(proxy, opcode, iface, version, flags, args);
                 VKIntox::WaylandSyncobjGate::endCommit(id);
                 return result;
+            }
+            else if (opcode == 0 && gameCursor.surface == proxy) // destroy
+            {
+                // the remembered cursor surface is gone; nothing to restore
+                gameCursor.kind = GameCursor::Kind::none;
+                gameCursor.surface = nullptr;
+            }
+        }
+        else if (std::strcmp(cls, "wl_pointer") == 0 && opcode == 0) // set_cursor
+        {
+            // args: serial, surface, hotspot_x, hotspot_y. The overlay's own
+            // null set_cursor marks the suppression; the game's last cursor is
+            // remembered so a re-enter can put it back.
+            if (VKIntox::isOverlayProxy(proxy))
+            {
+                if (args && !args[1].o)
+                    gameCursorHiddenByOverlay = true;
+            }
+            else if (args)
+            {
+                gameCursor.kind = GameCursor::Kind::surface;
+                gameCursor.surface = reinterpret_cast<struct wl_proxy*>(args[1].o);
+                gameCursor.hotX = args[2].i;
+                gameCursor.hotY = args[3].i;
+                gameCursor.shapeDevice = nullptr;
+            }
+        }
+        else if (std::strcmp(cls, "wp_cursor_shape_device_v1") == 0 && opcode == 1) // set_shape
+        {
+            // args: serial, shape
+            if (args && !VKIntox::isOverlayProxy(proxy))
+            {
+                gameCursor.kind = GameCursor::Kind::shape;
+                gameCursor.shapeDevice = proxy;
+                gameCursor.shape = args[1].u;
+                gameCursor.surface = nullptr;
             }
         }
         else if (std::strcmp(cls, "wp_linux_drm_syncobj_surface_v1") == 0)

@@ -131,6 +131,28 @@ namespace VKIntox
             ImGui::Unindent();
         }
 
+        bool showFps = settingsManager.getShowFps();
+        if (ImGui::Checkbox("Show FPS counter", &showFps))
+        {
+            settingsManager.setShowFps(showFps);
+            saveSettings();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("A small floating FPS counter, visible even while the overlay is hidden.");
+
+        if (showFps)
+        {
+            ImGui::TextDisabled("FPS counter corner");
+            const char* corners[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
+            int fpsCorner = settingsManager.getFpsCorner();
+            if (ImGui::M3ConnectedButtonGroup("##fps_corner", corners, 4, &fpsCorner, NULL))
+            {
+                settingsManager.setFpsCorner(fpsCorner);
+                saveSettings();
+            }
+            ImGui::Spacing();
+        }
+
         bool usePortal = settingsManager.getUsePortalIntegration();
         if (ImGui::Checkbox("Use XDG Desktop Portal integrations when available", &usePortal))
         {

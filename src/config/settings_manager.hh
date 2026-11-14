@@ -98,6 +98,16 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.autoApply;
         }
+        bool getShowFps() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.showFps;
+        }
+        int getFpsCorner() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return std::clamp(settings.fpsCorner, 0, 3);
+        }
         int getAutoApplyDelay() const
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -225,6 +235,34 @@ namespace VKIntox
         {
             std::lock_guard<std::mutex> lock(mutex);
             settings.autoApply = value;
+        }
+        // overlay geometry; returns false when it was never saved
+        bool getOverlayGeometry(int& x, int& y, int& w, int& h) const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            x = settings.overlayX;
+            y = settings.overlayY;
+            w = settings.overlayWidth;
+            h = settings.overlayHeight;
+            return w > 0 && h > 0;
+        }
+        void setOverlayGeometry(int x, int y, int w, int h)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.overlayX = x;
+            settings.overlayY = y;
+            settings.overlayWidth = std::max(0, w);
+            settings.overlayHeight = std::max(0, h);
+        }
+        void setShowFps(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.showFps = value;
+        }
+        void setFpsCorner(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.fpsCorner = std::clamp(value, 0, 3);
         }
         void setAutoApplyDelay(int value)
         {

@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <fstream>
 #include <filesystem>
@@ -646,6 +647,84 @@ namespace VKIntox
                     toasts.erase(toasts.begin() + *it);
             }
         }
+    }
+
+    void ImGuiOverlay::renderFpsCounter()
+    {
+        if (!settingsManager.getShowFps())
+            return;
+
+        const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+
+        char text[32];
+        const float fps = displayedFps();
+        if (fps > 0.0f)
+            snprintf(text, sizeof(text), "%.0f FPS", fps);
+        else
+            snprintf(text, sizeof(text), "-- FPS");
+
+        // the same elevated pill as the Apply bar, so the two read as one family
+        const float margin = 20.0f * m.density;
+        const float padX = 16.0f * m.density;
+        const float padY = 8.0f * m.density;
+        const int elevation = 2;
+        const float shadowReach = ImMax(m.ambient_shadow_blur[elevation] * 2.0f + m.ambient_shadow_spread[elevation],
+                                        ImMax(m.key_shadow_blur[elevation] * 2.0f, 4.0f));
+        const float shadowDrop = ImMax(m.ambient_shadow_y[elevation], m.key_shadow_y[elevation]);
+        const float shadowPad = ImCeil((shadowReach + shadowDrop) * m.density) + 1.0f;
+
+        // the overlay's label face: bold body-large, as the effect names use
+        ImGuiM3PushTextStyle(ImGuiM3Type_BodyLarge);
+        ImFont* bold = ImGuiM3FontBold();
+        if (bold)
+            ImGui::PushFont(bold, ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * m.density);
+        ImFont* textFont = ImGui::GetFont();
+        const float textPx = ImGui::GetFontSize();
+        const ImVec2 textSize = ImGui::CalcTextSize(text);
+        if (bold)
+            ImGui::PopFont();
+        ImGuiM3PopTextStyle();
+        const float cardW = textSize.x + padX * 2.0f;
+        const float cardH = textSize.y + padY * 2.0f;
+        const float windowW = cardW + shadowPad * 2.0f;
+        const float windowH = cardH + shadowPad * 2.0f;
+
+        const int corner = settingsManager.getFpsCorner();
+        const bool right = (corner == 1 || corner == 3);
+        const bool bottom = (corner == 2 || corner == 3);
+        const float cardX = right ? viewport->WorkPos.x + viewport->WorkSize.x - margin - cardW
+                                  : viewport->WorkPos.x + margin;
+        const float cardY = bottom ? viewport->WorkPos.y + viewport->WorkSize.y - margin - cardH
+                                   : viewport->WorkPos.y + margin;
+        const ImVec2 windowPos(cardX - shadowPad, cardY - shadowPad);
+
+        ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(windowW, windowH), ImGuiCond_Always);
+        const ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+            ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        const bool open = ImGui::Begin("##vkintoxFps", nullptr, flags);
+        ImGui::PopStyleVar(3);
+        if (open)
+        {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImRect card(ImVec2(cardX, cardY), ImVec2(cardX + cardW, cardY + cardH));
+            const float r = cardH * 0.5f;
+            const ImGuiM3ShapeRounding pill{ r, r, r, r };
+            ImGuiM3DrawElevation(dl, card, pill, elevation);
+            ImGuiM3DrawContainer(dl, card, pill,
+                                 ImGui::ColorConvertFloat4ToU32(ImGuiM3Color(ImGuiM3Role_SurfaceContainerHigh)),
+                                 0, 0.0f);
+            dl->AddText(textFont, textPx, ImVec2(card.Min.x + padX, card.Min.y + padY),
+                        ImGui::ColorConvertFloat4ToU32(UI::Success()), text);
+        }
+        ImGui::End();
     }
 
     // one rounded backdrop image over the shell, minus the toasts' union box: the
@@ -1870,7 +1949,8 @@ namespace VKIntox
         // toast notifications — fatal errors must stay visible to the user. The
         // main shell keeps rendering through its disappear animation.
         const bool hasToasts = hasPendingToasts();
-        if (!backendInitialized || (!shellActive && !hasToasts))
+        const bool showFps = settingsManager.getShowFps();
+        if (!backendInitialized || (!shellActive && !hasToasts && !showFps))
         {
             // drop last frame's hitboxes, or they keep swallowing input.
             frameInputRects.clear();
@@ -2019,7 +2099,10 @@ namespace VKIntox
         // pointer, so the overlay renders one. Under X11/Xwayland the real system
         // cursor already sits above the overlay window, and drawing a second one
         // only reads as a doubled, trailing pointer.
-        io.MouseDrawCursor = (getSurfaceKind() == SurfaceKind::Wayland);
+        // Only while the shell is up: toasts and the FPS counter also run ImGui
+        // frames with the overlay hidden, and a drawn cursor then sat under the
+        // game's own one as a second pointer.
+        io.MouseDrawCursor = (getSurfaceKind() == SurfaceKind::Wayland) && visible;
 
         auto publishOverlayInput = [&]() {
             const bool blocking = settingsManager.getOverlayBlockInput();
@@ -2063,6 +2146,7 @@ namespace VKIntox
         {
             // toasts render on their own so fatal errors stay visible
             renderToasts();
+            renderFpsCounter();
             // main window is gone; only toasts remain, so free the pointer.
             setWaylandInputSurfaceRects(nullptr, 0);
             publishOverlayInput();
@@ -2131,10 +2215,25 @@ namespace VKIntox
             resetLayoutRequested = false;
             shellForcePos = true;
         }
+        // the first placement this session restores the saved geometry, if any
+        ImVec2 initialSize = defaultSize;
         if (!shellBaseValid)
         {
             shellBaseX = defaultPos.x;
             shellBaseY = defaultPos.y;
+            int sx = 0, sy = 0, sw = 0, sh = 0;
+            if (settingsManager.getOverlayGeometry(sx, sy, sw, sh))
+            {
+                shellBaseX = static_cast<float>(sx);
+                shellBaseY = static_cast<float>(sy);
+                initialSize = ImVec2(ImClamp(static_cast<float>(sw), minSize.x, maxSize.x),
+                                     ImClamp(static_cast<float>(sh), minSize.y, maxSize.y));
+            }
+            savedGeometryX = sx;
+            savedGeometryY = sy;
+            savedGeometryW = sw;
+            savedGeometryH = sh;
+            geometryRestorePending = sw > 0 && sh > 0;
             shellBaseValid = true;
             shellForcePos = true;
         }
@@ -2151,7 +2250,37 @@ namespace VKIntox
         {
             ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY), ImGuiCond_FirstUseEver);
         }
-        ImGui::SetNextWindowSize(defaultSize, ImGuiCond_FirstUseEver);
+        // The game often starts in a small window and grows a moment later, so
+        // the first frames' size clamp would shrink the saved size for good.
+        // Keep asking for the saved geometry (clamped to the current frame) until
+        // the user grabs the window; the constraint still fits it to the screen.
+        if (geometryRestorePending)
+        {
+            if (ImGui::GetIO().MouseDown[0] || ImGui::GetIO().MouseDown[1])
+            {
+                // only a press on the overlay ends the restore; a click in the
+                // game while the overlay is open must not
+                if (ImGuiWindow* shellWin = ImGui::FindWindowByName("##vkintox_overlay"))
+                    if (shellWin->Rect().Contains(ImGui::GetIO().MousePos))
+                        geometryRestorePending = false;
+            }
+        }
+        if (geometryRestorePending)
+        {
+            ImGui::SetNextWindowSize(ImVec2(ImClamp(static_cast<float>(savedGeometryW), minSize.x, maxSize.x),
+                                            ImClamp(static_cast<float>(savedGeometryH), minSize.y, maxSize.y)),
+                                     ImGuiCond_Always);
+            if (!shellForcePos)
+            {
+                const float keep = ImMin(avail.x, avail.y) * 0.05f;
+                ImGui::SetNextWindowPos(
+                    ImVec2(ImClamp(static_cast<float>(savedGeometryX), screenMin.x, ImMax(screenMin.x, screenMax.x - keep)),
+                           ImClamp(static_cast<float>(savedGeometryY), screenMin.y, ImMax(screenMin.y, screenMax.y - keep))),
+                    ImGuiCond_Always);
+            }
+        }
+        else
+            ImGui::SetNextWindowSize(initialSize, ImGuiCond_FirstUseEver);
 
         const float previousFramePaddingY = ImGui::GetStyle().FramePadding.y;
         ImGui::GetStyle().FramePadding.y = std::max(0.0f, (OverlayTitleBarHeight() - ImGui::GetFontSize()) * 0.5f);
@@ -2181,6 +2310,28 @@ namespace VKIntox
             shellBaseX = windowPos.x;
             shellBaseY = windowPos.y;
             shellForcePos = false;
+
+            // persist the geometry once a drag or resize is let go, so the next
+            // launch opens the overlay where it was left
+            const bool mouseHeld = ImGui::GetIO().MouseDown[0] || ImGui::GetIO().MouseDown[1];
+            const int gx = static_cast<int>(std::lround(windowPos.x));
+            const int gy = static_cast<int>(std::lround(windowPos.y));
+            const int gw = static_cast<int>(std::lround(windowSize.x));
+            const int gh = static_cast<int>(std::lround(windowSize.y));
+            // only on the release that ends a drag/resize, so the default layout
+            // is never written out on its own and keeps tracking the resolution
+            const bool released = geometryMouseHeld && !mouseHeld;
+            geometryMouseHeld = mouseHeld;
+            if (released && visible && !geometryRestorePending &&
+                (gx != savedGeometryX || gy != savedGeometryY || gw != savedGeometryW || gh != savedGeometryH))
+            {
+                savedGeometryX = gx;
+                savedGeometryY = gy;
+                savedGeometryW = gw;
+                savedGeometryH = gh;
+                settingsManager.setOverlayGeometry(gx, gy, gw, gh);
+                settingsManager.save();
+            }
         }
 
         // Subtle elevation under the shell, on the background list so it sits
@@ -2598,6 +2749,7 @@ namespace VKIntox
 
         // toasts last, so they draw above the overlay
         renderToasts();
+        renderFpsCounter();
 
         // Global auto-apply check (runs regardless of which tab is active)
         if (settingsManager.getAutoApply() && paramsDirty)
@@ -2643,6 +2795,25 @@ namespace VKIntox
         setWaylandInputSurfaceRects(frameInputRects.data(), static_cast<int>(frameInputRects.size()));
 
         publishOverlayInput();
+
+        // Wayland gives the overlay no compositor cursor, so ImGui draws one --
+        // but only over the overlay's own hitboxes (or while a drag started on
+        // it is still held). Elsewhere the game shows its cursor, and drawing
+        // ours there as well put a second pointer under the game's.
+        {
+            ImGuiIO& cio = ImGui::GetIO();
+            bool overOverlay = cio.WantCaptureMouse && ImGui::IsAnyMouseDown();
+            for (const InputRect& r : frameInputRects)
+            {
+                if (cio.MousePos.x >= r.x && cio.MousePos.x < r.x + r.width &&
+                    cio.MousePos.y >= r.y && cio.MousePos.y < r.y + r.height)
+                {
+                    overOverlay = true;
+                    break;
+                }
+            }
+            cio.MouseDrawCursor = (getSurfaceKind() == SurfaceKind::Wayland) && visible && overOverlay;
+        }
         ImGui::Render();
 
         // Record the backdrop capture + blur into this same command buffer,

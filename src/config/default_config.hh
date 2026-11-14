@@ -75,6 +75,12 @@ namespace VKIntox::DefaultConfig
         settings.depthCapture = true;
         settings.autoApply = true;
         settings.autoApplyDelay = 200;
+        settings.showFps = false;
+        settings.fpsCorner = 1;     // top-right
+        settings.overlayX = 0;
+        settings.overlayY = 0;
+        settings.overlayWidth = 0;  // 0 = default layout
+        settings.overlayHeight = 0;
         settings.showDebugWindow = false;
         settings.separateEffectParams = true;
         

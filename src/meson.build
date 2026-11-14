@@ -120,6 +120,20 @@ pointer_constraints_code = custom_target('pointer-constraints-code',
     output: 'pointer-constraints-unstable-v1-protocol.c',
     command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'])
 
+# Generate cursor-shape-v1: re-issuing a game's shaped cursor after the overlay
+# hid the system one calls the same set_shape request the game used
+cursor_shape_xml = join_paths(wl_protocols_dir, 'staging', 'cursor-shape', 'cursor-shape-v1.xml')
+
+cursor_shape_client_h = custom_target('cursor-shape-client-header',
+    input: cursor_shape_xml,
+    output: 'cursor-shape-v1-client-protocol.h',
+    command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'])
+
+cursor_shape_code = custom_target('cursor-shape-code',
+    input: cursor_shape_xml,
+    output: 'cursor-shape-v1-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'])
+
 conf_paths = configuration_data()
 conf_paths.set_quoted('SYSCONFDIR', join_paths(get_option('prefix'), get_option('sysconfdir')))
 conf_paths.set_quoted('DATADIR', join_paths(get_option('prefix'), get_option('datadir')))
@@ -192,7 +206,8 @@ wayland_syncobj_gate_lib = static_library('wayland_syncobj_gate',
 # suppress events when overlay has input blocked. Needs default visibility
 # for the wl_proxy_add_listener symbol override.
 wayland_interpose_lib = static_library('wayland_interpose',
-    'input/wayland/wayland_interpose.cc',
+    'input/wayland/wayland_interpose.cc', cursor_shape_code,
+    cursor_shape_client_h,
     link_with: [wayland_syncobj_gate_lib],
     dependencies: [wayland_client_dep],
     c_args: ['-fvisibility=default'],
