@@ -293,6 +293,8 @@ namespace VKIntox
             }
             else if (key == "showFps")
                 settings.showFps = (value == "true" || value == "1");
+            else if (key == "fpsExtended")
+                settings.fpsExtended = (value == "true" || value == "1");
             else if (key == "fpsCorner")
             {
                 if (value == "top-left") settings.fpsCorner = 0;
@@ -400,8 +402,10 @@ namespace VKIntox
         file << "maxEffects = " << clampedMaxEffects << "\n";
         file << "autoApply = " << (settings.autoApply ? "true" : "false") << "\n";
         file << "autoApplyDelay = " << settings.autoApplyDelay << "\n";
-        file << "# showFps: floating FPS counter; fpsCorner: top-right (default), top-left, bottom-left, bottom-right\n";
+        file << "# showFps: floating FPS counter; fpsExtended: 1%/0.1% lows next to it;\n";
+        file << "# fpsCorner: top-right (default), top-left, bottom-left, bottom-right\n";
         file << "showFps = " << (settings.showFps ? "true" : "false") << "\n";
+        file << "fpsExtended = " << (settings.fpsExtended ? "true" : "false") << "\n";
         {
             static const char* const kCorners[] = {"top-left", "top-right", "bottom-left", "bottom-right"};
             file << "fpsCorner = " << kCorners[std::clamp(settings.fpsCorner, 0, 3)] << "\n";

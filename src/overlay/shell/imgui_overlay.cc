@@ -38,6 +38,7 @@
 #include "overlay/theme/ui_theme.hh"
 #include "overlay/theme/ui_icons.hh"
 #include "overlay/shell/ui_dialog.hh"
+#include "overlay/shell/fps_metrics.hh"
 #include "vendor/imgui/backends/imgui_impl_vulkan.h"
 
 namespace VKIntox
@@ -658,11 +659,17 @@ namespace VKIntox
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
 
         char text[32];
-        const float fps = displayedFps();
+        const float fps = FpsMetrics::fps();
         if (fps > 0.0f)
             snprintf(text, sizeof(text), "%.0f FPS", fps);
         else
             snprintf(text, sizeof(text), "-- FPS");
+
+        // lows arrive with the first one-second tick, until then only the fps
+        const bool showLows = settingsManager.getFpsExtended() && FpsMetrics::low1Percent() > 0.0f;
+        char low1Text[16], low01Text[16];
+        snprintf(low1Text, sizeof(low1Text), "%.0f", FpsMetrics::low1Percent());
+        snprintf(low01Text, sizeof(low01Text), "%.0f", FpsMetrics::low01Percent());
 
         // the same elevated pill as the Apply bar, so the two read as one family
         const float margin = 20.0f * m.density;
@@ -685,7 +692,35 @@ namespace VKIntox
         if (bold)
             ImGui::PopFont();
         ImGuiM3PopTextStyle();
-        const float cardW = textSize.x + padX * 2.0f;
+
+        // the lows read in the body face (Roboto Flex), a step smaller, values
+        // a pixel smaller still so the digits sit quieter than the labels
+        ImGuiM3PushTextStyle(ImGuiM3Type_BodyMedium);
+        ImFont* bodyBold = ImGuiM3FontBodyBold();
+        const float lowsPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyMedium).size * m.density;
+        const float lowsValuePx = lowsPx - 1.0f;
+        if (bodyBold)
+            ImGui::PushFont(bodyBold, lowsPx);
+        ImFont* lowsFont = ImGui::GetFont();
+        const float label1W = ImGui::CalcTextSize("1%").x;
+        const float label01W = ImGui::CalcTextSize("0.1%").x;
+        const float label1H = ImGui::CalcTextSize("1%").y;
+        if (bodyBold)
+            ImGui::PopFont();
+        if (bodyBold)
+            ImGui::PushFont(bodyBold, lowsValuePx);
+        const float low1W = ImGui::CalcTextSize(low1Text).x;
+        const float low01W = ImGui::CalcTextSize(low01Text).x;
+        const float low1H = ImGui::CalcTextSize(low1Text).y;
+        if (bodyBold)
+            ImGui::PopFont();
+        ImGuiM3PopTextStyle();
+        const float labelGap = 4.0f * m.density;
+        const float segmentGap = 10.0f * m.density;
+
+        const float lowsGapX = showLows ? 12.0f * m.density : 0.0f;
+        const float lowsW = showLows ? label1W + labelGap + low1W + segmentGap + label01W + labelGap + low01W : 0.0f;
+        const float cardW = padX + textSize.x + lowsGapX + lowsW + padX;
         const float cardH = textSize.y + padY * 2.0f;
         const float windowW = cardW + shadowPad * 2.0f;
         const float windowH = cardH + shadowPad * 2.0f;
@@ -721,8 +756,24 @@ namespace VKIntox
             ImGuiM3DrawContainer(dl, card, pill,
                                  ImGui::ColorConvertFloat4ToU32(ImGuiM3Color(ImGuiM3Role_SurfaceContainerHigh)),
                                  0, 0.0f);
-            dl->AddText(textFont, textPx, ImVec2(card.Min.x + padX, card.Min.y + padY),
-                        ImGui::ColorConvertFloat4ToU32(UI::Success()), text);
+            const ImU32 valueCol = ImGui::ColorConvertFloat4ToU32(UI::Success());
+            const ImU32 labelCol = ImGui::ColorConvertFloat4ToU32(ImGuiM3Color(ImGuiM3Role_OnSurfaceVariant));
+            const ImU32 dimCol = labelCol;
+            const float bandH = cardH - padY * 2.0f;
+            // each run centred in the band, so the smaller face reads level
+            const float textY = card.Min.y + padY;
+            const float labelY = card.Min.y + padY + (bandH - label1H) * 0.5f;
+            const float valueY = card.Min.y + padY + (bandH - low1H) * 0.5f;
+            dl->AddText(textFont, textPx, ImVec2(card.Min.x + padX, textY), valueCol, text);
+            if (showLows)
+            {
+                const float lowsX = card.Min.x + padX + textSize.x + lowsGapX;
+                dl->AddText(lowsFont, lowsPx, ImVec2(lowsX, labelY), dimCol, "1%");
+                dl->AddText(lowsFont, lowsValuePx, ImVec2(lowsX + label1W + labelGap, valueY), dimCol, low1Text);
+                const float low01X = lowsX + label1W + labelGap + low1W + segmentGap;
+                dl->AddText(lowsFont, lowsPx, ImVec2(low01X, labelY), dimCol, "0.1%");
+                dl->AddText(lowsFont, lowsValuePx, ImVec2(low01X + label01W + labelGap, valueY), dimCol, low01Text);
+            }
         }
         ImGui::End();
     }

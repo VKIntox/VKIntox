@@ -76,6 +76,7 @@ namespace VKIntox::DefaultConfig
         settings.autoApply = true;
         settings.autoApplyDelay = 200;
         settings.showFps = false;
+        settings.fpsExtended = false;
         settings.fpsCorner = 1;     // top-right
         settings.overlayX = 0;
         settings.overlayY = 0;

@@ -219,8 +219,6 @@ namespace VKIntox
         // Samples frame time, FPS and GPU stats. Called every overlay frame, not
         // just while the Diagnostics tab is open, so the tab has real history.
         void sampleDiagnostics();
-        // FPS over the last second, as sampled above.
-        float displayedFps() const;
         // Floating FPS pill pinned to a screen corner (Settings picks which).
         // Drawn on its own so it stays up while the overlay is hidden.
         void renderFpsCounter();

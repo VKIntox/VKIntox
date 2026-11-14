@@ -140,6 +140,18 @@ namespace VKIntox
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("A small floating FPS counter, visible even while the overlay is hidden.");
 
+        ImGui::SameLine();
+        bool fpsExtended = settingsManager.getFpsExtended();
+        ImGui::BeginDisabled(!showFps);
+        if (ImGui::Checkbox("Show extended info", &fpsExtended))
+        {
+            settingsManager.setFpsExtended(fpsExtended);
+            saveSettings();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Shows 1%% and 0.1%% lows");
+        ImGui::EndDisabled();
+
         if (showFps)
         {
             ImGui::TextDisabled("FPS counter corner");

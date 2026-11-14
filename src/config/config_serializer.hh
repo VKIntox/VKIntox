@@ -63,6 +63,7 @@ namespace VKIntox
         bool autoApply;  // Auto-apply changes without clicking Apply
         int autoApplyDelay;  // ms delay before auto-applying changes
         bool showFps;        // floating FPS counter in a screen corner
+        bool fpsExtended;    // 1% and 0.1% lows next to the FPS counter
         int fpsCorner;       // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
         // Overlay window geometry in framebuffer pixels, kept across launches.
         // A width/height of 0 means "never placed": use the default layout.

@@ -103,6 +103,11 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.showFps;
         }
+        bool getFpsExtended() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.fpsExtended;
+        }
         int getFpsCorner() const
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -258,6 +263,11 @@ namespace VKIntox
         {
             std::lock_guard<std::mutex> lock(mutex);
             settings.showFps = value;
+        }
+        void setFpsExtended(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.fpsExtended = value;
         }
         void setFpsCorner(int value)
         {
