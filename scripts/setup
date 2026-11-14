@@ -466,35 +466,43 @@ load_releases() {
 }
 
 choose_releases() {
-    local i base category hotfix date
+    local i base category hotfix date key
     local -A best_cat=() best_hot=() best_date=() best_idx=()
     for i in "${!REL_TAG[@]}"; do
         base="${REL_BASE[$i]}"
         category="${REL_CAT[$i]}"
         hotfix="${REL_HOTFIX[$i]}"
         date="${REL_DATE[$i]}"
-        if [[ -z "${best_idx[$base]:-}" ]]; then
-            best_cat[$base]=$category
-            best_hot[$base]=$hotfix
-            best_date[$base]=$date
-            best_idx[$base]=$i
+        # prereleases each stand on their own, so preview 1 stays installable
+        # next to preview 2; plain bases collapse to the best category, so a
+        # hotfix replaces the stable tag it patches
+        if ((category == 0)); then
+            key="${REL_TAG[$i]}"
+        else
+            key="$base"
+        fi
+        if [[ -z "${best_idx[$key]:-}" ]]; then
+            best_cat[$key]=$category
+            best_hot[$key]=$hotfix
+            best_date[$key]=$date
+            best_idx[$key]=$i
             continue
         fi
-        if ((category > best_cat[$base])) ||
-            ((category == best_cat[$base] && hotfix > best_hot[$base])); then
-            best_cat[$base]=$category
-            best_hot[$base]=$hotfix
-            best_date[$base]=$date
-            best_idx[$base]=$i
-        elif ((category == best_cat[$base] && hotfix == best_hot[$base])) &&
-            [[ "$date" > "${best_date[$base]}" ]]; then
-            best_date[$base]=$date
-            best_idx[$base]=$i
+        if ((category > best_cat[$key])) ||
+            ((category == best_cat[$key] && hotfix > best_hot[$key])); then
+            best_cat[$key]=$category
+            best_hot[$key]=$hotfix
+            best_date[$key]=$date
+            best_idx[$key]=$i
+        elif ((category == best_cat[$key] && hotfix == best_hot[$key])) &&
+            [[ "$date" > "${best_date[$key]}" ]]; then
+            best_date[$key]=$date
+            best_idx[$key]=$i
         fi
     done
     BEST_IDX=()
-    for base in "${!best_idx[@]}"; do
-        BEST_IDX[$base]="${best_idx[$base]}"
+    for key in "${!best_idx[@]}"; do
+        BEST_IDX[$key]="${best_idx[$key]}"
     done
 }
 
