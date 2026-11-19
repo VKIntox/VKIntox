@@ -142,6 +142,9 @@ namespace VKIntox
         // the engine objects with it
         std::unique_ptr<FrameGen::LsfgSwapchain> lsfg;
         FrameGen::LsfgProfile lsfgProfile;
+        // engine init is expensive; a failed attempt is latched until the
+        // profile changes instead of being retried every present
+        bool lsfgInitFailed = false;
 
         bool destroy();
         void reloadEffects(Config* config);

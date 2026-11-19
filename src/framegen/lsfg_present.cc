@@ -203,10 +203,19 @@ namespace VKIntox::FrameGen
                                    VkSwapchainCreateInfoKHR& info,
                                    const LsfgProfile& profile)
     {
+        VKINTOX_LOG_TRACE([&](std::string& s) {
+            s = std::string("LSFG: create hook entered (enabled=")
+                + (profile.enabled ? "true" : "false")
+                + ", multiplier=" + std::to_string(profile.multiplier) + ")";
+        });
         if (!profile.enabled || profile.multiplier < 2)
             return false;
         if (!LsfgSwapchain::active(logicalDevice, profile))
+        {
+            Logger::debug(std::string("LSFG: unavailable for this device (engine=")
+                          + (engineAvailable() ? "ok" : "missing") + ", status=" + engineStatus() + ")");
             return false;
+        }
 
         info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 

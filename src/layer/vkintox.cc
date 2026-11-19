@@ -4308,12 +4308,20 @@ namespace VKIntox
                     // app to recreate so vkCreateSwapchainKHR can re-apply it
                     Logger::info("LSFG: profile changed; recreating the swapchain");
                     logicalSwapchain->lsfg.reset();
+                    logicalSwapchain->lsfgInitFailed = false;
                     logicalSwapchain->lsfgProfile = profile;
                     return VK_ERROR_OUT_OF_DATE_KHR;
                 }
                 logicalSwapchain->lsfgProfile = profile;
 
-                if (profile.enabled && FrameGen::LsfgSwapchain::active(logicalDevice, profile))
+                // a failed init is latched: engine creation builds a whole
+                // Vulkan device, so retrying every present would tank the frame
+                // rate. the latch lifts when the profile changes.
+                if (logicalSwapchain->lsfgInitFailed && !profileChanged)
+                {
+                    // fall through to the normal present path
+                }
+                else if (profile.enabled && FrameGen::LsfgSwapchain::active(logicalDevice, profile))
                 {
                     if (!logicalSwapchain->lsfg)
                     {
@@ -4324,8 +4332,9 @@ namespace VKIntox
                         }
                         catch (const std::exception& e)
                         {
-                            Logger::err("LSFG: init failed, falling back to uninterpolated presents: "
+                            Logger::err("LSFG: init failed, frame generation stays off until its settings change: "
                                         + std::string(e.what()));
+                            logicalSwapchain->lsfgInitFailed = true;
                         }
                     }
                     if (logicalSwapchain->lsfg)
