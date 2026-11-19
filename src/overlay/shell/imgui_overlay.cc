@@ -2398,24 +2398,10 @@ namespace VKIntox
                 }
             }
 
-            static int cornerIndex = -1;
-            if (!overClose)
-            {
-                for (int i = 0; i < 4 && cornerIndex < 0; ++i)
-                {
-                    const float cx = (i & 1) ? windowPos.x + windowSize.x : windowPos.x;
-                    const float cy = (i & 2) ? windowPos.y + windowSize.y : windowPos.y;
-                    const float dx = pio.MousePos.x - cx;
-                    const float dy = pio.MousePos.y - cy;
-                    if (dx * dx + dy * dy <= grip * grip)
-                        cornerIndex = i;
-                }
-            }
-
-            if (cornerIndex >= 0 && !cornerResizing && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            if (corner >= 0 && !cornerResizing && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
                 cornerResizing = true;
-                cornerResizingIndex = cornerIndex;
+                cornerResizingIndex = corner;
                 cornerResizingMouseX = pio.MousePos.x;
                 cornerResizingMouseY = pio.MousePos.y;
                 cornerResizingPosX = windowPos.x;
@@ -2472,9 +2458,9 @@ namespace VKIntox
                 else
                     cornerResizing = false;
             }
-            else if (cornerIndex >= 0)
+            else if (corner >= 0)
             {
-                ImGui::SetMouseCursor((cornerIndex == 0 || cornerIndex == 3)
+                ImGui::SetMouseCursor((corner == 0 || corner == 3)
                                           ? ImGuiMouseCursor_ResizeNWSE
                                           : ImGuiMouseCursor_ResizeNESW);
             }
