@@ -2170,8 +2170,7 @@ namespace VKIntox
         // game's own one as a second pointer.
         io.MouseDrawCursor = (getSurfaceKind() == SurfaceKind::Wayland) && visible;
 
-        auto publishOverlayInput = [&]() {
-            const bool blocking = settingsManager.getOverlayBlockInput();
+        auto publishOverlayInput = [&](bool blocking) {
             if (blocking)
                 setInputRects(frameInputRects.data(), static_cast<int>(frameInputRects.size()));
             else
@@ -2215,7 +2214,7 @@ namespace VKIntox
             renderFpsCounter();
             // main window is gone; only toasts remain, so free the pointer.
             setWaylandInputSurfaceRects(nullptr, 0);
-            publishOverlayInput();
+            publishOverlayInput(settingsManager.getOverlayBlockInput());
             ImGui::Render();
 
             VkRenderPassBeginInfo rpBegin = {};
@@ -2857,10 +2856,16 @@ namespace VKIntox
         }
 
         // the capture surface has to cover the same rects, or a popup sticking
-        // out past the main window won't withhold anything
-        setWaylandInputSurfaceRects(frameInputRects.data(), static_cast<int>(frameInputRects.size()));
+        // out past the main window won't withhold anything. It follows the
+        // blocking toggle: with it off the surface must be emptied, or the
+        // compositor keeps swallowing clicks behind the user's back.
+        const bool blocking = settingsManager.getOverlayBlockInput();
+        if (blocking)
+            setWaylandInputSurfaceRects(frameInputRects.data(), static_cast<int>(frameInputRects.size()));
+        else
+            setWaylandInputSurfaceRects(nullptr, 0);
 
-        publishOverlayInput();
+        publishOverlayInput(blocking);
 
         // Wayland gives the overlay no compositor cursor, so ImGui draws one --
         // but only over the overlay's own hitboxes (or while a drag started on
