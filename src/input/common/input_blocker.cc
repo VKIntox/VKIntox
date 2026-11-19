@@ -31,6 +31,11 @@ namespace VKIntox
     // mirrors the wayland keyboard state so focus only flips on a crossing.
     static bool keyboardWithheld = false;
 
+    // The interposer reports pointer hover straight from the capture surface's
+    // enter/leave; the rect test stays as the fallback for unwrapped games.
+    static std::atomic<bool> waylandHover{false};
+    static std::atomic<bool> waylandHoverSeen{false};
+
     static bool pointInRects(float x, float y)
     {
         std::lock_guard<std::mutex> lock(rectMutex);
@@ -42,8 +47,11 @@ namespace VKIntox
 
     static bool pointerOverOverlay()
     {
-        return blocked.load(std::memory_order_acquire)
-            && pointInRects(pointerX.load(std::memory_order_acquire), pointerY.load(std::memory_order_acquire));
+        if (!blocked.load(std::memory_order_acquire))
+            return false;
+        if (isWayland() && waylandHoverSeen.load(std::memory_order_acquire))
+            return waylandHover.load(std::memory_order_acquire);
+        return pointInRects(pointerX.load(std::memory_order_acquire), pointerY.load(std::memory_order_acquire));
     }
 
     static bool overlayConsumingKeys()
@@ -62,20 +70,14 @@ namespace VKIntox
             && interactive.load(std::memory_order_acquire);
     }
 
-    // X11: the pointer grab follows the cursor, the keyboard grab follows the
-    // open overlay. Both make the server emit NotifyGrab/NotifyUngrab focus
-    // events on the game window, and Wine reads those as a window-manager grab
-    // and drops the game's cursor capture, so a mere pointer crossing must
-    // never engage the keyboard grab. The grab helpers hand held keys and
-    // buttons across each transition.
+    // X11: clicks and motion over the overlay are blocked by input-only shield
+    // windows that follow the published hitboxes (see setInputRects) — no grab
+    // on hover, so Wine never sees grab focus events from a pointer crossing.
+    // The keyboard grab is reserved for the overlay actually consuming keys: a
+    // grab transition makes Wine drop the game's cursor capture.
     static void applyX11Blocking()
     {
-        const bool enabled = blockingEnabled.load(std::memory_order_acquire);
-        const bool pointerGrab = enabled && pointerOverOverlay();
-        const bool keyboardGrab = enabled && overlayOwnsKeyboard();
-
-        x11SetGrabState(pointerGrab);
-        x11SetKeyboardGrabState(keyboardGrab);
+        x11SetKeyboardGrabState(blockingEnabled.load(std::memory_order_acquire) && overlayConsumingKeys());
     }
 
     // Wayland withholds on the game's own event stream, which costs it nothing
@@ -106,15 +108,32 @@ namespace VKIntox
             applyWaylandBlocking();
     }
 
+    static void updateX11Shields()
+    {
+        if (!isX11())
+            return;
+        const bool active = blockingEnabled.load(std::memory_order_acquire) && blocked.load(std::memory_order_acquire);
+        std::vector<InputRect> rects;
+        {
+            std::lock_guard<std::mutex> lock(rectMutex);
+            rects = inputRects;
+        }
+        x11UpdateInputShields(active ? rects.data() : nullptr, active ? static_cast<int>(rects.size()) : 0, active);
+    }
+
     void setInputRects(const InputRect* rects, int count)
     {
-        std::lock_guard<std::mutex> lock(rectMutex);
-        inputRects.assign(rects, rects + (count > 0 ? count : 0));
+        {
+            std::lock_guard<std::mutex> lock(rectMutex);
+            inputRects.assign(rects, rects + (count > 0 ? count : 0));
+        }
+        updateX11Shields();
     }
 
     void setInputBlocked(bool onScreen)
     {
         blocked.store(onScreen, std::memory_order_release);
+        updateX11Shields();
         applyBlocking();
     }
 
@@ -177,13 +196,21 @@ namespace VKIntox
         applyBlocking();
     }
 
+    void setWaylandPointerHover(bool hover)
+    {
+        waylandHoverSeen.store(true, std::memory_order_release);
+        waylandHover.store(hover, std::memory_order_release);
+        applyBlocking();
+    }
+
     void initInputBlocker(bool enabled)
     {
         blockingEnabled = enabled;
+        updateX11Shields();
 
         if (isX11())
         {
-            Logger::debug(std::string("Input blocking ") + (enabled ? "enabled (X11: hitbox grab)" : "disabled"));
+            Logger::debug(std::string("Input blocking ") + (enabled ? "enabled (X11: shield windows)" : "disabled"));
             return;
         }
 

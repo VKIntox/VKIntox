@@ -39,6 +39,11 @@ namespace VKIntox
     // follow-the-pointer keyboard rule.
     void updatePointerPosition(float x, float y);
 
+    // Wayland: the interposer reports hover directly from the capture
+    // surface's enter/leave. Once seen, it is authoritative over the rect
+    // test; the rect test stays as the fallback for unwrapped games.
+    void setWaylandPointerHover(bool hover);
+
     // True when (x, y) is inside an overlay hitbox and blocking is on.
     bool isInputBlockedAt(float x, float y);
 

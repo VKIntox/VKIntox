@@ -61,11 +61,9 @@ namespace VKIntox
 
         state.x = x;
         state.y = y;
-        // the grab handoff clears held buttons server-side; report the hold so
-        // ImGui never sees a synthetic up/down pair mid-click
-        state.leftButton = (mask & Button1Mask) != 0 || x11ButtonSynthHeld(1);
-        state.middleButton = (mask & Button2Mask) != 0 || x11ButtonSynthHeld(2);
-        state.rightButton = (mask & Button3Mask) != 0 || x11ButtonSynthHeld(3);
+        state.leftButton = (mask & Button1Mask) != 0;
+        state.middleButton = (mask & Button2Mask) != 0;
+        state.rightButton = (mask & Button3Mask) != 0;
         state.scrollDelta = scrollAccumulator;
         scrollAccumulator = 0.0f;
         return state;

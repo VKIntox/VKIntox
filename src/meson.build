@@ -311,12 +311,13 @@ foreach handler : ['simple', 'siginfo', 'ignored']
     test('signal chaining ' + handler, signal_chain_tests, args: [vkintox_lib.full_path(), handler])
 endforeach
 
-# X11 input blocking: the pointer grab follows the cursor while the keyboard grab
-# only engages when the overlay consumes keys (a grab transition makes Wine drop
-# the game's cursor capture), and held keys/buttons are handed to the game across
-# each grab, or the game keeps holding whatever was down. Drives the layer's real
-# blocker against a stand-in window, so it needs a display and synthesises input:
-# opt in with VKINTOX_X11_INPUT_TEST=1.
+# X11 input blocking: input-only shield windows over the overlay hitbox swallow
+# clicks and motion without any grab, the keyboard grab only engages while the
+# overlay consumes keys (a grab transition makes Wine drop the game's cursor
+# capture), and held keys are handed to the game across the grab, or the game
+# keeps holding whatever was down. Drives the layer's real blocker against a
+# stand-in window, so it needs a display and synthesises input: opt in with
+# VKINTOX_X11_INPUT_TEST=1.
 x11_input_handoff_tests = executable('vkintox-x11-input-handoff-tests',
     'tests/x11_input_handoff_test.cc',
     dependencies : [x11_dep, xtst_dep, libdl_dep],

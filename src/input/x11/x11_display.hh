@@ -2,13 +2,15 @@
 
 #include <cstdint>
 
+#include "input/common/input_blocker.hh"
+
 struct _XDisplay;
 
 namespace VKIntox
 {
     // Shared X11 connection for the input backends and the input blocker. One
-    // connection means one event queue: XInput2 raw events, active-grab events,
-    // and query-based polling all drain from the same place.
+    // connection means one event queue: XInput2 raw events, keyboard-grab
+    // events, and query-based polling all drain from the same place.
     _XDisplay* x11Display();
     bool x11Available();
 
@@ -25,22 +27,23 @@ namespace VKIntox
     // Call once per frame; a no-op when X11 is absent.
     void pumpX11Input();
 
-    // Holds or releases a server-side grab on the game window so the game stops
-    // seeing input while the overlay is used. Call pumpX11Input() on every frame
-    // to keep the redirected events flowing.
-    //
-    // The pointer grab blocks clicks and motion, the keyboard grab blocks keys.
-    // Both make the server emit NotifyGrab/NotifyUngrab focus events on the game
-    // window, and Wine reads those as "the window manager is manipulating the
-    // window" and throws away the game's cursor capture, so the keyboard grab is
-    // only requested while the overlay is actually consuming keys (see the input
-    // blocker). Every transition also hands the game's held keys/buttons over to
-    // it with synthetic events, because the grab would otherwise swallow their
-    // releases and leave the game holding them.
-    void x11SetGrabState(bool grab);
+    // Maps input-only "shield" windows over the overlay hitboxes so clicks and
+    // motion land on this connection instead of the game — the pointer
+    // equivalent of the Wayland capture surface, without any grab. The game
+    // window is the parent, so the rects are window-relative. Pass no rects or
+    // active=false to unmap everything.
+    void x11UpdateInputShields(const InputRect* rects, int count, bool active);
+
+    // Takes a server-side keyboard grab on the game window while the overlay
+    // consumes keys (a text field or popup has focus), and releases it
+    // otherwise. Only ever engaged there: a grab transition makes Wine read
+    // NotifyGrab as a window-manager grab and drop the game's cursor capture.
+    // Every transition hands the game's held keys over with synthetic events,
+    // because the grab would otherwise swallow their releases and leave the
+    // game holding them. A watchdog releases the grab if the render loop
+    // stalls, so a hung frame can never lock the keyboard.
     void x11SetKeyboardGrabState(bool grab);
-    // keys/buttons the grab handoff cleared server-side while still held
+    // keys the keyboard-grab handoff cleared server-side while still held
     bool x11KeySynthHeld(unsigned int keycode);
-    bool x11ButtonSynthHeld(unsigned int button);
     bool x11GrabActive();
 } // namespace VKIntox

@@ -8,7 +8,11 @@
 #include <X11/extensions/XTest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace VKIntox
@@ -18,23 +22,25 @@ namespace VKIntox
         Display* g_display = nullptr;
         bool g_tried = false;
         int g_xiOpcode = 0;
-        bool g_xiReady = false;
 
         X11KeyCallback g_keyCallback = nullptr;
         X11ButtonCallback g_buttonCallback = nullptr;
-        bool g_pointerGrabActive = false;
-        bool g_keyboardGrabActive = false;
+        std::atomic<bool> g_keyboardGrabActive{false};
         Window g_grabWindow = 0;
         bool g_xtestChecked = false;
         bool g_xtestReady = false;
 
-        // Keys and buttons this layer released into the game when it grabbed.
-        // The synthetic releases clear the server's key/button state, so a
+        std::mutex g_grabMutex;
+        std::atomic<long long> g_lastPumpMs{0};
+        std::atomic<bool> g_watchdogStarted{false};
+
+        // Keys this layer released into the game when the keyboard grab
+        // engaged. The synthetic releases clear the server's key state, so a
         // re-query at release time cannot tell what is still physically down;
-        // these sets are kept current from the events the grab delivers and are
-        // what gets handed back. Same idea as the Wayland interpose's held keys.
+        // these sets are kept current from the events the grab delivers and
+        // are what gets handed back. Same idea as the Wayland interpose's
+        // owned keys.
         std::vector<unsigned int> g_handedKeys;
-        std::vector<unsigned int> g_handedButtons;
 
         // The subset the player still holds: the server state says up but the
         // physical device says down. The layer polls that same state for its
@@ -42,7 +48,16 @@ namespace VKIntox
         // engage looks like the key was let go and every handback like a fresh
         // press — which re-fired the overlay toggle on close.
         std::vector<unsigned int> g_synthHeldKeys;
-        std::vector<unsigned int> g_synthHeldButtons;
+
+        // Input-only shield windows over the overlay hitboxes. Created as
+        // children of the game window, so they swallow clicks and motion the
+        // way the Wayland capture surface does, without any grab.
+        struct InputShield
+        {
+            Window window = 0;
+            Window parent = 0;
+        };
+        std::vector<InputShield> g_shields;
 
         template <typename T>
         static bool setContains(const std::vector<T>& set, T value)
@@ -54,6 +69,20 @@ namespace VKIntox
         static void setErase(std::vector<T>& set, T value)
         {
             set.erase(std::remove(set.begin(), set.end(), value), set.end());
+        }
+
+        // Errors on the game's connection keep the default fatal behavior;
+        // this private connection only gets logged, so a failed grab or a
+        // shield over a dead parent window cannot abort the game.
+        static int x11ErrorHandler(Display* d, XErrorEvent* e)
+        {
+            if (d != g_display)
+                exit(EXIT_FAILURE);
+            char text[64] = {};
+            XGetErrorText(d, e->error_code, text, sizeof(text));
+            Logger::warn(std::string("X11 input: ignored X error (") + text
+                         + ", request " + std::to_string(static_cast<int>(e->request_code)) + ")");
+            return 0;
         }
 
         void initX11()
@@ -72,6 +101,7 @@ namespace VKIntox
                 Logger::warn("X11 input: could not open DISPLAY, keyboard/mouse/blocking disabled");
                 return;
             }
+            XSetErrorHandler(x11ErrorHandler);
 
             int event = 0, error = 0;
             if (!XQueryExtension(g_display, "XInputExtension", &g_xiOpcode, &event, &error))
@@ -83,8 +113,8 @@ namespace VKIntox
 
             // Raw events ignore focus, so they carry keys and wheel between
             // grabs. While a grab is active they can stop arriving entirely,
-            // so the grab's redirected core events (see x11SetGrabState) are
-            // the key source instead.
+            // so the grab's redirected core events (see applyKeyboardGrab)
+            // are the key source instead.
             unsigned char mask[XIMaskLen(XI_RawButtonRelease)] = {0};
             XISetMask(mask, XI_RawKeyPress);
             XISetMask(mask, XI_RawKeyRelease);
@@ -93,7 +123,6 @@ namespace VKIntox
             XIEventMask em = {XIAllMasterDevices, sizeof(mask), mask};
             XISelectEvents(g_display, DefaultRootWindow(g_display), &em, 1);
             XFlush(g_display);
-            g_xiReady = true;
         }
     }
 
@@ -204,190 +233,129 @@ namespace VKIntox
                           + " held key(s) before the keyboard grab");
     }
 
-    // Same contract as handOffHeldKeys, for the buttons the pointer grab takes
-    // away. Core button state only covers 1-5; anything else is not holdable.
-    static void handOffHeldButtons(bool toGame)
+    // Same tracking for keys the keyboard grab redirects: the grab is where
+    // press and release events for those keys arrive, so this is the only
+    // place that can tell whether the player let go in the meantime.
+    static void trackGrabbedInput(uint32_t keycode, bool pressed)
     {
-        if (g_display == nullptr)
-            return;
-
-        if (toGame)
-        {
-            if (g_handedButtons.empty())
-                return;
-            Window rootRet = 0, childRet = 0;
-            int rootX = 0, rootY = 0, winX = 0, winY = 0;
-            unsigned int mask = 0;
-            int repressed = 0, dropped = 0;
-            if (XQueryPointer(g_display, DefaultRootWindow(g_display), &rootRet, &childRet,
-                              &rootX, &rootY, &winX, &winY, &mask))
-            {
-                for (unsigned int button : g_handedButtons)
-                {
-                    // released after the ungrab: the game already saw it
-                    const bool bitDown = mask & (Button1Mask << (button - 1));
-                    if (!bitDown && !setContains(g_synthHeldButtons, button))
-                    {
-                        dropped++;
-                        continue;
-                    }
-                    XTestFakeButtonEvent(g_display, button, True, 0);
-                    repressed++;
-                }
-            }
-            XSync(g_display, False);
-            Logger::debug("X11 input: re-pressed " + std::to_string(repressed)
-                          + " held button(s) after the pointer grab"
-                          + (dropped ? (" (dropped " + std::to_string(dropped) + " already released)") : ""));
-            g_handedButtons.clear();
-            g_synthHeldButtons.clear();
-            return;
-        }
-
-        g_handedButtons.clear();
-        g_synthHeldButtons.clear();
-        if (!xtestReady(g_display))
-            return;
-
-        Window rootRet = 0, childRet = 0;
-        int rootX = 0, rootY = 0, winX = 0, winY = 0;
-        unsigned int mask = 0;
-        if (!XQueryPointer(g_display, DefaultRootWindow(g_display), &rootRet, &childRet,
-                           &rootX, &rootY, &winX, &winY, &mask))
-            return;
-
-        for (unsigned int button = 1; button <= 5; ++button)
-        {
-            if (!(mask & (Button1Mask << (button - 1))))
-                continue;
-            XTestFakeButtonEvent(g_display, button, False, 0);
-            g_handedButtons.push_back(button);
-            g_synthHeldButtons.push_back(button);
-        }
-        XSync(g_display, False);
-
-        if (!g_handedButtons.empty())
-            Logger::debug("X11 input: released " + std::to_string(g_handedButtons.size())
-                          + " held button(s) before the pointer grab");
-    }
-
-    // Keeps the handed-over sets honest while a grab is up: the grab is where
-    // press and release events for those keys and buttons arrive, so this is the
-    // only place that can tell whether the player let go in the meantime.
-    static void trackGrabbedInput(uint32_t keycode, uint32_t button, bool key, bool pressed)
-    {
-        std::vector<unsigned int>& set = key ? g_handedKeys : g_handedButtons;
-        std::vector<unsigned int>& synth = key ? g_synthHeldKeys : g_synthHeldButtons;
-        const unsigned int code = key ? keycode : button;
-        auto it = std::find(set.begin(), set.end(), code);
+        auto it = std::find(g_handedKeys.begin(), g_handedKeys.end(), keycode);
 
         if (pressed)
         {
-            if (it == set.end())
-                set.push_back(code);
+            if (it == g_handedKeys.end())
+                g_handedKeys.push_back(keycode);
             // re-pressed by the player: the server bit is down again
-            setErase(synth, code);
+            setErase(g_synthHeldKeys, keycode);
         }
-        else if (it != set.end())
+        else if (it != g_handedKeys.end())
         {
-            set.erase(it);
+            g_handedKeys.erase(it);
         }
-        setErase(synth, code);
+        setErase(g_synthHeldKeys, keycode);
     }
 
-    // Only select for what the active grabs actually redirect. Dropping back to
-    // no mask on release matters: a left-over selection keeps feeding this
-    // connection copies of the game's key and button events forever.
+    // Only select for what the keyboard grab actually redirects. Dropping back
+    // to no mask on release matters: a left-over selection keeps feeding this
+    // connection copies of the game's key events forever.
     static void applyGrabEventMask()
     {
         if (!g_display || g_grabWindow == 0)
             return;
 
-        long mask = 0;
-        if (g_pointerGrabActive)
-            mask |= ButtonPressMask | ButtonReleaseMask | PointerMotionMask;
-        if (g_keyboardGrabActive)
-            mask |= KeyPressMask | KeyReleaseMask;
-        XSelectInput(g_display, g_grabWindow, mask);
+        XSelectInput(g_display, g_grabWindow,
+                     g_keyboardGrabActive ? (KeyPressMask | KeyReleaseMask) : 0);
     }
 
-    // The one place grabs change. Both grabs are server-side and on this
-    // connection, so the game stops seeing the events entirely; the held-input
+    // The one place the grab changes. The grab is server-side and on this
+    // connection, so the game stops seeing keys entirely; the held-input
     // handoff around the first engage and the last release is what keeps the
     // game's state honest.
-    void applyGrabs(bool wantPointer, bool wantKeyboard)
+    static void startGrabWatchdog();
+
+    void applyKeyboardGrab(bool wantKeyboard)
     {
-        // Open the connection here rather than requiring a poll first: a grab
-        // request must not silently do nothing just because no frame has run.
         if (x11Display() == nullptr)
             return;
-        if (wantPointer == g_pointerGrabActive && wantKeyboard == g_keyboardGrabActive)
+        std::lock_guard<std::mutex> lock(g_grabMutex);
+        if (wantKeyboard == g_keyboardGrabActive)
             return;
-
-        const bool wantAny = wantPointer || wantKeyboard;
 
         const unsigned long gameWindow = x11GameWindow();
         const Window grabWindow = gameWindow ? (Window)gameWindow : DefaultRootWindow(g_display);
 
-        if (wantPointer != g_pointerGrabActive)
+        if (wantKeyboard)
         {
-            if (wantPointer)
-            {
-                // releases first, while the game can still see its own events
-                handOffHeldButtons(false);
+            // releases first: redirecting them would leave the game holding
+            // every key that happened to be down when the overlay was used
+            handOffHeldKeys(false);
 
-                const int status = XGrabPointer(g_display, grabWindow, False,
-                                                ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-                                                GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
-                if (status != GrabSuccess)
-                    Logger::warn("X11 input: pointer grab failed (" + std::to_string(status) + ")");
-            }
-            else
-            {
-                XUngrabPointer(g_display, CurrentTime);
-                // now that button events reach the game again, hand back what we
-                // took: the releases cleared the server's button state, so only
-                // what we tracked can be re-pressed
-                handOffHeldButtons(true);
-            }
-            g_pointerGrabActive = wantPointer;
+            const int status = XGrabKeyboard(g_display, grabWindow, False,
+                                             GrabModeAsync, GrabModeAsync, CurrentTime);
+            if (status != GrabSuccess)
+                Logger::warn("X11 input: keyboard grab failed (" + std::to_string(status) + ")");
+            startGrabWatchdog();
+        }
+        else
+        {
+            XUngrabKeyboard(g_display, CurrentTime);
+            // now that key events reach the game again, hand back what we
+            // took: the releases cleared the server's key state, so only what
+            // we tracked can be re-pressed
+            handOffHeldKeys(true);
         }
 
-        if (wantKeyboard != g_keyboardGrabActive)
-        {
-            if (wantKeyboard)
-            {
-                // releases first: redirecting them would leave the game holding
-                // every key that happened to be down when the overlay was used
-                handOffHeldKeys(false);
-
-                const int status = XGrabKeyboard(g_display, grabWindow, False,
-                                                 GrabModeAsync, GrabModeAsync, CurrentTime);
-                if (status != GrabSuccess)
-                    Logger::warn("X11 input: keyboard grab failed (" + std::to_string(status) + ")");
-            }
-            else
-            {
-                XUngrabKeyboard(g_display, CurrentTime);
-                handOffHeldKeys(true);
-            }
-            g_keyboardGrabActive = wantKeyboard;
-        }
-
-        g_grabWindow = wantAny ? grabWindow : 0;
+        g_keyboardGrabActive = wantKeyboard;
+        g_grabWindow = wantKeyboard ? grabWindow : 0;
         applyGrabEventMask();
         XFlush(g_display);
 
-        Logger::debug(std::string("X11 input: grabs pointer=") + (wantPointer ? "on" : "off")
-                      + " keyboard=" + (wantKeyboard ? "on" : "off"));
+        Logger::debug(std::string("X11 input: keyboard grab ") + (wantKeyboard ? "on" : "off"));
+    }
+
+    // A stalled render loop with the grab up would lock the keyboard out with
+    // nobody left to release it, so the watchdog lets go once the per-frame
+    // pump stops.
+    static void startGrabWatchdog()
+    {
+        bool expected = false;
+        if (!g_watchdogStarted.compare_exchange_strong(expected, true))
+            return;
+
+        std::thread([] {
+            for (;;)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                if (!g_keyboardGrabActive.load(std::memory_order_acquire))
+                    continue;
+                const long long last = g_lastPumpMs.load(std::memory_order_acquire);
+                const long long now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (last == 0 || now - last < 2000)
+                    continue;
+
+                std::lock_guard<std::mutex> lock(g_grabMutex);
+                if (!g_keyboardGrabActive.load(std::memory_order_relaxed))
+                    continue;
+                if (g_grabWindow)
+                {
+                    XSelectInput(g_display, g_grabWindow, 0);
+                    XUngrabKeyboard(g_display, CurrentTime);
+                    handOffHeldKeys(true);
+                }
+                g_keyboardGrabActive = false;
+                g_grabWindow = 0;
+                XFlush(g_display);
+                Logger::warn("X11 input: render loop stalled with the keyboard grab up; released it");
+            }
+        }).detach();
     }
 
     // The layer opens its own Display connection, so it is a distinct X client
-    // from the game. A server-side grab on that connection takes pointer events,
-    // or key events, away from the game's connection entirely.
-    void x11SetGrabState(bool grab)
+    // from the game. A server-side keyboard grab on that connection takes key
+    // events away from the game's connection entirely.
+    void x11SetKeyboardGrabState(bool grab)
     {
-        applyGrabs(grab, g_keyboardGrabActive);
+        applyKeyboardGrab(grab);
     }
 
     // the handoff cleared these server-side while the player still holds them;
@@ -397,25 +365,85 @@ namespace VKIntox
         return setContains(g_synthHeldKeys, keycode);
     }
 
-    bool x11ButtonSynthHeld(unsigned int button)
+    // Map input-only shield windows over the hitboxes. They are children of
+    // the game window, so rect coordinates are window-relative, and they get
+    // clicks and motion instead of the game. Nothing is grabbed: Wine never
+    // sees grab focus events from a pointer crossing.
+    void x11UpdateInputShields(const InputRect* rects, int count, bool active)
     {
-        return setContains(g_synthHeldButtons, button);
-    }
+        if (x11Display() == nullptr)
+            return;
 
-    void x11SetKeyboardGrabState(bool grab)
-    {
-        applyGrabs(g_pointerGrabActive, grab);
+        const Window parent = (Window)x11GameWindow();
+        if (!active || parent == 0)
+        {
+            for (InputShield& shield : g_shields)
+            {
+                if (shield.window)
+                    XUnmapWindow(g_display, shield.window);
+            }
+            XFlush(g_display);
+            return;
+        }
+
+        std::vector<const InputRect*> valid;
+        valid.reserve(static_cast<size_t>(count > 0 ? count : 0));
+        for (int i = 0; i < count; ++i)
+        {
+            if (rects[i].width > 0.0f && rects[i].height > 0.0f)
+                valid.push_back(&rects[i]);
+        }
+
+        if (g_shields.size() > valid.size())
+        {
+            // unmapped before the record is dropped, or the window would stay
+            // up swallowing clicks with nothing left to track it
+            for (size_t i = valid.size(); i < g_shields.size(); ++i)
+            {
+                if (g_shields[i].window)
+                    XUnmapWindow(g_display, g_shields[i].window);
+            }
+        }
+        g_shields.resize(valid.size());
+
+        for (size_t i = 0; i < valid.size(); ++i)
+        {
+            InputShield& shield = g_shields[i];
+            const InputRect& rect = *valid[i];
+            if (!shield.window || shield.parent != parent)
+            {
+                // a dead parent took its shields with it; stale ids are never
+                // touched, just abandoned
+                XSetWindowAttributes attr{};
+                attr.override_redirect = True;
+                shield.window = XCreateWindow(g_display, parent, 0, 0, 1, 1, 0,
+                                              CopyFromParent, InputOnly, CopyFromParent,
+                                              CWOverrideRedirect, &attr);
+                XSelectInput(g_display, shield.window,
+                             ButtonPressMask | ButtonReleaseMask | PointerMotionMask);
+                shield.parent = parent;
+            }
+            XMoveResizeWindow(g_display, shield.window,
+                              static_cast<int>(rect.x), static_cast<int>(rect.y),
+                              static_cast<int>(rect.width), static_cast<int>(rect.height));
+            XRaiseWindow(g_display, shield.window);
+            XMapWindow(g_display, shield.window);
+        }
+        XFlush(g_display);
     }
 
     bool x11GrabActive()
     {
-        return g_pointerGrabActive || g_keyboardGrabActive;
+        return g_keyboardGrabActive.load(std::memory_order_acquire);
     }
 
     void pumpX11Input()
     {
         if (!x11Available())
             return;
+
+        g_lastPumpMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_release);
 
         while (XPending(g_display) > 0)
         {
@@ -440,7 +468,7 @@ namespace VKIntox
                     break;
                 case XI_RawButtonPress:
                 case XI_RawButtonRelease:
-                    if (!g_pointerGrabActive && g_buttonCallback)
+                    if (g_buttonCallback)
                     {
                         const bool pressed = ev.xcookie.evtype == XI_RawButtonPress;
                         g_buttonCallback(((XIRawEvent*)ev.xcookie.data)->detail, pressed);
@@ -456,18 +484,13 @@ namespace VKIntox
                 // consumed while grabbed (raw events can stop during a core
                 // grab) or as the no-XInput2 fallback; outside both, raw
                 // already delivered this key and core would double it.
-                if ((g_keyboardGrabActive || !g_xiReady) && g_keyCallback)
+                if (g_keyboardGrabActive && g_keyCallback)
                     g_keyCallback(ev.xkey.keycode, ev.type == KeyPress);
                 if (g_keyboardGrabActive)
-                    trackGrabbedInput(ev.xkey.keycode, 0, true, ev.type == KeyPress);
+                    trackGrabbedInput(ev.xkey.keycode, ev.type == KeyPress);
             }
-            else if (ev.type == ButtonPress || ev.type == ButtonRelease)
-            {
-                if ((g_pointerGrabActive || !g_xiReady) && g_buttonCallback)
-                    g_buttonCallback(ev.xbutton.button, ev.type == ButtonPress);
-                if (g_pointerGrabActive)
-                    trackGrabbedInput(0, ev.xbutton.button, false, ev.type == ButtonPress);
-            }
+            // core button events on this connection are only the shields'
+            // swallowed clicks; the wheel comes from the raw feed above
         }
     }
 } // namespace VKIntox

@@ -1,8 +1,8 @@
-// X11 input blocking, against the layer's real blocker: the pointer grab must
-// follow the cursor, the keyboard grab must engage while the interactive shell
-// is up and release when it closes, and held keys and buttons must be handed to
-// the game across each grab, or the game keeps holding whatever was down when
-// the overlay was used.
+// X11 input blocking, against the layer's real blocker: the overlay hitbox is
+// covered by input-only shield windows that swallow clicks and motion without
+// any grab, the keyboard grab only engages while the overlay consumes keys,
+// and held keys are handed to the game across the grab, or the game keeps
+// holding whatever was down when the overlay was used.
 //
 // It synthesises real input on the developer's display, so it only runs with
 // VKINTOX_X11_INPUT_TEST=1 set; otherwise it reports SKIP (exit 77).
@@ -32,8 +32,10 @@ static void pump(Display* d, const char* tag, int* sawPress, int* sawRelease, in
     {
         XEvent ev;
         XNextEvent(d, &ev);
-        if (ev.type == KeyPress)   { (*sawPress)++;   printf("    [%s] game: KeyPress keycode=%u\n", tag, ev.xkey.keycode); }
-        if (ev.type == KeyRelease) { (*sawRelease)++; printf("    [%s] game: KeyRelease keycode=%u\n", tag, ev.xkey.keycode); }
+        if (ev.type == ButtonPress)   { (*sawPress)++;   printf("    [%s] game: ButtonPress button=%u\n", tag, ev.xbutton.button); }
+        if (ev.type == ButtonRelease) { (*sawRelease)++; printf("    [%s] game: ButtonRelease button=%u\n", tag, ev.xbutton.button); }
+        if (ev.type == KeyPress)      { (*sawPress)++;   printf("    [%s] game: KeyPress keycode=%u\n", tag, ev.xkey.keycode); }
+        if (ev.type == KeyRelease)    { (*sawRelease)++; printf("    [%s] game: KeyRelease keycode=%u\n", tag, ev.xkey.keycode); }
         if ((ev.type == FocusIn || ev.type == FocusOut) && ev.xfocus.mode != 0)
         {
             (*sawGrabFocus)++;
@@ -92,7 +94,7 @@ int main(int argc, char** argv)
 
     const Window root = DefaultRootWindow(game);
     const Window win = XCreateSimpleWindow(game, root, 90, 90, 380, 260, 0, 0, 0x101820);
-    XSelectInput(game, win, KeyPressMask | KeyReleaseMask | FocusChangeMask | StructureNotifyMask);
+    XSelectInput(game, win, KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | FocusChangeMask | StructureNotifyMask);
     XStoreName(game, win, "vkintox input test");
     XMapWindow(game, win);
     XSync(game, False);
@@ -111,13 +113,29 @@ int main(int argc, char** argv)
     struct InputRect rect = {0.0f, 0.0f, 380.0f, 260.0f};
     setInputRects(&rect, 1);
     setInputBlocked(true);
-    updatePointerPosition(100.0f, 100.0f);   // pointer over the overlay hitbox
 
-    printf("\n1. pointer over the overlay: pointer grab taken, keyboard left alone\n");
-    printf("    pointer grab : %s\n", grabStatus(probe, root, 0));
-    printf("    keyboard grab: %s\n", grabStatus(probe, root, 1));
-    int ok1 = strcmp(grabStatus(probe, root, 0), "held by the layer") == 0
+    printf("\n1. a click over the overlay is swallowed by the shield, no grab held\n");
+    int ok1;
+    {
+        XTestFakeMotionEvent(probe, 0, 90 + 50, 90 + 50, CurrentTime);
+        XSync(probe, False);
+        usleep(150000);
+        p = r = f = 0;
+        pump(game, "shield-click", &p, &r, &f);
+        XTestFakeButtonEvent(probe, 1, True, CurrentTime);
+        XSync(probe, False);
+        usleep(150000);
+        XTestFakeButtonEvent(probe, 1, False, CurrentTime);
+        XSync(probe, False);
+        usleep(150000);
+        p = r = f = 0;
+        pump(game, "shield-click", &p, &r, &f);
+        printf("    pointer grab : %s\n", grabStatus(probe, root, 0));
+        printf("    keyboard grab: %s\n", grabStatus(probe, root, 1));
+        ok1 = p == 0 && r == 0
+           && strcmp(grabStatus(probe, root, 0), "free") == 0
            && strcmp(grabStatus(probe, root, 1), "free") == 0;
+    }
 
     printf("\n2. a key held across the keyboard grab is released into the game\n");
     XTestFakeKeyEvent(probe, w, True, 0);            // player presses w
@@ -144,16 +162,37 @@ int main(int argc, char** argv)
     printf("    keyboard grab: %s\n", grabStatus(probe, root, 1));
     int ok3 = p > 0 && strcmp(grabStatus(probe, root, 1), "free") == 0;
 
+    printf("\n4. dropping the overlay unmaps the shields, clicks reach the game again\n");
+    int ok4;
+    {
+        setInputRects(nullptr, 0);
+        setInputBlocked(false);
+        usleep(200000);
+        XTestFakeMotionEvent(probe, 0, 90 + 50, 90 + 50, CurrentTime);
+        XSync(probe, False);
+        usleep(150000);
+        XTestFakeButtonEvent(probe, 1, True, CurrentTime);
+        XSync(probe, False);
+        usleep(150000);
+        XTestFakeButtonEvent(probe, 1, False, CurrentTime);
+        XSync(probe, False);
+        usleep(150000);
+        p = r = f = 0;
+        pump(game, "open-click", &p, &r, &f);
+        ok4 = p > 0 && r > 0;
+    }
+
     // clean up the simulated physical key
     XTestFakeKeyEvent(probe, w, False, 0);
     XSync(probe, False);
     pump(game, "cleanup", &p, &r, &f);
 
-    printf("\nresult: 1=%s 2=%s 3=%s\n", ok1 ? "PASS" : "FAIL", ok2 ? "PASS" : "FAIL", ok3 ? "PASS" : "FAIL");
-    printf("%s\n", (ok1 && ok2 && ok3) ? "ALL PASS" : "FAILURES PRESENT");
+    printf("\nresult: 1=%s 2=%s 3=%s 4=%s\n", ok1 ? "PASS" : "FAIL", ok2 ? "PASS" : "FAIL",
+           ok3 ? "PASS" : "FAIL", ok4 ? "PASS" : "FAIL");
+    printf("%s\n", (ok1 && ok2 && ok3 && ok4) ? "ALL PASS" : "FAILURES PRESENT");
 
     XDestroyWindow(game, win);
     XCloseDisplay(probe);
     XCloseDisplay(game);
-    return (ok1 && ok2 && ok3) ? 0 : 1;
+    return (ok1 && ok2 && ok3 && ok4) ? 0 : 1;
 }
