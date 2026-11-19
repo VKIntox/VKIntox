@@ -295,6 +295,24 @@ namespace VKIntox
                 settings.showFps = (value == "true" || value == "1");
             else if (key == "fpsExtended")
                 settings.fpsExtended = (value == "true" || value == "1");
+            else if (key == "lsfgEnabled")
+                settings.lsfgEnabled = (value == "true" || value == "1");
+            else if (key == "lsfgMultiplier")
+            {
+                try { settings.lsfgMultiplier = std::clamp(std::stoi(value), 2, 4); }
+                catch (...) { Logger::err("invalid lsfgMultiplier value: " + value); }
+            }
+            else if (key == "lsfgFlowScale")
+            {
+                try { settings.lsfgFlowScale = std::stof(value); }
+                catch (...) { Logger::err("invalid lsfgFlowScale value: " + value); }
+            }
+            else if (key == "lsfgPerformanceMode")
+                settings.lsfgPerformanceMode = (value == "true" || value == "1");
+            else if (key == "lsfgHalfPrecision")
+                settings.lsfgHalfPrecision = (value == "true" || value == "1");
+            else if (key == "lsfgDllPath")
+                settings.lsfgDllPath = value;
             else if (key == "fpsCorner")
             {
                 if (value == "top-left") settings.fpsCorner = 0;
@@ -406,6 +424,12 @@ namespace VKIntox
         file << "# fpsCorner: top-right (default), top-left, bottom-left, bottom-right\n";
         file << "showFps = " << (settings.showFps ? "true" : "false") << "\n";
         file << "fpsExtended = " << (settings.fpsExtended ? "true" : "false") << "\n";
+        file << "lsfgEnabled = " << (settings.lsfgEnabled ? "true" : "false") << "\n";
+        file << "lsfgMultiplier = " << settings.lsfgMultiplier << "\n";
+        file << "lsfgFlowScale = " << settings.lsfgFlowScale << "\n";
+        file << "lsfgPerformanceMode = " << (settings.lsfgPerformanceMode ? "true" : "false") << "\n";
+        file << "lsfgHalfPrecision = " << (settings.lsfgHalfPrecision ? "true" : "false") << "\n";
+        file << "lsfgDllPath = " << settings.lsfgDllPath << "\n";
         {
             static const char* const kCorners[] = {"top-left", "top-right", "bottom-left", "bottom-right"};
             file << "fpsCorner = " << kCorners[std::clamp(settings.fpsCorner, 0, 3)] << "\n";

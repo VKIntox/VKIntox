@@ -103,6 +103,66 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.showFps;
         }
+        bool getLsfgEnabled() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.lsfgEnabled;
+        }
+        int getLsfgMultiplier() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return std::clamp(settings.lsfgMultiplier, 2, 4);
+        }
+        float getLsfgFlowScale() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.lsfgFlowScale;
+        }
+        bool getLsfgPerformanceMode() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.lsfgPerformanceMode;
+        }
+        bool getLsfgHalfPrecision() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.lsfgHalfPrecision;
+        }
+        std::string getLsfgDllPath() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.lsfgDllPath;
+        }
+        void setLsfgEnabled(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.lsfgEnabled = value;
+        }
+        void setLsfgMultiplier(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.lsfgMultiplier = std::clamp(value, 2, 4);
+        }
+        void setLsfgFlowScale(float value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.lsfgFlowScale = value;
+        }
+        void setLsfgPerformanceMode(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.lsfgPerformanceMode = value;
+        }
+        void setLsfgHalfPrecision(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.lsfgHalfPrecision = value;
+        }
+        void setLsfgDllPath(const std::string& value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.lsfgDllPath = value;
+        }
         bool getFpsExtended() const
         {
             std::lock_guard<std::mutex> lock(mutex);
