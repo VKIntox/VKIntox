@@ -100,7 +100,9 @@ namespace VKIntox
         int min = 0;
     };
 
-    class KeyUniform : public ReshadeUniform
+    // exported so the key uniform test can construct real instances against
+    // the layer's live key state
+    class __attribute__((visibility("default"))) KeyUniform : public ReshadeUniform
     {
     public:
         KeyUniform(reshadefx::uniform_info uniformInfo);
