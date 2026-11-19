@@ -20,6 +20,15 @@ uniform bool keyHoldInverted <
     invert = true;
 >;
 
+void keyColorVS(out float4 pos : SV_Position, out float2 uv : TEXCOORD, uint vid : SV_VertexID)
+{
+    // fullscreen triangle
+    float x = float((vid << 1) & 2);
+    float y = float(vid & 2);
+    uv = float2(x, y);
+    pos = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+
 float4 keyColorPS(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 {
     float r = keyHold ? 1.0 : 0.0;
@@ -32,6 +41,7 @@ technique KeyTest
 {
     pass
     {
+        VertexShader = keyColorVS;
         PixelShader = keyColorPS;
     }
 }
