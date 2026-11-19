@@ -209,6 +209,46 @@ int main(int argc, char** argv)
         dropUniform(u);
     }
 
+    printf("\n6. int and float uniform types\n");
+    {
+        auto makeTyped = [&](reshadefx::type::datatype base, uint32_t size)
+        {
+            reshadefx::uniform_info info{};
+            info.type = { base, 1, 1 };
+            info.offset = 0;
+            info.size = size;
+            info.annotations = {stringAnnotation("source", "key"), intAnnotation("keycode", (int32_t)vkF8)};
+            void* storage = new unsigned char[256];
+            keyUniformCtor(storage, &info);
+            return storage;
+        };
+        void* u = makeTyped(reshadefx::type::t_int, 4);
+        keyUniformUpdate(u, u);
+        int32_t iv = 0;
+        memcpy(&iv, u, 4);
+        press();
+        keyUniformUpdate(u, u);
+        int32_t ivDown = 0;
+        memcpy(&ivDown, u, 4);
+        release();
+        keyUniformDtor(u); delete[] (unsigned char*)u;
+        printf("    int: up=%d down=%d\n", iv, ivDown);
+        if (!(iv == 0 && ivDown == 1)) failures++;
+
+        void* f = makeTyped(reshadefx::type::t_float, 4);
+        press();
+        keyUniformUpdate(f, f);
+        float fv = 0;
+        memcpy(&fv, f, 4);
+        release();
+        keyUniformUpdate(f, f);
+        float fvUp = 0;
+        memcpy(&fvUp, f, 4);
+        keyUniformDtor(f); delete[] (unsigned char*)f;
+        printf("    float: down=%.1f up=%.1f\n", fv, fvUp);
+        if (!(fv == 1.0f && fvUp == 0.0f)) failures++;
+    }
+
     // clean up the physical state
     release();
 
