@@ -2358,7 +2358,7 @@ namespace VKIntox
         // "##..." renders as an empty native title: the bar keeps its drag
         // rect while the brand row below owns the pixels.
         ImGui::Begin("##vkintox_overlay", nullptr,
-                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
 
         // Fade every widget the shell draws. Raw draw-list marks below get the
@@ -2398,19 +2398,33 @@ namespace VKIntox
                 }
             }
 
-            static bool cornerResizing = false;
-            static int cornerResizingIndex = -1;
-            static ImVec2 cornerResizingMouse;
-            static ImVec2 cornerResizingPos;
-            static ImVec2 cornerResizingSize;
+            static int cornerIndex = -1;
+            if (!overClose)
+            {
+                for (int i = 0; i < 4 && cornerIndex < 0; ++i)
+                {
+                    const float cx = (i & 1) ? windowPos.x + windowSize.x : windowPos.x;
+                    const float cy = (i & 2) ? windowPos.y + windowSize.y : windowPos.y;
+                    const float dx = pio.MousePos.x - cx;
+                    const float dy = pio.MousePos.y - cy;
+                    if (dx * dx + dy * dy <= grip * grip)
+                        cornerIndex = i;
+                }
+            }
 
-            if (corner >= 0 && !cornerResizing && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            if (cornerIndex >= 0 && !cornerResizing && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
                 cornerResizing = true;
-                cornerResizingIndex = corner;
-                cornerResizingMouse = pio.MousePos;
-                cornerResizingPos = windowPos;
-                cornerResizingSize = windowSize;
+                cornerResizingIndex = cornerIndex;
+                cornerResizingMouseX = pio.MousePos.x;
+                cornerResizingMouseY = pio.MousePos.y;
+                cornerResizingPosX = windowPos.x;
+                cornerResizingPosY = windowPos.y;
+                cornerResizingSizeW = windowSize.x;
+                cornerResizingSizeH = windowSize.y;
+                // a corner grab is a grab: the saved-geometry restore must stop
+                // re-asserting the old size over it
+                geometryRestorePending = false;
             }
             if (cornerResizing)
             {
@@ -2419,36 +2433,36 @@ namespace VKIntox
                     ImGui::SetMouseCursor((cornerResizingIndex == 0 || cornerResizingIndex == 3)
                                               ? ImGuiMouseCursor_ResizeNWSE
                                               : ImGuiMouseCursor_ResizeNESW);
-                    const ImVec2 delta(pio.MousePos.x - cornerResizingMouse.x, pio.MousePos.y - cornerResizingMouse.y);
-                    ImVec2 pos = cornerResizingPos;
-                    ImVec2 size = cornerResizingSize;
+                    const ImVec2 delta(pio.MousePos.x - cornerResizingMouseX, pio.MousePos.y - cornerResizingMouseY);
+                    ImVec2 pos = ImVec2(cornerResizingPosX, cornerResizingPosY);
+                    ImVec2 size = ImVec2(cornerResizingSizeW, cornerResizingSizeH);
                     const bool west = (cornerResizingIndex & 1) == 0;
                     const bool north = (cornerResizingIndex & 2) == 0;
                     if (west)
                     {
-                        const float right = cornerResizingPos.x + cornerResizingSize.x;
-                        const float left = ImClamp(cornerResizingPos.x + delta.x,
+                        const float right = cornerResizingPosX + cornerResizingSizeW;
+                        const float left = ImClamp(cornerResizingPosX + delta.x,
                                                    right - maxSize.x, right - minSize.x);
                         pos.x = ImClamp(left, screenMin.x, screenMax.x - minSize.x);
                         size.x = right - pos.x;
                     }
                     else
                     {
-                        size.x = ImClamp(cornerResizingSize.x + delta.x, minSize.x,
-                                         ImMin(maxSize.x, screenMax.x - cornerResizingPos.x));
+                        size.x = ImClamp(cornerResizingSizeW + delta.x, minSize.x,
+                                         ImMin(maxSize.x, screenMax.x - cornerResizingPosX));
                     }
                     if (north)
                     {
-                        const float bottom = cornerResizingPos.y + cornerResizingSize.y;
-                        const float top = ImClamp(cornerResizingPos.y + delta.y,
+                        const float bottom = cornerResizingPosY + cornerResizingSizeH;
+                        const float top = ImClamp(cornerResizingPosY + delta.y,
                                                   bottom - maxSize.y, bottom - minSize.y);
                         pos.y = ImClamp(top, screenMin.y, screenMax.y - minSize.y);
                         size.y = bottom - pos.y;
                     }
                     else
                     {
-                        size.y = ImClamp(cornerResizingSize.y + delta.y, minSize.y,
-                                         ImMin(maxSize.y, screenMax.y - cornerResizingPos.y));
+                        size.y = ImClamp(cornerResizingSizeH + delta.y, minSize.y,
+                                         ImMin(maxSize.y, screenMax.y - cornerResizingPosY));
                     }
                     ImGui::SetWindowPos(pos);
                     ImGui::SetWindowSize(size);
@@ -2458,9 +2472,9 @@ namespace VKIntox
                 else
                     cornerResizing = false;
             }
-            else if (corner >= 0)
+            else if (cornerIndex >= 0)
             {
-                ImGui::SetMouseCursor((corner == 0 || corner == 3)
+                ImGui::SetMouseCursor((cornerIndex == 0 || cornerIndex == 3)
                                           ? ImGuiMouseCursor_ResizeNWSE
                                           : ImGuiMouseCursor_ResizeNESW);
             }
@@ -2545,19 +2559,29 @@ namespace VKIntox
         const ImVec2 mousePos = ImGui::GetIO().MousePos;
         const bool pointerInTitleBar = mousePos.x >= windowPos.x && mousePos.x < windowPos.x + windowSize.x &&
                                        mousePos.y >= windowPos.y && mousePos.y < windowPos.y + titleBarHeight;
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && pointerInTitleBar && !buttonHovered)
+        // either button drags the bar; a corner grab wins so the top edges
+        // resize instead of moving the window (NoMove took the built-in drag
+        // away, this is its replacement)
+        if (!cornerResizing && pointerInTitleBar && !buttonHovered)
         {
-            titleRightDragging = true;
-            titleRightDragOffsetX = mousePos.x - windowPos.x;
-            titleRightDragOffsetY = mousePos.y - windowPos.y;
+            for (int button : {ImGuiMouseButton_Left, ImGuiMouseButton_Right})
+            {
+                if (ImGui::IsMouseClicked(button))
+                {
+                    titleDragging = true;
+                    titleDragButton = button;
+                    titleDragOffsetX = mousePos.x - windowPos.x;
+                    titleDragOffsetY = mousePos.y - windowPos.y;
+                }
+            }
         }
-        if (titleRightDragging)
+        if (titleDragging)
         {
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Right))
-                ImGui::SetWindowPos(ImVec2(mousePos.x - titleRightDragOffsetX,
-                                           mousePos.y - titleRightDragOffsetY));
+            if (titleDragButton >= 0 && ImGui::IsMouseDown(titleDragButton))
+                ImGui::SetWindowPos(ImVec2(mousePos.x - titleDragOffsetX,
+                                           mousePos.y - titleDragOffsetY));
             else
-                titleRightDragging = false;
+                titleDragging = false;
         }
         const bool closeRequested = buttonHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         // The titlebar rides the window's own draw list, not the foreground one,

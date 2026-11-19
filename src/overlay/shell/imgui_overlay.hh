@@ -405,9 +405,19 @@ namespace VKIntox
         // saved geometry is re-applied each frame until the user grabs the window
         bool geometryRestorePending = false;
         bool resetLayoutRequested = false;  // When true, reset window position/size next frame
-        bool titleRightDragging = false;
-        float titleRightDragOffsetX = 0.0f;
-        float titleRightDragOffsetY = 0.0f;
+        bool titleDragging = false;
+        int titleDragButton = -1;
+        float titleDragOffsetX = 0.0f;
+        float titleDragOffsetY = 0.0f;
+        // corner resize drag state (all four corners)
+        bool cornerResizing = false;
+        int cornerResizingIndex = -1;
+        float cornerResizingMouseX = 0.0f;
+        float cornerResizingMouseY = 0.0f;
+        float cornerResizingPosX = 0.0f;
+        float cornerResizingPosY = 0.0f;
+        float cornerResizingSizeW = 0.0f;
+        float cornerResizingSizeH = 0.0f;
         uint32_t currentWidth = 1920;   // Current swapchain resolution for VRAM estimates
         uint32_t currentHeight = 1080;
         char saveConfigName[64] = "";
