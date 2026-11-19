@@ -2358,15 +2358,113 @@ namespace VKIntox
         // "##..." renders as an empty native title: the bar keeps its drag
         // rect while the brand row below owns the pixels.
         ImGui::Begin("##vkintox_overlay", nullptr,
-                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImGui::GetStyle().FramePadding.y = previousFramePaddingY;
 
         // Fade every widget the shell draws. Raw draw-list marks below get the
         // alpha applied by hand.
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, shellAlpha);
 
-        const ImVec2 windowPos = ImGui::GetWindowPos();
-        const ImVec2 windowSize = ImGui::GetWindowSize();
+        ImVec2 windowPos = ImGui::GetWindowPos();
+        ImVec2 windowSize = ImGui::GetWindowSize();
+
+        // every corner grabs a diagonal resize, and the stock bottom-right grip
+        // is off, so this is the only way to change the shell's size. The
+        // grabbed edge moves while the opposite one stays put.
+        {
+            const ImGuiIO& pio = ImGui::GetIO();
+            const float density = ImGuiM3GetMetrics().density;
+            const float grip = 14.0f * density;
+
+            // the close button keeps its pixels; it sits inside the top-right
+            const float titleBarHeight = ImGui::GetCurrentWindowRead()->TitleBarHeight;
+            const float closeButtonSize = 26.0f * density;
+            const ImVec2 buttonMin(windowPos.x + windowSize.x - closeButtonSize - 14.0f * density,
+                                   windowPos.y + (titleBarHeight - closeButtonSize) * 0.5f);
+            const bool overClose = ImGui::IsMouseHoveringRect(buttonMin,
+                                                             ImVec2(buttonMin.x + closeButtonSize, buttonMin.y + closeButtonSize), false);
+
+            int corner = -1;
+            if (!overClose)
+            {
+                for (int i = 0; i < 4 && corner < 0; ++i)
+                {
+                    const float cx = (i & 1) ? windowPos.x + windowSize.x : windowPos.x;
+                    const float cy = (i & 2) ? windowPos.y + windowSize.y : windowPos.y;
+                    const float dx = pio.MousePos.x - cx;
+                    const float dy = pio.MousePos.y - cy;
+                    if (dx * dx + dy * dy <= grip * grip)
+                        corner = i;
+                }
+            }
+
+            static bool cornerResizing = false;
+            static int cornerResizingIndex = -1;
+            static ImVec2 cornerResizingMouse;
+            static ImVec2 cornerResizingPos;
+            static ImVec2 cornerResizingSize;
+
+            if (corner >= 0 && !cornerResizing && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            {
+                cornerResizing = true;
+                cornerResizingIndex = corner;
+                cornerResizingMouse = pio.MousePos;
+                cornerResizingPos = windowPos;
+                cornerResizingSize = windowSize;
+            }
+            if (cornerResizing)
+            {
+                if (pio.MouseDown[0])
+                {
+                    ImGui::SetMouseCursor((cornerResizingIndex == 0 || cornerResizingIndex == 3)
+                                              ? ImGuiMouseCursor_ResizeNWSE
+                                              : ImGuiMouseCursor_ResizeNESW);
+                    const ImVec2 delta(pio.MousePos.x - cornerResizingMouse.x, pio.MousePos.y - cornerResizingMouse.y);
+                    ImVec2 pos = cornerResizingPos;
+                    ImVec2 size = cornerResizingSize;
+                    const bool west = (cornerResizingIndex & 1) == 0;
+                    const bool north = (cornerResizingIndex & 2) == 0;
+                    if (west)
+                    {
+                        const float right = cornerResizingPos.x + cornerResizingSize.x;
+                        const float left = ImClamp(cornerResizingPos.x + delta.x,
+                                                   right - maxSize.x, right - minSize.x);
+                        pos.x = ImClamp(left, screenMin.x, screenMax.x - minSize.x);
+                        size.x = right - pos.x;
+                    }
+                    else
+                    {
+                        size.x = ImClamp(cornerResizingSize.x + delta.x, minSize.x,
+                                         ImMin(maxSize.x, screenMax.x - cornerResizingPos.x));
+                    }
+                    if (north)
+                    {
+                        const float bottom = cornerResizingPos.y + cornerResizingSize.y;
+                        const float top = ImClamp(cornerResizingPos.y + delta.y,
+                                                  bottom - maxSize.y, bottom - minSize.y);
+                        pos.y = ImClamp(top, screenMin.y, screenMax.y - minSize.y);
+                        size.y = bottom - pos.y;
+                    }
+                    else
+                    {
+                        size.y = ImClamp(cornerResizingSize.y + delta.y, minSize.y,
+                                         ImMin(maxSize.y, screenMax.y - cornerResizingPos.y));
+                    }
+                    ImGui::SetWindowPos(pos);
+                    ImGui::SetWindowSize(size);
+                    windowPos = pos;
+                    windowSize = size;
+                }
+                else
+                    cornerResizing = false;
+            }
+            else if (corner >= 0)
+            {
+                ImGui::SetMouseCursor((corner == 0 || corner == 3)
+                                          ? ImGuiMouseCursor_ResizeNWSE
+                                          : ImGuiMouseCursor_ResizeNESW);
+            }
+        }
 
         // A settled frame writes its (possibly dragged) position back into the
         // base and stops forcing the position, so dragging works again.
