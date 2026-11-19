@@ -295,6 +295,9 @@ namespace VKIntox
             inputSurfaceX = 0.0f;
             inputSurfaceY = 0.0f;
             wl_surface_set_input_region(inputSurface, inputRegion); // empty => pass-through
+            // detach the buffer: the subsurface stays mapped with the stale
+            // one otherwise, keeping a ghost surface above the game
+            wl_surface_attach(inputSurface, nullptr, 0, 0);
             wl_surface_commit(inputSurface);
             if (wl_display* display = getWaylandDisplay())
                 wl_display_flush(display);

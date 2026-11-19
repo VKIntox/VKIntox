@@ -9,12 +9,14 @@ namespace VKIntox
     void registerOverlayProxy(wl_proxy* proxy);
     void unregisterOverlayProxy(wl_proxy* proxy);
 
-    // Release every key the wrapped game keyboards currently hold (or re-press
-    // whatever is still physically held). Called when the pointer crosses the
-    // overlay hitbox, so a held movement key stops without dropping keyboard
-    // focus — a synthetic leave/enter stalls input until the next press.
-    // Mouse buttons are deliberately untouched: a synthetic release would break
-    // click/drag ordering. Only works when the listener/dispatcher interposition
-    // is active.
+    // True once the interposer wrapped a game pointer/keyboard listener. Games
+    // that bound their seat before the layer loaded are never wrapped; their
+    // input then flows to the layer only through the layer's own bindings.
+    bool waylandPointerWrapped();
+    bool waylandKeyboardWrapped();
+
+    // Release every key the wrapped game keyboards saw a press for (or
+    // re-press whatever it still owns). Edge-triggered by the input blocker
+    // when keyboard blocking engages or lifts.
     void withholdGameKeys(bool withhold);
 }

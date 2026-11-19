@@ -114,29 +114,17 @@ namespace VKIntox
         }
     }
 
-    // Wayland keyboard listener callbacks
-    static void keyboardKeymap(void* /*data*/, wl_keyboard* /*keyboard*/,
-                               uint32_t format, int32_t rawFd, uint32_t size)
+    static void loadKeymap(int fd, uint32_t size, bool ownsFd)
     {
-        // The compositor hands us ownership of this descriptor, and the protocol
-        // requires us to close it on every path out of this callback. Owning it
-        // from the first statement means that holds by construction: the three
-        // manual close() calls this replaces each sat next to an early return,
-        // so any return added later would leak a descriptor straight out of the
-        // compositor's hands with nothing left to notice.
-        UniqueFd fd(rawFd);
-
-        if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1)
-            return;
-
-        char* mapStr = (char*)mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd.get(), 0);
+        char* mapStr = (char*)mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
         if (mapStr == MAP_FAILED)
         {
             Logger::err("Wayland: failed to mmap keymap");
+            if (ownsFd)
+                close(fd);
             return;
         }
 
-        // Clean up old keymap/state
         std::lock_guard<std::mutex> lock(keyboardMutex);
         if (xkbState)
         {
@@ -153,6 +141,10 @@ namespace VKIntox
                                                  XKB_KEYMAP_FORMAT_TEXT_V1,
                                                  XKB_KEYMAP_COMPILE_NO_FLAGS);
         munmap(mapStr, size);
+        // the mapping survives close; ownsFd is false when the fd belongs to
+        // the forwarded game event and the game's listener closes it
+        if (ownsFd)
+            close(fd);
 
         if (!xkbKeymap)
         {
@@ -167,6 +159,26 @@ namespace VKIntox
         Logger::debug("Wayland: keymap loaded");
     }
 
+    // Wayland keyboard listener callbacks
+    static void keyboardKeymap(void* /*data*/, wl_keyboard* /*keyboard*/,
+                               uint32_t format, int32_t rawFd, uint32_t size)
+    {
+        // The compositor hands us ownership of this descriptor, and the protocol
+        // requires us to close it on every path out of this callback. Owning it
+        // from the first statement means that holds by construction: the three
+        // manual close() calls this replaces each sat next to an early return,
+        // so any return added later would leak a descriptor straight out of the
+        // compositor's hands with nothing left to notice.
+        UniqueFd fd(rawFd);
+
+        if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1)
+            return;
+        if (waylandKeyboardWrapped())
+            return;
+
+        loadKeymap(fd.get(), size, false);
+    }
+
     static void keyboardEnter(void* /*data*/, wl_keyboard* /*keyboard*/,
                               uint32_t /*serial*/, wl_surface* /*surface*/,
                               wl_array* /*keys*/)
@@ -176,6 +188,8 @@ namespace VKIntox
     static void keyboardLeave(void* /*data*/, wl_keyboard* /*keyboard*/,
                               uint32_t /*serial*/, wl_surface* /*surface*/)
     {
+        if (waylandKeyboardWrapped())
+            return;
         std::lock_guard<std::mutex> lock(keyboardMutex);
         pressedKeys.clear();
         keyPressEvents.clear();  // Prevent stale keysyms surviving focus loss
@@ -185,6 +199,8 @@ namespace VKIntox
                             uint32_t /*serial*/, uint32_t /*time*/,
                             uint32_t key, uint32_t state)
     {
+        if (waylandKeyboardWrapped())
+            return;
         processWaylandKey(key, state);
     }
 
@@ -193,6 +209,8 @@ namespace VKIntox
                                   uint32_t modsLatched, uint32_t modsLocked,
                                   uint32_t group)
     {
+        if (waylandKeyboardWrapped())
+            return;
         std::lock_guard<std::mutex> lock(keyboardMutex);
         if (xkbState)
             xkb_state_update_mask(xkbState, modsDepressed, modsLatched, modsLocked, 0, 0, group);
@@ -211,6 +229,39 @@ namespace VKIntox
         .modifiers = keyboardModifiers,
         .repeat_info = keyboardRepeatInfo,
     };
+
+    // Feeds from the game's wrapped keyboard (interposer only). The layer's
+    // own listener is skipped while wrapped so one event never loads the
+    // keymap or accumulates typed text twice.
+    void mirrorKeyboardKeymap(uint32_t format, int fd, uint32_t size, bool ownsFd)
+    {
+        if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1)
+        {
+            if (ownsFd)
+                close(fd);
+            return;
+        }
+        loadKeymap(fd, size, ownsFd);
+    }
+
+    void mirrorKeyboardModifiers(uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group)
+    {
+        std::lock_guard<std::mutex> lock(keyboardMutex);
+        if (xkbState)
+            xkb_state_update_mask(xkbState, depressed, latched, locked, 0, 0, group);
+    }
+
+    void mirrorKeyboardKey(uint32_t key, uint32_t state)
+    {
+        processWaylandKey(key, state);
+    }
+
+    void mirrorKeyboardFocusLost()
+    {
+        std::lock_guard<std::mutex> lock(keyboardMutex);
+        pressedKeys.clear();
+        keyPressEvents.clear();
+    }
 
     // Called by shared seat listener when keyboard capability is available
     static void bindKeyboard(wl_seat* seat)

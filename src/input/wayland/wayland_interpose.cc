@@ -17,14 +17,12 @@
 #include "input/wayland/wayland_interpose.hh"
 #include "input/common/input_blocker.hh"
 #include "input/wayland/wayland_display.hh"
-#include "input/wayland/wayland_syncobj_gate.hh"
 #include "input/wayland/wayland_input_common.hh"
+#include "input/wayland/mouse_input_wayland.hh"
+#include "input/wayland/keyboard_input_wayland.hh"
+#include "input/wayland/wayland_syncobj_gate.hh"
 #include "util/logger.hh"
 #include "cursor-shape-v1-client-protocol.h"
-
-// Forward-declare to avoid pulling in mouse_input_wayland.hh (which
-// transitively includes mouse_input.hh → X11 headers in some targets).
-namespace VKIntox { void mirrorButtonState(uint32_t button, bool pressed); }
 
 #include <wayland-client.h>
 #include <dlfcn.h>
@@ -82,8 +80,9 @@ namespace VKIntox
     }
 } // namespace VKIntox
 
-// Last pointer position seen on a game pointer, in wl_surface-local coords.
-// Events without coordinates (button, axis, key) are tested against this.
+// Pointer position in game-surface coordinates: events on the capture surface
+// are translated by its origin so hitbox tests and the layer's mouse state
+// share one space.
 static std::atomic<double> g_lastPointerX{-1.0};
 static std::atomic<double> g_lastPointerY{-1.0};
 
@@ -113,10 +112,6 @@ static std::mutex gameDataMutex;
 static std::unordered_map<wl_pointer*, GamePointerData> gamePointers;
 static std::unordered_map<wl_keyboard*, GameKeyboardData> gameKeyboards;
 
-// Keys the game currently holds, tracked even while blocked so a hitbox
-// crossing can release exactly those and re-press whatever is still held.
-static std::unordered_map<wl_keyboard*, std::unordered_set<uint32_t>> gameHeldKeys;
-
 struct GamePointerDispatcherData
 {
     wl_dispatcher_func_t original;
@@ -131,6 +126,28 @@ struct GameKeyboardDispatcherData
 
 static std::unordered_map<wl_proxy*, GamePointerDispatcherData> gamePointerDispatchers;
 static std::unordered_map<wl_proxy*, GameKeyboardDispatcherData> gameKeyboardDispatchers;
+
+// Per pointer: the surface holding pointer focus and who owns an in-flight
+// press. The owner decides forwarding for the whole implicit grab, so a drag
+// that starts on the game keeps reaching it even across the overlay.
+enum class PressOwner { none, game, overlay };
+
+struct PointerInputState
+{
+    const void* focusSurface = nullptr;
+    PressOwner pressOwner = PressOwner::none;
+};
+static std::unordered_map<void*, PointerInputState> pointerStates;
+
+// Per keyboard: which side saw a press. A blocked press belongs to the overlay
+// and its release is withheld; a game-owned key keeps its release so it never
+// sticks.
+struct KeyOwnership
+{
+    std::unordered_set<uint32_t> gameOwned;
+    std::unordered_set<uint32_t> overlayOwned;
+};
+static std::unordered_map<void*, KeyOwnership> keyOwnership;
 
 // ── Wrapper pointer listener ─────────────────────────────────────────────────
 
@@ -181,13 +198,170 @@ static void restoreGameCursor(struct wl_proxy* pointer, uint32_t serial)
         wl_display_flush(display);
 }
 
+// The overlay draws its own pointer over the capture surface, so the system
+// cursor is hidden there with a null set_cursor on the game's pointer — one
+// client-wide cursor image means two pointer resources fighting over it would
+// thrash.
+static void hideGameCursor(struct wl_proxy* pointer, uint32_t serial)
+{
+    wl_pointer_set_cursor(reinterpret_cast<wl_pointer*>(pointer), serial, nullptr, 0, 0);
+    if (wl_display* display = VKIntox::getWaylandDisplay())
+        wl_display_flush(display);
+}
+
+static PointerInputState* pointerState(void* proxy)
+{
+    auto it = pointerStates.find(proxy);
+    return it != pointerStates.end() ? &it->second : nullptr;
+}
+
+static void toGameCoords(const void* surface, double sx, double sy, double& gx, double& gy)
+{
+    if (isOverlaySurface(surface))
+    {
+        gx = sx + VKIntox::getWaylandInputSurfaceX();
+        gy = sy + VKIntox::getWaylandInputSurfaceY();
+    }
+    else
+    {
+        gx = sx;
+        gy = sy;
+    }
+}
+
+static void storePointer(double x, double y)
+{
+    g_lastPointerX.store(x, std::memory_order_release);
+    g_lastPointerY.store(y, std::memory_order_release);
+}
+
+static bool handlePointerEnter(void* proxy, uint32_t serial, const void* surface, double sx, double sy)
+{
+    double gx = 0, gy = 0;
+    toGameCoords(surface, sx, sy, gx, gy);
+    storePointer(gx, gy);
+    VKIntox::mirrorPointerPosition(gx, gy);
+
+    PointerInputState& state = pointerStates[proxy];
+    state.focusSurface = surface;
+    state.pressOwner = PressOwner::none;
+
+    if (isOverlaySurface(surface))
+    {
+        VKIntox::setWaylandPointerHover(true);
+        hideGameCursor(reinterpret_cast<struct wl_proxy*>(proxy), serial);
+        return false;
+    }
+
+    VKIntox::setWaylandPointerHover(false);
+    restoreGameCursor(reinterpret_cast<struct wl_proxy*>(proxy), serial);
+    return true;
+}
+
+static bool handlePointerLeave(void* proxy, const void* surface)
+{
+    if (isOverlaySurface(surface))
+        VKIntox::setWaylandPointerHover(false);
+    if (PointerInputState* state = pointerState(proxy))
+        state->focusSurface = nullptr;
+    return true;
+}
+
+static bool handlePointerMotion(void* proxy, double sx, double sy)
+{
+    PointerInputState* state = pointerState(proxy);
+    const void* surface = state ? state->focusSurface : nullptr;
+    double gx = 0, gy = 0;
+    toGameCoords(surface, sx, sy, gx, gy);
+    storePointer(gx, gy);
+    VKIntox::mirrorPointerPosition(gx, gy);
+
+    if (!state)
+        return true;
+    if (state->pressOwner == PressOwner::overlay)
+        return false;
+    if (state->pressOwner == PressOwner::none && isOverlaySurface(surface))
+        return false;
+    if (state->pressOwner == PressOwner::none && VKIntox::isInputBlockedAt((float)gx, (float)gy))
+        return false;
+    return true;
+}
+
+static bool handlePointerButton(void* proxy, uint32_t button, uint32_t state)
+{
+    const bool pressed = state == WL_POINTER_BUTTON_STATE_PRESSED;
+    VKIntox::mirrorButtonState(button, pressed);
+
+    PointerInputState* sp = pointerState(proxy);
+    if (pressed)
+    {
+        const void* surface = sp ? sp->focusSurface : nullptr;
+        const bool overlayOwns = isOverlaySurface(surface)
+            || ((!sp || sp->pressOwner == PressOwner::none) && pointerBlocked());
+        if (sp)
+            sp->pressOwner = overlayOwns ? PressOwner::overlay : PressOwner::game;
+        return !overlayOwns;
+    }
+
+    const PressOwner owner = sp ? sp->pressOwner : PressOwner::none;
+    if (sp && owner != PressOwner::none)
+        sp->pressOwner = PressOwner::none;
+    return owner != PressOwner::overlay;
+}
+
+static bool pointerEventWithheld(void* proxy)
+{
+    PointerInputState* state = pointerState(proxy);
+    if (state)
+    {
+        if (state->pressOwner == PressOwner::overlay)
+            return true;
+        if (state->pressOwner == PressOwner::game)
+            return false;
+        if (isOverlaySurface(state->focusSurface))
+            return true;
+    }
+    return pointerBlocked();
+}
+
+static bool handlePointerAxis(void* proxy, uint32_t axis, double value)
+{
+    VKIntox::mirrorScrollAxis(axis, value);
+    return !pointerEventWithheld(proxy);
+}
+
+static bool handlePointerAxisSource(void* proxy, uint32_t /*source*/)
+{
+    return !pointerEventWithheld(proxy);
+}
+
+static bool handlePointerAxisStop(void* proxy, uint32_t /*time*/, uint32_t /*axis*/)
+{
+    return !pointerEventWithheld(proxy);
+}
+
+static bool handlePointerAxisDiscrete(void* proxy, uint32_t axis, int32_t discrete)
+{
+    VKIntox::mirrorScrollDiscrete(axis, discrete);
+    return !pointerEventWithheld(proxy);
+}
+
+static bool handlePointerAxisValue120(void* proxy, uint32_t axis, int32_t value120)
+{
+    VKIntox::mirrorScrollValue120(axis, value120);
+    return !pointerEventWithheld(proxy);
+}
+
+static bool handlePointerFrame(void* proxy)
+{
+    VKIntox::resetScrollFrame();
+    return !pointerEventWithheld(proxy);
+}
+
 static void wp_enter(void* data, wl_pointer* p, uint32_t serial, wl_surface* s, wl_fixed_t x, wl_fixed_t y)
 {
-    if (isOverlaySurface(s))
+    if (!handlePointerEnter(p, serial, s, wl_fixed_to_double(x), wl_fixed_to_double(y)))
         return;
-    restoreGameCursor(reinterpret_cast<struct wl_proxy*>(p), serial);
-    g_lastPointerX.store(wl_fixed_to_double(x), std::memory_order_release);
-    g_lastPointerY.store(wl_fixed_to_double(y), std::memory_order_release);
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
     if (it != gamePointers.end() && it->second.original.enter)
@@ -196,9 +370,8 @@ static void wp_enter(void* data, wl_pointer* p, uint32_t serial, wl_surface* s, 
 
 static void wp_leave(void* data, wl_pointer* p, uint32_t serial, wl_surface* s)
 {
-    if (isOverlaySurface(s))
+    if (!handlePointerLeave(p, s))
         return;
-    // Always forward leave — the game needs to know it lost focus
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
     if (it != gamePointers.end() && it->second.original.leave)
@@ -207,11 +380,7 @@ static void wp_leave(void* data, wl_pointer* p, uint32_t serial, wl_surface* s)
 
 static void wp_motion(void* data, wl_pointer* p, uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
-    const double fx = wl_fixed_to_double(x);
-    const double fy = wl_fixed_to_double(y);
-    g_lastPointerX.store(fx, std::memory_order_release);
-    g_lastPointerY.store(fy, std::memory_order_release);
-    if (VKIntox::isInputBlockedAt((float)fx, (float)fy))
+    if (!handlePointerMotion(p, wl_fixed_to_double(x), wl_fixed_to_double(y)))
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -221,12 +390,7 @@ static void wp_motion(void* data, wl_pointer* p, uint32_t time, wl_fixed_t x, wl
 
 static void wp_button(void* data, wl_pointer* p, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
-    // Always mirror button state to overlay — the game's pointer receives
-    // releases via Wayland's implicit grab that our overlay pointer never sees.
-    if (VKIntox::isWayland())
-        VKIntox::mirrorButtonState(button, state == WL_POINTER_BUTTON_STATE_PRESSED);
-
-    if (pointerBlocked())
+    if (!handlePointerButton(p, button, state))
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -236,7 +400,7 @@ static void wp_button(void* data, wl_pointer* p, uint32_t serial, uint32_t time,
 
 static void wp_axis(void* data, wl_pointer* p, uint32_t time, uint32_t axis, wl_fixed_t value)
 {
-    if (pointerBlocked())
+    if (!handlePointerAxis(p, axis, wl_fixed_to_double(value)))
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -246,7 +410,7 @@ static void wp_axis(void* data, wl_pointer* p, uint32_t time, uint32_t axis, wl_
 
 static void wp_frame(void* data, wl_pointer* p)
 {
-    if (pointerBlocked())
+    if (!handlePointerFrame(p))
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -256,7 +420,7 @@ static void wp_frame(void* data, wl_pointer* p)
 
 static void wp_axis_source(void* data, wl_pointer* p, uint32_t source)
 {
-    if (pointerBlocked())
+    if (!handlePointerAxisSource(p, source))
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -266,7 +430,7 @@ static void wp_axis_source(void* data, wl_pointer* p, uint32_t source)
 
 static void wp_axis_stop(void* data, wl_pointer* p, uint32_t time, uint32_t axis)
 {
-    if (pointerBlocked())
+    if (!handlePointerAxisStop(p, time, axis))
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -276,7 +440,7 @@ static void wp_axis_stop(void* data, wl_pointer* p, uint32_t time, uint32_t axis
 
 static void wp_axis_discrete(void* data, wl_pointer* p, uint32_t axis, int32_t discrete)
 {
-    if (pointerBlocked())
+    if (!handlePointerAxisDiscrete(p, axis, discrete))
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -286,7 +450,7 @@ static void wp_axis_discrete(void* data, wl_pointer* p, uint32_t axis, int32_t d
 
 static void wp_axis_value120(void* data, wl_pointer* p, uint32_t axis, int32_t value120)
 {
-    if (pointerBlocked())
+    if (!handlePointerAxisValue120(p, axis, value120))
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gamePointers.find(p);
@@ -310,9 +474,16 @@ static const wl_pointer_listener wrapperPointerListener = {
 
 // ── Wrapper keyboard listener ────────────────────────────────────────────────
 
+static bool keyboardBlocked()
+{
+    return pointerBlocked() || VKIntox::isOverlayHoldingKeyboard();
+}
+
 static void wk_keymap(void* data, wl_keyboard* kb, uint32_t format, int32_t fd, uint32_t size)
 {
-    // Always forward keymap — needed for initialization
+    // the layer mmaps without closing: this fd belongs to the forwarded event
+    // and the game's listener owns closing it
+    VKIntox::mirrorKeyboardKeymap(format, fd, size, false);
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gameKeyboards.find(kb);
     if (it != gameKeyboards.end() && it->second.original.keymap)
@@ -332,26 +503,43 @@ static void wk_enter(void* data, wl_keyboard* kb, uint32_t serial, wl_surface* s
 
 static void wk_leave(void* data, wl_keyboard* kb, uint32_t serial, wl_surface* s)
 {
-    // Always forward leave
+    VKIntox::mirrorKeyboardFocusLost();
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gameKeyboards.find(kb);
     if (it != gameKeyboards.end() && it->second.original.leave)
         it->second.original.leave(it->second.userData, kb, serial, s);
 }
 
-static void wk_key(void* data, wl_keyboard* kb, uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
+static bool routeKey(void* proxy, uint32_t key, uint32_t state)
 {
+    bool forward = false;
     {
         std::lock_guard<std::mutex> lock(gameDataMutex);
-        std::unordered_set<uint32_t>& held = gameHeldKeys[kb];
+        KeyOwnership& own = keyOwnership[proxy];
         if (state == WL_KEYBOARD_KEY_STATE_PRESSED)
-            held.insert(key);
+        {
+            if (keyboardBlocked())
+                own.overlayOwned.insert(key);
+            else
+            {
+                own.gameOwned.insert(key);
+                own.overlayOwned.erase(key);
+                forward = true;
+            }
+        }
         else
-            held.erase(key);
+        {
+            forward = own.gameOwned.erase(key) > 0;
+            own.overlayOwned.erase(key);
+        }
     }
+    return forward;
+}
 
-    // keys follow the pointer hitbox plus the open interactive shell
-    if (pointerBlocked() || VKIntox::isOverlayHoldingKeyboard())
+static void wk_key(void* data, wl_keyboard* kb, uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
+{
+    VKIntox::mirrorKeyboardKey(key, state);
+    if (!routeKey(kb, key, state))
         return;
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gameKeyboards.find(kb);
@@ -362,6 +550,7 @@ static void wk_key(void* data, wl_keyboard* kb, uint32_t serial, uint32_t time, 
 static void wk_modifiers(void* data, wl_keyboard* kb, uint32_t serial, uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group)
 {
     // Always forward modifiers — games need modifier state for keybinds
+    VKIntox::mirrorKeyboardModifiers(depressed, latched, locked, group);
     std::lock_guard<std::mutex> lock(gameDataMutex);
     auto it = gameKeyboards.find(kb);
     if (it != gameKeyboards.end() && it->second.original.modifiers)
@@ -392,33 +581,45 @@ static int wd_pointer(const void* data, void* target, uint32_t opcode, const str
 {
     auto* proxy = static_cast<wl_proxy*>(target);
 
-    // enter/motion carry surface coords; remember the latest for the events
-    // that do not (button, axis, frame).
-    if (opcode == 0) // enter: serial, surface, x, y
+    bool forward = true;
+    switch (opcode)
     {
-        g_lastPointerX.store(wl_fixed_to_double(args[2].f), std::memory_order_release);
-        g_lastPointerY.store(wl_fixed_to_double(args[3].f), std::memory_order_release);
+    case 0: // enter: serial, surface, x, y
+        forward = handlePointerEnter(proxy, args[0].u, args[1].o,
+                                     wl_fixed_to_double(args[2].f), wl_fixed_to_double(args[3].f));
+        break;
+    case 1: // leave: serial, surface
+        forward = handlePointerLeave(proxy, args[1].o);
+        break;
+    case 2: // motion: time, x, y
+        forward = handlePointerMotion(proxy, wl_fixed_to_double(args[1].f), wl_fixed_to_double(args[2].f));
+        break;
+    case 3: // button: serial, time, button, state
+        forward = handlePointerButton(proxy, args[2].u, args[3].u);
+        break;
+    case 4: // axis: time, axis, value
+        forward = handlePointerAxis(proxy, args[1].u, wl_fixed_to_double(args[2].f));
+        break;
+    case 5: // frame
+        forward = handlePointerFrame(proxy);
+        break;
+    case 6: // axis_source: source
+        forward = handlePointerAxisSource(proxy, args[0].u);
+        break;
+    case 7: // axis_stop: time, axis
+        forward = handlePointerAxisStop(proxy, args[0].u, args[1].u);
+        break;
+    case 8: // axis_discrete: axis, discrete
+        forward = handlePointerAxisDiscrete(proxy, args[0].u, args[1].i);
+        break;
+    case 9: // axis_value120: axis, value120
+        forward = handlePointerAxisValue120(proxy, args[0].u, args[1].i);
+        break;
+    default:
+        break;
     }
-    else if (opcode == 2) // motion: time, x, y
-    {
-        g_lastPointerX.store(wl_fixed_to_double(args[1].f), std::memory_order_release);
-        g_lastPointerY.store(wl_fixed_to_double(args[2].f), std::memory_order_release);
-    }
 
-    if (opcode == 3 && VKIntox::isWayland())
-        VKIntox::mirrorButtonState(args[2].u, args[3].u == WL_POINTER_BUTTON_STATE_PRESSED);
-
-    // enter/leave on the overlay's own surface stay with the overlay
-    if ((opcode == 0 || opcode == 1) && isOverlaySurface(args[1].o))
-        return 0;
-
-    // back on a game surface: put the game's cursor back before it looks
-    if (opcode == 0)
-        restoreGameCursor(proxy, args[0].u);
-
-    // forward enter/leave so the game tracks the pointer, withhold everything
-    // positional while it sits over the overlay.
-    if (opcode >= 2 && opcode <= 10 && pointerBlocked())
+    if (!forward)
         return 0;
 
     std::lock_guard<std::mutex> lock(gameDataMutex);
@@ -432,19 +633,26 @@ static int wd_keyboard(const void* data, void* target, uint32_t opcode, const st
 {
     auto* proxy = static_cast<wl_proxy*>(target);
 
-    if (opcode == 3) // key: serial, time, key, state
+    bool forward = true;
+    if (opcode == 0) // keymap: format, fd, size
     {
-        std::lock_guard<std::mutex> lock(gameDataMutex);
-        std::unordered_set<uint32_t>& held = gameHeldKeys[(wl_keyboard*)proxy];
-        if (args[3].u == WL_KEYBOARD_KEY_STATE_PRESSED)
-            held.insert(args[2].u);
-        else
-            held.erase(args[2].u);
+        VKIntox::mirrorKeyboardKeymap(args[0].u, args[1].i, args[2].u, false);
+    }
+    else if (opcode == 2) // leave: serial, surface
+    {
+        VKIntox::mirrorKeyboardFocusLost();
+    }
+    else if (opcode == 3) // key: serial, time, key, state
+    {
+        VKIntox::mirrorKeyboardKey(args[2].u, args[3].u);
+        forward = routeKey(proxy, args[2].u, args[3].u);
+    }
+    else if (opcode == 4) // modifiers: serial, depressed, latched, locked, group
+    {
+        VKIntox::mirrorKeyboardModifiers(args[1].u, args[2].u, args[3].u, args[4].u);
     }
 
-    // keyboard has no coordinates; it follows the hitbox and the open
-    // interactive shell
-    if (opcode == 3 && (pointerBlocked() || VKIntox::isOverlayHoldingKeyboard()))
+    if (!forward)
         return 0;
 
     std::lock_guard<std::mutex> lock(gameDataMutex);
@@ -636,14 +844,12 @@ wl_proxy* wl_proxy_marshal_array_flags(struct wl_proxy* proxy,
         }
         else if (std::strcmp(cls, "wl_pointer") == 0 && opcode == 0) // set_cursor
         {
-            // args: serial, surface, hotspot_x, hotspot_y. The overlay's own
-            // null set_cursor marks the suppression; the game's last cursor is
-            // remembered so a re-enter can put it back.
-            if (VKIntox::isOverlayProxy(proxy))
-            {
-                if (args && !args[1].o)
-                    gameCursorHiddenByOverlay = true;
-            }
+            // args: serial, surface, hotspot_x, hotspot_y. A null surface is
+            // the overlay hiding the pointer (its own resource, or the game's
+            // on the capture surface); a real surface is the game's cursor to
+            // remember for the re-enter.
+            if (args && !args[1].o)
+                gameCursorHiddenByOverlay = true;
             else if (args)
             {
                 gameCursor.kind = GameCursor::Kind::surface;
@@ -787,40 +993,56 @@ int wl_proxy_add_dispatcher(struct wl_proxy* proxy,
 
 namespace VKIntox
 {
+    bool waylandPointerWrapped()
+    {
+        std::lock_guard<std::mutex> lock(gameDataMutex);
+        return !gamePointers.empty() || !gamePointerDispatchers.empty();
+    }
+
+    bool waylandKeyboardWrapped()
+    {
+        std::lock_guard<std::mutex> lock(gameDataMutex);
+        return !gameKeyboards.empty() || !gameKeyboardDispatchers.empty();
+    }
+
+    // Edge-triggered by the blocker: on withhold, every key the game saw a
+    // press for is synth-released so a held movement key stops; on release,
+    // keys still owned by the game are synth-pressed back. Keys the overlay
+    // consumed while blocked are left alone — the game never saw them.
     void withholdGameKeys(bool withhold)
     {
         std::lock_guard<std::mutex> lock(gameDataMutex);
 
-        size_t changed = 0;
         const uint32_t state = withhold ? WL_KEYBOARD_KEY_STATE_RELEASED : WL_KEYBOARD_KEY_STATE_PRESSED;
+        size_t changed = 0;
 
-        for (auto& [kb, data] : gameKeyboards)
+        for (auto& [proxy, own] : keyOwnership)
         {
-            auto heldIt = gameHeldKeys.find(kb);
-            if (heldIt == gameHeldKeys.end())
+            if (own.gameOwned.empty())
                 continue;
-            for (uint32_t key : heldIt->second)
+
+            auto lit = gameKeyboards.find((wl_keyboard*)proxy);
+            auto dit = gameKeyboardDispatchers.find((wl_proxy*)proxy);
+            if (lit != gameKeyboards.end() && lit->second.original.key)
             {
-                if (data.original.key)
-                    data.original.key(data.userData, kb, 0, 0, key, state);
-                changed++;
+                for (uint32_t key : own.gameOwned)
+                {
+                    lit->second.original.key(lit->second.userData, (wl_keyboard*)proxy, 0, 0, key, state);
+                    changed++;
+                }
             }
-        }
-
-        for (auto& [proxy, data] : gameKeyboardDispatchers)
-        {
-            auto heldIt = gameHeldKeys.find((wl_keyboard*)proxy);
-            if (heldIt == gameHeldKeys.end() || !data.original)
-                continue;
-            for (uint32_t key : heldIt->second)
+            else if (dit != gameKeyboardDispatchers.end() && dit->second.original)
             {
-                union wl_argument args[4] = {};
-                args[0].u = 0; // serial
-                args[1].u = 0; // time
-                args[2].u = key;
-                args[3].u = state;
-                data.original(data.dispatcherData, proxy, 3, &wl_keyboard_interface.events[3], args);
-                changed++;
+                for (uint32_t key : own.gameOwned)
+                {
+                    union wl_argument args[4] = {};
+                    args[0].u = 0; // serial
+                    args[1].u = 0; // time
+                    args[2].u = key;
+                    args[3].u = state;
+                    dit->second.original(dit->second.dispatcherData, proxy, 3, &wl_keyboard_interface.events[3], args);
+                    changed++;
+                }
             }
         }
 

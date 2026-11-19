@@ -60,11 +60,18 @@ namespace VKIntox
             wl_pointer_set_cursor(pointer, serial, nullptr, 0, 0);
             if (wl_display* display = getWaylandDisplay())
                 wl_display_flush(display);
+            VKIntox::setWaylandPointerHover(true);
         }
-        const int originX = onInputSurface ? static_cast<int>(getWaylandInputSurfaceX()) : 0;
-        const int originY = onInputSurface ? static_cast<int>(getWaylandInputSurfaceY()) : 0;
-        pointerX = wl_fixed_to_int(sx) + originX;
-        pointerY = wl_fixed_to_int(sy) + originY;
+        else
+            VKIntox::setWaylandPointerHover(false);
+
+        if (!waylandPointerWrapped())
+        {
+            const int originX = onInputSurface ? static_cast<int>(getWaylandInputSurfaceX()) : 0;
+            const int originY = onInputSurface ? static_cast<int>(getWaylandInputSurfaceY()) : 0;
+            pointerX = wl_fixed_to_int(sx) + originX;
+            pointerY = wl_fixed_to_int(sy) + originY;
+        }
 
         // Do NOT clear button state here. Surface reconfigurations (swapchain
         // resize) cause rapid leave/enter cycles while the user is dragging.
@@ -80,12 +87,16 @@ namespace VKIntox
     {
         (void)surface;   // keep the last focus: motion carries no surface, and
                          // clearing it here mistranslates the next one.
+        if (surface == getWaylandInputSurface())
+            VKIntox::setWaylandPointerHover(false);
         Logger::trace("Wayland: pointer leave");
     }
 
     static void pointerMotion(void* /*data*/, wl_pointer* /*pointer*/,
                               uint32_t /*time*/, wl_fixed_t sx, wl_fixed_t sy)
     {
+        if (waylandPointerWrapped())
+            return;
         const bool onInputSurface =
             getWaylandInputSurface() != nullptr && pointerFocusSurface == getWaylandInputSurface();
         const int originX = onInputSurface ? static_cast<int>(getWaylandInputSurfaceX()) : 0;
@@ -123,17 +134,9 @@ namespace VKIntox
     static void pointerAxis(void* /*data*/, wl_pointer* /*pointer*/,
                             uint32_t /*time*/, uint32_t axis, wl_fixed_t value)
     {
-        // Only use continuous axis as fallback when discrete events are not sent.
-        // When both fire for the same pointer frame, discrete/value120 takes priority.
-        if (axis != 0)
+        if (waylandPointerWrapped())
             return;
-        if (discreteScrollReceived)
-            return;
-
-        // Negative value = scroll up, positive = scroll down
-        // Normalize: typical step is 10.0 fixed-point
-        float scroll = wl_fixed_to_double(value);
-        scrollAccumulator -= scroll / 10.0f;
+        mirrorScrollAxis(axis, wl_fixed_to_double(value));
     }
 
     static void pointerFrame(void* /*data*/, wl_pointer* /*pointer*/)
@@ -154,24 +157,17 @@ namespace VKIntox
     static void pointerAxisDiscrete(void* /*data*/, wl_pointer* /*pointer*/,
                                     uint32_t axis, int32_t discrete)
     {
-        // Discrete scroll events (wheel clicks) — preferred over continuous axis
-        if (axis != 0)
+        if (waylandPointerWrapped())
             return;
-
-        discreteScrollReceived = true;
-        scrollAccumulator -= (float)discrete; // Wayland: positive = scroll down, ImGui: positive = scroll up
+        mirrorScrollDiscrete(axis, discrete);
     }
 
     static void pointerAxisValue120(void* /*data*/, wl_pointer* /*pointer*/,
                                     uint32_t axis, int32_t value120)
     {
-        // High-resolution scroll (wl_pointer v8+). 120 units = one wheel click.
-        // Preferred over both axis and axis_discrete when available.
-        if (axis != 0)
+        if (waylandPointerWrapped())
             return;
-
-        discreteScrollReceived = true;
-        scrollAccumulator -= (float)value120 / 120.0f;
+        mirrorScrollValue120(axis, value120);
     }
 
     static const wl_pointer_listener pointerListener = {
@@ -258,6 +254,43 @@ namespace VKIntox
                 if (pressed) middlePressTime = now;
                 break;
         }
+    }
+
+    // Feeds from the game's wrapped pointer. The interposer translates capture
+    // surface coordinates before calling these, so everything here is in
+    // game-framebuffer space.
+    void mirrorPointerPosition(double x, double y)
+    {
+        pointerX = static_cast<int>(x);
+        pointerY = static_cast<int>(y);
+    }
+
+    void mirrorScrollAxis(uint32_t axis, double continuous)
+    {
+        if (axis != 0 || discreteScrollReceived)
+            return;
+        scrollAccumulator -= static_cast<float>(continuous) / 10.0f;
+    }
+
+    void mirrorScrollDiscrete(uint32_t axis, int32_t discrete)
+    {
+        if (axis != 0)
+            return;
+        discreteScrollReceived = true;
+        scrollAccumulator -= static_cast<float>(discrete);
+    }
+
+    void mirrorScrollValue120(uint32_t axis, int32_t value120)
+    {
+        if (axis != 0)
+            return;
+        discreteScrollReceived = true;
+        scrollAccumulator -= static_cast<float>(value120) / 120.0f;
+    }
+
+    void resetScrollFrame()
+    {
+        discreteScrollReceived = false;
     }
 
     MouseState getMouseStateWayland()
