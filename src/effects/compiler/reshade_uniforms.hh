@@ -106,6 +106,24 @@ namespace VKIntox
         KeyUniform(reshadefx::uniform_info uniformInfo);
         void virtual update(void* mappedBuffer) override;
         virtual ~KeyUniform();
+
+    private:
+        enum class Mode { hold, press, toggle };
+
+        void writeValue(void* mappedBuffer, bool value);
+
+        // Windows virtual-key code the effect asked for, plus up to two X11
+        // keysyms covering both sides of the generic modifier VKs
+        uint32_t keysymA = 0;
+        uint32_t keysymB = 0;
+        Mode mode = Mode::hold;
+        bool invert = false;
+        reshadefx::type::datatype base = reshadefx::type::t_bool;
+        uint32_t components = 1;
+
+        // press/toggle edge tracking across frames
+        bool lastDown = false;
+        bool toggleState = false;
     };
 
     class MouseButtonUniform : public ReshadeUniform

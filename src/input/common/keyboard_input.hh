@@ -21,5 +21,6 @@ namespace VKIntox
     uint32_t convertToKeySym(std::string key);
     void beginKeyboardInputFrame();
     bool     isKeyPressed(uint32_t ks);
+    bool     isKeyHeld(uint32_t ks);
     KeyboardState getKeyboardState();
 } // namespace VKIntox
