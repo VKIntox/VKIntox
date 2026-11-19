@@ -301,7 +301,7 @@ detect_system() {
             ;;
     esac
     case "$SYSTEM_KIND" in
-        rpm) ASSET_GLOB="*.$HOST_ARCH.rpm" ;;
+        rpm) ASSET_GLOB="*-$HOST_ARCH.rpm" ;;
         deb)
             # debian names its arches amd64 and arm64, not uname's x86_64/aarch64
             if [[ "$HOST_ARCH" == "aarch64" ]]; then
@@ -310,7 +310,7 @@ detect_system() {
                 ASSET_GLOB='*_amd64.deb'
             fi
             ;;
-        arch) ASSET_GLOB="*$HOST_ARCH.pkg.tar.zst" ;;
+        arch) ASSET_GLOB="*-$HOST_ARCH.pkg.tar.zst" ;;
     esac
 }
 
@@ -1083,10 +1083,10 @@ else
     # flatpak arches share uname's naming; pick the bundle that matches the
     # installed apps' arch instead of the generic glob
     case "$(uname -m)" in
-        x86_64)  ASSET_GLOB='*.x86_64.flatpak' ;;
-        aarch64) ASSET_GLOB='*.aarch64.flatpak' ;;
-        armv7l|armv8l) ASSET_GLOB='*.arm.flatpak' ;;
-        *) ASSET_GLOB='*.x86_64.flatpak' ;;
+        x86_64)  ASSET_GLOB='*-x86_64.flatpak' ;;
+        aarch64) ASSET_GLOB='*-aarch64.flatpak' ;;
+        armv7l|armv8l) ASSET_GLOB='*-arm.flatpak' ;;
+        *) ASSET_GLOB='*-x86_64.flatpak' ;;
     esac
     select_flatpak_app
 fi
