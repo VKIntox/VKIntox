@@ -47,6 +47,7 @@
 #include "config/config.hh"
 #include "config/config_serializer.hh"
 #include "config/settings_manager.hh"
+#include "framegen/lsfg_present.hh"
 #include "render/swapchain/fake_swapchain.hh"
 #include "render/resources/format.hh"
 #include "util/logger.hh"
@@ -2035,6 +2036,25 @@ namespace VKIntox
                 Logger::warn("VKINTOX_GPU_CRASH_DIAGNOSTICS=1 but VK_EXT_device_fault is not supported by this device");
             }
         }
+        // LSFG frame generation moves frames across two Vulkan devices through
+        // exported fds; the game's device needs the import side of those
+        // extensions, and timeline semaphores for the engine's pacing signal.
+        // Adding supported extensions is inert for apps that never use them.
+        const bool lsfgExternalMemoryOk = hasDeviceExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
+            && hasDeviceExtension(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+        const bool lsfgTimelineExtOk = hasDeviceExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)
+            || deviceProps.apiVersion >= VK_API_VERSION_1_2;
+        if (lsfgExternalMemoryOk && lsfgTimelineExtOk)
+        {
+            addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+            addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+            addUniqueCString(enabledExtensionNames, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        }
+        else if (settingsManager.getLsfgEnabled())
+        {
+            Logger::warn("LSFG is enabled but this device lacks the external memory/semaphore fd extensions; frame generation is unavailable");
+        }
+
         modifiedCreateInfo.ppEnabledExtensionNames = enabledExtensionNames.data();
         modifiedCreateInfo.enabledExtensionCount   = enabledExtensionNames.size();
 
@@ -2121,6 +2141,17 @@ namespace VKIntox
                 | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_ERROR_REPORTING_BIT_NV;
             diagnosticsConfigInfo.pNext = extendedDevicePNext;
             extendedDevicePNext = &diagnosticsConfigInfo;
+        }
+
+        // LSFG timeline semaphore feature for the engine's pacing signal
+        VkPhysicalDeviceTimelineSemaphoreFeaturesKHR lsfgTimelineFeature{};
+        if (lsfgExternalMemoryOk && lsfgTimelineExtOk &&
+            !pNextChainContainsSType(extendedDevicePNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR))
+        {
+            lsfgTimelineFeature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
+            lsfgTimelineFeature.timelineSemaphore = VK_TRUE;
+            lsfgTimelineFeature.pNext = extendedDevicePNext;
+            extendedDevicePNext = &lsfgTimelineFeature;
         }
 
         modifiedCreateInfo.pNext = extendedDevicePNext;
@@ -2409,6 +2440,7 @@ namespace VKIntox
             auto logicalSwapchain = std::make_shared<LogicalSwapchain>();
             logicalSwapchain->logicalDevice       = logicalDevice;
             logicalSwapchain->swapchainCreateInfo = forwardCreateInfo;
+            logicalSwapchain->handle              = *swapchain;
             logicalSwapchain->passthrough         = true;
             logicalSwapchain->format              = forwardCreateInfo.imageFormat;
             logicalSwapchain->imageCount          = 0;
@@ -2468,6 +2500,22 @@ namespace VKIntox
         // app's requested usage and is valid on both swapchain paths.
         modifiedCreateInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
+        // LSFG frame generation: grow the image pool so the inserted frames
+        // have somewhere to land, and allow blitting into the extra images.
+        FrameGen::LsfgProfile lsfgProfile;
+        lsfgProfile.enabled   = settingsManager.getLsfgEnabled();
+        lsfgProfile.multiplier = static_cast<uint32_t>(settingsManager.getLsfgMultiplier());
+        lsfgProfile.flowScale = settingsManager.getLsfgFlowScale();
+        lsfgProfile.performanceMode = settingsManager.getLsfgPerformanceMode();
+        lsfgProfile.halfPrecision = settingsManager.getLsfgHalfPrecision();
+        lsfgProfile.dllPath   = settingsManager.getLsfgDllPath();
+        if (FrameGen::modifySwapchainCreateInfo(logicalDevice, modifiedCreateInfo, lsfgProfile))
+        {
+            // remember the applied profile so the first present can reject a
+            // stale pool without re-querying settings under the device lock
+            // (the swapchain object reads it again lazily)
+        }
+
         // Keep application-provided usage bits unchanged on the non-mutable path.
         // Some drivers/apps are sensitive to swapchain usage mutation.
 
@@ -2493,6 +2541,7 @@ namespace VKIntox
         auto logicalSwapchain = std::make_shared<LogicalSwapchain>();
         logicalSwapchain->logicalDevice      = logicalDevice;
         logicalSwapchain->swapchainCreateInfo = *pCreateInfo;
+        logicalSwapchain->handle             = VK_NULL_HANDLE;  // set once creation succeeds
         logicalSwapchain->imageExtent         = modifiedCreateInfo.imageExtent;
         logicalSwapchain->format              = modifiedCreateInfo.imageFormat;
         logicalSwapchain->imageCount          = 0;
@@ -2501,6 +2550,7 @@ namespace VKIntox
         VkResult result = logicalDevice->vkd.CreateSwapchainKHR(device, &modifiedCreateInfo, pAllocator, swapchain);
         if (result == VK_SUCCESS && swapchain != nullptr && *swapchain != VK_NULL_HANDLE)
         {
+            logicalSwapchain->handle = *swapchain;
             // NOW check if this handle already existed (recreation scenario)
             uint64_t handle = (uint64_t)(uintptr_t)*swapchain;
             auto oldIt = swapchainMap.find((VkSwapchainKHR)handle); // Cast back or use proper key type
@@ -4226,6 +4276,70 @@ namespace VKIntox
             // because the app rendered into fake images, so force a recreate.
             Logger::err("present: layer command buffers unavailable; asking the app to recreate the swapchain");
             return VK_ERROR_OUT_OF_DATE_KHR;
+        }
+
+        // LSFG frame insertion: the composited frame just finished on
+        // presentSemaphores.back(); the engine generates the intermediate
+        // frames and presents them ahead of this one. Single swapchain only —
+        // inserted frames must own the compositor's FIFO ordering.
+        if (pPresentInfo->swapchainCount == 1 && !presentSemaphores.empty())
+        {
+            auto swapIt = swapchainMap.find(pPresentInfo->pSwapchains[0]);
+            if (swapIt != swapchainMap.end() && swapIt->second && !swapIt->second->passthrough)
+            {
+                LogicalSwapchain* logicalSwapchain = swapIt->second.get();
+                FrameGen::LsfgProfile profile;
+                profile.enabled         = settingsManager.getLsfgEnabled();
+                profile.multiplier      = static_cast<uint32_t>(settingsManager.getLsfgMultiplier());
+                profile.flowScale       = settingsManager.getLsfgFlowScale();
+                profile.performanceMode = settingsManager.getLsfgPerformanceMode();
+                profile.halfPrecision   = settingsManager.getLsfgHalfPrecision();
+                profile.dllPath         = settingsManager.getLsfgDllPath();
+
+                bool profileChanged = logicalSwapchain->lsfgProfile.enabled != profile.enabled
+                    || logicalSwapchain->lsfgProfile.multiplier != profile.multiplier
+                    || logicalSwapchain->lsfgProfile.flowScale != profile.flowScale
+                    || logicalSwapchain->lsfgProfile.performanceMode != profile.performanceMode
+                    || logicalSwapchain->lsfgProfile.halfPrecision != profile.halfPrecision
+                    || logicalSwapchain->lsfgProfile.dllPath != profile.dllPath;
+                if (logicalSwapchain->lsfg && profileChanged)
+                {
+                    // the image pool was sized for the old multiplier; ask the
+                    // app to recreate so vkCreateSwapchainKHR can re-apply it
+                    Logger::info("LSFG: profile changed; recreating the swapchain");
+                    logicalSwapchain->lsfg.reset();
+                    logicalSwapchain->lsfgProfile = profile;
+                    return VK_ERROR_OUT_OF_DATE_KHR;
+                }
+                logicalSwapchain->lsfgProfile = profile;
+
+                if (profile.enabled && FrameGen::LsfgSwapchain::active(logicalDevice, profile))
+                {
+                    if (!logicalSwapchain->lsfg)
+                    {
+                        try
+                        {
+                            logicalSwapchain->lsfg = std::make_unique<FrameGen::LsfgSwapchain>(
+                                logicalDevice, logicalSwapchain, profile);
+                        }
+                        catch (const std::exception& e)
+                        {
+                            Logger::err("LSFG: init failed, falling back to uninterpolated presents: "
+                                        + std::string(e.what()));
+                        }
+                    }
+                    if (logicalSwapchain->lsfg)
+                    {
+                        VkSemaphore compositedWait = presentSemaphores.back();
+                        VkSemaphore originalWait = pPresentInfo->waitSemaphoreCount > 0
+                            ? pPresentInfo->pWaitSemaphores[0] : VK_NULL_HANDLE;
+                        return logicalSwapchain->lsfg->present(
+                            logicalDevice, logicalSwapchain,
+                            pPresentInfo->pImageIndices[0],
+                            queue, compositedWait, originalWait, pPresentInfo);
+                    }
+                }
+            }
         }
 
         VkPresentInfoKHR presentInfo   = *pPresentInfo;

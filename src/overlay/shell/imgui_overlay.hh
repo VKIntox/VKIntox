@@ -227,6 +227,7 @@ namespace VKIntox
         void renderFpsCounter();
         void renderAboutView();
         void renderAdvancedView();  // Depth buffer switching (Advanced tab)
+        void renderLsfgView();      // Lossless Scaling frame generation (LSFG tab)
         // Sub-views: pages pushed inside a tab. They slide in over the dock (which
         // fades out to make room) and carry a breadcrumb back to their parent.
         void renderDepthBuffersView();   // Reported depth buffers (from Settings)

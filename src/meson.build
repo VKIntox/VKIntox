@@ -41,6 +41,7 @@ overlay_src = [
     'overlay/views/view_configs.cc',
     'overlay/views/view_diagnostics.cc',
     'overlay/views/view_about.cc',
+    'overlay/views/view_lsfg.cc',
     'overlay/views/view_settings.cc',
     'overlay/shell/ui_dialog.cc',
     'overlay/shell/ui_menu.cc',
@@ -222,6 +223,37 @@ source_inc = include_directories('.')
 # The XDG desktop portal is reached over the session bus through GIO, which is
 # present on the desktop and inside Flatpak runtimes. Optional: without it the
 # shader manager falls back to the in-overlay file browser.
+# LSFG frame generation engine: lsfg-vk's pipeline, built unmodified from the
+# vendored submodule and shipped as its own shared library, since its sources
+# are CC-BY-NC-ND and must stay a separate artifact the layer loads at runtime.
+lsfg_engine_option = get_option('lsfg_engine')
+lsfg_vendor = meson.project_source_root() / 'src/vendor/lsfg-vk'
+have_lsfg_engine = lsfg_engine_option and fs.is_dir(lsfg_vendor / 'lsfg-vk-pipeline')
+if have_lsfg_engine
+    if not fs.exists('/usr/include/vulkan/vulkan.hpp') and not dependency('vulkan', required: false).found()
+        warning('lsfg engine requested but vulkan-hpp headers are missing; building without it')
+        have_lsfg_engine = false
+    endif
+endif
+if have_lsfg_engine
+    lsfg_engine_lib = shared_library('lsfg-vk-pipeline',
+        'vendor/lsfg-vk/lsfg-vk-pipeline/src/library.cpp',
+        'vendor/lsfg-vk/lsfg-vk-pipeline/src/library/dll.cpp',
+        'vendor/lsfg-vk/lsfg-vk-pipeline/src/lsfgvk.cpp',
+        'vendor/lsfg-vk/lsfg-vk-pipeline/src/pipeline.cpp',
+        'vendor/lsfg-vk/lsfg-vk-pipeline/src/pipelines/v3_1.cpp',
+        'vendor/lsfg-vk/lsfg-vk-helper/src/vkhelper.cpp',
+        include_directories: [include_directories('vendor/lsfg-vk/lsfg-vk-pipeline/include'),
+                              include_directories('vendor/lsfg-vk/lsfg-vk-pipeline/shaders'),
+                              include_directories('vendor/lsfg-vk/lsfg-vk-helper/include'),
+                              include_directories('vendor/lsfg-vk/thirdparty', is_system: true)],
+        cpp_args: ['-fconstexpr-steps=4290000000', '-fvisibility=hidden'],
+        gnu_symbol_visibility: 'hidden',
+        soversion: '2',
+        install: true,
+        install_dir: lib_dir)
+endif
+
 gio_dep = dependency('gio-2.0', required: false)
 vkintox_deps = [x11_dep, xi_dep, xtst_dep, wayland_client_dep, xkbcommon_dep, reshade_dep]
 vkintox_cpp_args = ['-DIMGUI_IMPL_VULKAN_NO_PROTOTYPES']
@@ -230,8 +262,16 @@ if gio_dep.found()
     vkintox_cpp_args += '-DVKINTOX_HAVE_GIO=1'
 endif
 
+if have_lsfg_engine
+    framegen_src = files(
+        'framegen/lsfg_engine.cc',
+        'framegen/lsfg_present.cc',
+    )
+endif
+
 vkintox_lib = shared_library('vkintox',
     VKIntox_src, overlay_src, imgui_src, shader_include,
+    framegen_src,
     link_with: [keyboard_input_x11_lib, mouse_input_lib, input_blocker_lib,
                 x11_display_lib, mouse_input_x11_lib,
                 wayland_input_common_lib, keyboard_input_wayland_lib, mouse_input_wayland_lib,

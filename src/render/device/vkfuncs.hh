@@ -8,7 +8,8 @@
     FORVKFUNC(GetPhysicalDeviceMemoryProperties) \
     FORVKFUNC(GetPhysicalDeviceQueueFamilyProperties) \
     FORVKFUNC(GetPhysicalDeviceProperties) \
-    FORVKFUNC(GetPhysicalDeviceProperties2)
+    FORVKFUNC(GetPhysicalDeviceProperties2) \
+    FORVKFUNC(GetPhysicalDeviceSurfaceCapabilitiesKHR)
 
 #define VK_DEVICE_FUNCS \
     FORVKFUNC(AllocateCommandBuffers) \
@@ -106,6 +107,8 @@
     FORVKFUNC(GetQueueCheckpointData2NV) \
     FORVKFUNC(GetQueueCheckpointDataNV) \
     FORVKFUNC(GetSwapchainImagesKHR) \
+    FORVKFUNC(ImportSemaphoreFdKHR) \
+    FORVKFUNC(AcquireNextImageKHR) \
     FORVKFUNC(MapMemory) \
     FORVKFUNC(CmdSetCheckpointNV) \
     FORVKFUNC(QueuePresentKHR) \

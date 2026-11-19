@@ -21,6 +21,7 @@ namespace VKIntox::Icon
     // Navigation.
     constexpr ImWchar AutoAwesome    = 0xE65F;  // Effects
     constexpr ImWchar Palette        = 0xE3B7;  // Shaders
+    constexpr ImWchar MaskedTransitions = 0xE72E;  // LSFG frame generation
     constexpr ImWchar Settings       = 0xE8B8;  // Settings
     constexpr ImWchar Tune           = 0xE429;  // Advanced
     constexpr ImWchar MonitorHeart   = 0xEAA2;  // Diagnostics
@@ -135,6 +136,7 @@ namespace VKIntox::Icon
     constexpr const char* BrushUtf8         = "\xEE\x8E\xAE";
     constexpr const char* ImageUtf8         = "\xEE\x89\x91";
     constexpr const char* LayersUtf8        = "\xEE\x94\xBB";
+    constexpr const char* MaskedTransitionsUtf8 = "\xE7\x92\xAE";
     constexpr const char* TextureUtf8       = "\xEE\x90\xA1";
     constexpr const char* BlurOnUtf8        = "\xEE\x8E\xA5";
     constexpr const char* GrainUtf8         = "\xEE\x8F\xAA";
@@ -168,6 +170,7 @@ namespace VKIntox::Icon
     {
         static const ImWchar ranges[] = {
             AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport, WandShine, Function,
+            MaskedTransitions,
             Add, Edit, Close, Search, Delete, ExpandMore, ArrowDropDown, KeyboardArrowDown, ChevronRight, ChevronLeft, Refresh, Save,
             FolderOpen, Upload, Check, Minus, CheckCircle, Cancel, Warning, Error, Info,
             Visibility, VisibilityOff, Power, PlayArrow,
