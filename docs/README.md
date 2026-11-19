@@ -161,7 +161,7 @@ verify active drivers with `flatpak --gl-drivers`. host and flatpak nvidia runti
 -   **reshade presets:** drop the `.ini` into `/path/to/config/VKIntox/configs/shaders/`, then reload. it appears in the shader ini dropdown.
 
 > [!NOTE]
-> wayland and x11 are both supported. on x11 (including xwayland) the overlay takes a pointer grab while the cursor is over it, and a keyboard grab only while it is consuming keys (a text field is active or a popup is open); if the compositor does not honour xwayland's keyboard-grab protocol, the game can still receive keys while you type in the overlay. games that don't route through an abstractor like SDL or GLFW may handle input in ways the overlay can't intercept, so input blocking can stop working.
+> wayland and x11 are both supported. on x11 (including xwayland) the overlay blocks clicks and motion with invisible input-only windows over its hitboxes (no grabs while you hover), and takes a keyboard grab only while it is consuming keys (a text field is active or a popup is open), so hovering the overlay never blocks keys and never disturbs the game's cursor capture; if the compositor does not honour xwayland's keyboard-grab protocol, the game can still receive keys while you type in the overlay. a stalled game frame releases the keyboard grab automatically, so it can never lock your keyboard. games that don't route through an abstractor like SDL or GLFW may handle input in ways the overlay can't intercept, so input blocking can stop working.
 
 ## credits
 
