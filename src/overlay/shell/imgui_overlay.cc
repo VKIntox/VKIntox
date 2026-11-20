@@ -731,9 +731,21 @@ namespace VKIntox
         const float labelGap = 4.0f * m.density;
         const float segmentGap = 10.0f * m.density;
 
+        const bool showSplit = settingsManager.getFpsExtended() && settingsManager.getFgEnabled();
+        char splitText[48] = {};
+        if (showSplit)
+            snprintf(splitText, sizeof(splitText), "%.0f real + %.0f gen",
+                     FpsMetrics::realFps(), FpsMetrics::generatedFps());
+        if (bodyBold)
+            ImGui::PushFont(bodyBold, lowsPx);
+        const float splitW = showSplit ? ImGui::CalcTextSize(splitText).x : 0.0f;
+        if (bodyBold)
+            ImGui::PopFont();
+        const float splitGapX = showSplit ? 12.0f * m.density : 0.0f;
+
         const float lowsGapX = showLows ? 12.0f * m.density : 0.0f;
         const float lowsW = showLows ? label1W + labelGap + low1W + segmentGap + label01W + labelGap + low01W : 0.0f;
-        const float cardW = padX + textSize.x + lowsGapX + lowsW + padX;
+        const float cardW = padX + textSize.x + splitGapX + splitW + lowsGapX + lowsW + padX;
         const float cardH = textSize.y + padY * 2.0f;
         const float windowW = cardW + shadowPad * 2.0f;
         const float windowH = cardH + shadowPad * 2.0f;
@@ -761,6 +773,7 @@ namespace VKIntox
         ImGui::PopStyleVar(3);
         if (open)
         {
+            ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const ImRect card(ImVec2(cardX, cardY), ImVec2(cardX + cardW, cardY + cardH));
             const float r = cardH * 0.5f;
@@ -778,9 +791,15 @@ namespace VKIntox
             const float labelY = card.Min.y + padY + (bandH - label1H) * 0.5f;
             const float valueY = card.Min.y + padY + (bandH - low1H) * 0.5f;
             dl->AddText(textFont, textPx, ImVec2(card.Min.x + padX, textY), valueCol, text);
+            float cursorX = card.Min.x + padX + textSize.x + splitGapX;
+            if (showSplit)
+            {
+                dl->AddText(lowsFont, lowsPx, ImVec2(cursorX, labelY), dimCol, splitText);
+                cursorX += splitW;
+            }
             if (showLows)
             {
-                const float lowsX = card.Min.x + padX + textSize.x + lowsGapX;
+                const float lowsX = cursorX + lowsGapX;
                 dl->AddText(lowsFont, lowsPx, ImVec2(lowsX, labelY), dimCol, "1%");
                 dl->AddText(lowsFont, lowsValuePx, ImVec2(lowsX + label1W + labelGap, valueY), dimCol, low1Text);
                 const float low01X = lowsX + label1W + labelGap + low1W + segmentGap;
@@ -2751,7 +2770,14 @@ namespace VKIntox
                 viewFromIndex     = viewSettledIndex;
                 viewTargetIndex   = viewIndex;
                 viewTransitioning = (viewFromIndex != viewTargetIndex);
-                viewSlideDir      = (viewIndex > viewSettledIndex) ? 1 : -1;
+                const auto orderForKey = [](int key) {
+            if (key <= 2) return 0;
+            if (key == 3) return 1;
+            if (key == 13) return 2;
+            if (key == 7) return 4;
+            return 3;
+        };
+        viewSlideDir      = (orderForKey(viewIndex) > orderForKey(viewSettledIndex)) ? -1 : 1;
                 viewSlideStart    = ImGui::GetTime();
             }
             else

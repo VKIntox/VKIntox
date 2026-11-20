@@ -117,20 +117,18 @@ namespace VKIntox
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Automatically apply parameter changes after a short delay.");
 
-        if (autoApply)
-        {
-            ImGui::Indent();
-            ImGui::AlignTextToFramePadding();
-            ImGui::Text("Delay");
-            ImGui::SameLine(160.0f);
-            ImGui::SetNextItemWidth(160);
-            int delayVal = settingsManager.getAutoApplyDelay();
-            if (ImGui::SliderInt("##autoApplyDelay", &delayVal, 20, 1000, "%d ms"))
-                settingsManager.setAutoApplyDelay(delayVal);
-            if (ImGui::IsItemDeactivatedAfterEdit())
-                saveSettings();
-            ImGui::Unindent();
-        }
+        ImGui::SameLine(220.0f);
+        ImGui::BeginDisabled(!autoApply);
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Delay");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(160);
+        int delayVal = settingsManager.getAutoApplyDelay();
+        if (ImGui::SliderInt("##autoApplyDelay", &delayVal, 20, 1000, "%d ms"))
+            settingsManager.setAutoApplyDelay(delayVal);
+        if (ImGui::IsItemDeactivatedAfterEdit())
+            saveSettings();
+        ImGui::EndDisabled();
 
         bool showFps = settingsManager.getShowFps();
         if (ImGui::Checkbox("Show FPS counter", &showFps))
@@ -150,7 +148,7 @@ namespace VKIntox
             saveSettings();
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Shows 1%% and 0.1%% lows");
+            ImGui::SetTooltip("Shows 1%% and 0.1%% lows, plus real and generated frame rates when frame generation is on");
         ImGui::EndDisabled();
 
         if (showFps)
