@@ -5,6 +5,7 @@
 // image, the engine generates the intermediate frames, and each one is blitted
 // into an extra swapchain image and presented ahead of the real frame.
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -76,6 +77,11 @@ namespace VKIntox
                 VkCommandBuffer uploadCmdbuf = VK_NULL_HANDLE;
                 // the last inner copy's semaphore; the real frame waits on it
                 VkSemaphore presentSemaphore = VK_NULL_HANDLE;
+                // generated frames 1..N-1 present pre-acquired images; the real
+                // frame takes the last one, so presentation stays in
+                // acquisition order behind the application's image
+                VkCommandBuffer realCopyCmdbuf = VK_NULL_HANDLE;
+                VkSemaphore realCopySemaphore = VK_NULL_HANDLE;
                 std::vector<InnerSyncPass> innerSyncPasses;
             };
 
@@ -85,8 +91,24 @@ namespace VKIntox
             LogicalDevice* m_logicalDevice = nullptr;
             uint32_t m_multiplier = 2;
             VkExtent2D m_extent = {0, 0};
-            uint32_t m_iteration = 0;
+            // exchange image the next real frame is copied into; the host
+            // swaps the pair on every trigger
+            uint32_t m_sourceIndex = 0;
+            // the first real frame fills both sources so the host's first
+            // generated batch is not interpolated against the blank one
+            bool m_firstSourceUpload = true;
+            bool m_ready = false;
             uint64_t m_syncValue = 0;
+            // frames to pass through after the swapchain showed no headroom,
+            // so insertion cannot steal the application's own frames
+            uint32_t m_probeCooldown = 0;
+            // measure the application's own cadence before inserting, and stop
+            // when inserting makes that cadence collapse
+            std::chrono::steady_clock::time_point m_lastPresentTime{};
+            uint64_t m_passIntervalUs = 0;
+            uint32_t m_warmupFrames = 20;
+            uint32_t m_slowStreak = 0;
+            bool m_lastInserted = false;
 
             // caller-owned exchange images, exported to the host
             VkImage m_sourceImages[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};

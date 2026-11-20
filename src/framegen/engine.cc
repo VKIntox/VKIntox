@@ -163,12 +163,17 @@ namespace VKIntox::FrameGen
             *static_cast<mako::backend::Context*>(m_object.get()));
     }
 
-    void EngineContext::waitForIdle()
+    bool EngineContext::waitForIdle()
     {
         std::lock_guard<std::mutex> lock(apiMutex);
         auto* context = static_cast<mako::backend::Context*>(m_object.get());
-        // bounded polling loop; 2s is the backend's own longest wait
-        while (!context->waitForIdle(2'000'000'000ull))
-            Logger::warn("FG: host batch still in flight after 2s");
+        // two bounded waits; the backend itself caps each at 2s
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            if (context->waitForIdle(2'000'000'000ull))
+                return true;
+        }
+        Logger::warn("FG: host stayed busy past the idle wait");
+        return false;
     }
 } // namespace VKIntox::FrameGen

@@ -7,6 +7,7 @@
 #include "util/logger.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
@@ -377,6 +378,19 @@ namespace VKIntox::FrameGen
                 Logger::err("FG: command buffer allocation failed");
                 return false;
             }
+            pass.presentSemaphore = createBinarySemaphore(logicalDevice);
+            pass.realCopySemaphore = createBinarySemaphore(logicalDevice);
+            if (pass.presentSemaphore == VK_NULL_HANDLE
+                || pass.realCopySemaphore == VK_NULL_HANDLE)
+            {
+                Logger::err("FG: present semaphore creation failed");
+                return false;
+            }
+            if (logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &allocInfo, &pass.realCopyCmdbuf) != VK_SUCCESS)
+            {
+                Logger::err("FG: real frame command buffer allocation failed");
+                return false;
+            }
             pass.innerSyncPasses.resize(generatedCount);
             for (auto& inner : pass.innerSyncPasses)
             {
@@ -486,11 +500,15 @@ namespace VKIntox::FrameGen
                     // the host signaled its warmup frames; the counter advances
                     // past them so the first real frame continues the protocol
                     m_syncValue = 1 + generatedCount;
+                    // trigger 2 swaps the pair, so the first real frame lands
+                    // in the second source image
+                    m_sourceIndex = 1;
+                    m_ready = true;
                     Logger::info("FG: engine warmup complete");
                 }
                 catch (const std::exception& e)
                 {
-                    Logger::warn(std::string("FG: warmup schedule failed (continuing; the first frames may stall briefly): ")
+                    Logger::warn(std::string("FG: warmup failed; frame generation stays off: ")
                                  + e.what());
                 }
             }
@@ -505,15 +523,148 @@ namespace VKIntox::FrameGen
                                   VkSemaphore waitSemaphore,
                                   const VkPresentInfoKHR* originalPresentInfo)
     {
-        if (index >= m_syncPasses.size() || m_engineContext == nullptr)
-            return logicalDevice->vkd.QueuePresentKHR(queue, originalPresentInfo);
+        // Presents must wait the composited semaphore, never the application's
+        // original list: the layer's effect submit already consumed those.
+        VkPresentInfoKHR fallback = *originalPresentInfo;
+        if (waitSemaphore != VK_NULL_HANDLE)
+        {
+            fallback.waitSemaphoreCount = 1;
+            fallback.pWaitSemaphores = &waitSemaphore;
+        }
+        else
+        {
+            fallback.waitSemaphoreCount = 0;
+            fallback.pWaitSemaphores = nullptr;
+        }
+        const auto presentComposited = [&]() -> VkResult {
+            return logicalDevice->vkd.QueuePresentKHR(queue, &fallback);
+        };
+        if (!m_ready || index >= m_syncPasses.size() || m_engineContext == nullptr)
+            return presentComposited();
         SyncPass& pass = m_syncPasses[index];
         VkImage& presentImage = swapchain->images[index];
-        VkImage source = m_sourceImages[m_iteration % 2];
+        VkImage source = m_sourceImages[m_sourceIndex];
+        VkImage previousSource = m_sourceImages[m_sourceIndex ^ 1];
         const uint32_t generatedCount = m_multiplier - 1;
+        // Once the upload is queued its timeline signal is the only handle on
+        // the frame, so fallbacks wait that value instead of the consumed
+        // composited semaphore.
+        const auto presentAfterUpload = [&](uint64_t value) -> VkResult {
+            VkCommandBuffer cmd = pass.realCopyCmdbuf;
+            VkCommandBufferBeginInfo cbInfo{};
+            cbInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            cbInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            if (logicalDevice->vkd.BeginCommandBuffer(cmd, &cbInfo) != VK_SUCCESS)
+                return presentComposited();
+            logicalDevice->vkd.EndCommandBuffer(cmd);
+            VkTimelineSemaphoreSubmitInfo timeline{};
+            timeline.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+            timeline.waitSemaphoreValueCount = 1;
+            timeline.pWaitSemaphoreValues = &value;
+            VkPipelineStageFlags stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.pNext = &timeline;
+            submit.waitSemaphoreCount = 1;
+            submit.pWaitSemaphores = &m_syncSemaphore;
+            submit.pWaitDstStageMask = &stages;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &cmd;
+            submit.signalSemaphoreCount = 1;
+            submit.pSignalSemaphores = &pass.presentSemaphore;
+            if (logicalDevice->vkd.QueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS)
+                return presentComposited();
+            VkPresentInfoKHR info = fallback;
+            info.waitSemaphoreCount = 1;
+            info.pWaitSemaphores = &pass.presentSemaphore;
+            return logicalDevice->vkd.QueuePresentKHR(queue, &info);
+        };
         const uint32_t ours = logicalDevice->queueFamilyIndex;
         const uint32_t external = externalQueueFamily();
         const VkPipelineStageFlags transfer = VK_PIPELINE_STAGE_TRANSFER_BIT;
+
+        // Learn the application's own cadence first. If inserting later makes
+        // its presents slower, the display had no headroom: back off instead
+        // of halving the game's frame rate.
+        const auto presentNow = std::chrono::steady_clock::now();
+        uint64_t presentGapUs = 0;
+        if (m_lastPresentTime.time_since_epoch().count() != 0)
+        {
+            presentGapUs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                presentNow - m_lastPresentTime).count());
+        }
+        m_lastPresentTime = presentNow;
+        const bool hadHeadroomLastFrame = m_lastInserted;
+        m_lastInserted = false;
+        if (hadHeadroomLastFrame && m_passIntervalUs > 0
+            && presentGapUs > std::max<uint64_t>(m_passIntervalUs * 4 / 3 + 500, m_passIntervalUs + 4000)
+            && presentGapUs < 500000)
+        {
+            // insertion stole a display slot; two in a row means no headroom
+            if (++m_slowStreak >= 2)
+            {
+                m_probeCooldown = 600;
+                m_slowStreak = 0;
+            }
+        }
+        else if (!hadHeadroomLastFrame && presentGapUs >= 2000 && presentGapUs <= 200000)
+        {
+            m_slowStreak = 0;
+            m_passIntervalUs = m_passIntervalUs == 0
+                ? presentGapUs
+                : (m_passIntervalUs * 7 + presentGapUs) / 8;
+        }
+        else
+        {
+            m_slowStreak = 0;
+        }
+        if (m_warmupFrames > 0)
+        {
+            --m_warmupFrames;
+            // skipped frames never reach the host, so the next insertion must
+            // not interpolate against a stale source
+            m_firstSourceUpload = true;
+            return presentComposited();
+        }
+
+        // Insert only while the swapchain has a spare image right now. A
+        // blocking acquire here steals vblanks from the application: on a
+        // display already fed by its real frames it halves the game's rate
+        // instead of adding frames.
+        std::vector<uint32_t> acquired;
+        acquired.reserve(generatedCount);
+        if (m_probeCooldown > 0)
+        {
+            --m_probeCooldown;
+        }
+        else
+        {
+            for (uint32_t j = 0; j < generatedCount; ++j)
+            {
+                VkSemaphore acquire = pass.innerSyncPasses[j].acquireSemaphore;
+                uint32_t acquiredIndex = 0;
+                VkResult acquireResult = logicalDevice->vkd.AcquireNextImageKHR(
+                    logicalDevice->device, swapchain->handle,
+                    0, acquire, VK_NULL_HANDLE, &acquiredIndex);
+                if (acquireResult == VK_SUCCESS || acquireResult == VK_SUBOPTIMAL_KHR)
+                {
+                    acquired.push_back(acquiredIndex);
+                    continue;
+                }
+                if (acquireResult == VK_TIMEOUT || acquireResult == VK_NOT_READY)
+                    break;
+                Logger::err("FG: inner acquire failed (" + std::to_string(acquireResult) + ")");
+                m_ready = false;
+                return presentComposited();
+            }
+            if (acquired.empty())
+                m_probeCooldown = 30;
+        }
+        if (acquired.empty())
+        {
+            m_firstSourceUpload = true;
+            return presentComposited();
+        }
 
         // upload the composited frame into this batch's source image: acquire
         // it from the external host, copy, release back in GENERAL
@@ -523,48 +674,88 @@ namespace VKIntox::FrameGen
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         VkResult vr = logicalDevice->vkd.BeginCommandBuffer(uploadCmd, &beginInfo);
         if (vr != VK_SUCCESS)
-            return logicalDevice->vkd.QueuePresentKHR(queue, originalPresentInfo);
+            return presentComposited();
 
-        VkImageMemoryBarrier uploadBarriers[2] = {
+        VkImageMemoryBarrier uploadBarriers[3] = {};
+        uint32_t uploadBarrierCount = 0;
+        uploadBarriers[uploadBarrierCount++] =
             imageBarrier(source, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT,
                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                         external, ours),
+                         external, ours);
+        if (m_firstSourceUpload)
+        {
+            uploadBarriers[uploadBarrierCount++] =
+                imageBarrier(previousSource, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT,
+                             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                             external, ours);
+        }
+        uploadBarriers[uploadBarrierCount++] =
             imageBarrier(presentImage, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_READ_BIT,
                          VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_GENERAL,
-                         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
-        };
+                         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
         logicalDevice->vkd.CmdPipelineBarrier(uploadCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, transfer,
-                                              0, 0, nullptr, 0, nullptr, 2, uploadBarriers);
+                                              0, 0, nullptr, 0, nullptr,
+                                              uploadBarrierCount, uploadBarriers);
         recordBlit(logicalDevice, uploadCmd, presentImage, source, m_extent);
-        VkImageMemoryBarrier backBarriers[2] = {
+        if (m_firstSourceUpload)
+            recordBlit(logicalDevice, uploadCmd, presentImage, previousSource, m_extent);
+        VkImageMemoryBarrier backBarriers[3] = {};
+        uint32_t backBarrierCount = 0;
+        backBarriers[backBarrierCount++] =
             imageBarrier(source, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_NONE,
                          VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                         ours, external),
+                         ours, external);
+        if (m_firstSourceUpload)
+        {
+            backBarriers[backBarrierCount++] =
+                imageBarrier(previousSource, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_NONE,
+                             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                             ours, external);
+        }
+        backBarriers[backBarrierCount++] =
             imageBarrier(presentImage, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_NONE,
                          VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
-        };
+                         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
         logicalDevice->vkd.CmdPipelineBarrier(uploadCmd, transfer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                              0, 0, nullptr, 0, nullptr, 2, backBarriers);
+                                              0, 0, nullptr, 0, nullptr,
+                                              backBarrierCount, backBarriers);
         logicalDevice->vkd.EndCommandBuffer(uploadCmd);
 
         const uint64_t appSignal = m_syncValue + 1;
         uint64_t signalValues[1] = { appSignal };
-        VkTimelineSemaphoreSubmitInfo timelineInfo{};
-        timelineInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
-        timelineInfo.signalSemaphoreValueCount = 1;
-        timelineInfo.pSignalSemaphoreValues = signalValues;
+        char waitText[32];
+        std::snprintf(waitText, sizeof waitText, "%p", reinterpret_cast<void*>(waitSemaphore));
+        Logger::debug("FG: batch image=" + std::to_string(index)
+                      + " source=" + std::to_string(m_sourceIndex)
+                      + " trigger=" + std::to_string(appSignal)
+                      + " previous=" + std::to_string(m_syncValue)
+                      + " wait=" + waitText
+                      + (m_firstSourceUpload ? " first" : ""));
 
         // the host rejects a new batch while the previous one's signals are
         // unconsumed, so the upload also waits the highest timeline value so
         // far (nothing extra to wait on the very first frame)
         VkSemaphore waits[2] = {};
-        uint64_t uploadWaitValues[2] = { 0, m_syncValue };
+        uint64_t uploadWaitValues[2] = {};
         uint32_t waitCount = 0;
         if (waitSemaphore != VK_NULL_HANDLE)
-            waits[waitCount++] = waitSemaphore;
+        {
+            waits[waitCount] = waitSemaphore;
+            uploadWaitValues[waitCount] = 0;
+            waitCount++;
+        }
         if (m_syncValue > 0)
-            waits[waitCount++] = m_syncSemaphore;
+        {
+            waits[waitCount] = m_syncSemaphore;
+            uploadWaitValues[waitCount] = m_syncValue;
+            waitCount++;
+        }
+        VkTimelineSemaphoreSubmitInfo timelineInfo{};
+        timelineInfo.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+        timelineInfo.waitSemaphoreValueCount = waitCount;
+        timelineInfo.pWaitSemaphoreValues = waitCount > 0 ? uploadWaitValues : nullptr;
+        timelineInfo.signalSemaphoreValueCount = 1;
+        timelineInfo.pSignalSemaphoreValues = signalValues;
         VkPipelineStageFlags waitStages[2] = {
             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
@@ -584,67 +775,91 @@ namespace VKIntox::FrameGen
         if (vr != VK_SUCCESS)
         {
             Logger::err("FG: upload submit failed (" + std::to_string(vr) + ")");
-            return logicalDevice->vkd.QueuePresentKHR(queue, originalPresentInfo);
+            return presentComposited();
         }
-
         // the host rejects a new schedule while its previous batch's GPU work
         // is still running, so the present thread waits it out here; the inner
         // frames' timeline waits then gate the GPU work in order
-        m_engineContext->waitForIdle();
-        m_engineContext->scheduleFrames();
+        bool hostIdle = false;
+        try
+        {
+            hostIdle = m_engineContext->waitForIdle();
+            if (hostIdle)
+                m_engineContext->scheduleFrames();
+        }
+        catch (const std::exception& e)
+        {
+            Logger::err("FG: host schedule failed: " + std::string(e.what()));
+            hostIdle = false;
+        }
+        if (!hostIdle)
+        {
+            Logger::err("FG: host unavailable; frame generation stops until its settings change");
+            m_ready = false;
+            m_syncValue = appSignal;
+            return presentAfterUpload(appSignal);
+        }
+        Logger::debug("FG: batch scheduled after host idle");
+        m_probeCooldown = 0;
+        m_lastInserted = true;
 
-        // insert the generated frames ahead of the real one; the host signals
-        // frame i at appSignal + i + 1
-        for (uint32_t i = 0; i < generatedCount; ++i)
+        // generated frame i is copied from the host's destination image; frame
+        // 0 goes into the application's image, the rest into the acquired ones
+        const uint32_t insertCount = static_cast<uint32_t>(acquired.size());
+        for (uint32_t i = 0; i < insertCount; ++i)
         {
             InnerSyncPass& inner = pass.innerSyncPasses[i];
-
-            uint32_t acquiredIndex = 0;
-            if (logicalDevice->vkd.AcquireNextImageKHR == nullptr)
-                return VK_ERROR_OUT_OF_DATE_KHR;
-            vr = logicalDevice->vkd.AcquireNextImageKHR(
-                logicalDevice->device, swapchain->handle,
-                UINT64_MAX, inner.acquireSemaphore, VK_NULL_HANDLE, &acquiredIndex);
-            if (vr != VK_SUCCESS && vr != VK_SUBOPTIMAL_KHR)
-            {
-                Logger::err("FG: inner acquire failed (" + std::to_string(vr) + ")");
-                return vr;
-            }
-
-            VkImage innerImage = swapchain->images[acquiredIndex];
+            const bool usesAppImage = (i == 0);
+            const uint32_t targetIndex = usesAppImage ? index : acquired[i - 1];
+            VkImage target = swapchain->images[targetIndex];
             VkImage destination = m_destinationImages[i];
             VkCommandBuffer innerCmd = inner.copyCmdbuf;
             vr = logicalDevice->vkd.BeginCommandBuffer(innerCmd, &beginInfo);
             if (vr != VK_SUCCESS)
-                return vr;
+                return presentAfterUpload(appSignal);
 
             // the host releases each generated frame to EXTERNAL; acquire,
-            // blit into the swapchain image, hand the swapchain image to the
-            // compositor, and give the destination back for the next batch
-            VkImageMemoryBarrier innerBarriers[3] = {
+            // blit into the swapchain image, hand it to the compositor, and
+            // give the destination back for the next batch
+            VkImageMemoryBarrier innerBarriers[2] = {
                 imageBarrier(destination, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_READ_BIT,
                              VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                              external, ours),
-                imageBarrier(innerImage, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT,
-                             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                imageBarrier(target, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT,
+                             usesAppImage ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED,
+                             VK_IMAGE_LAYOUT_GENERAL,
+                             VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
+            };
+            logicalDevice->vkd.CmdPipelineBarrier(innerCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, transfer,
+                                                  0, 0, nullptr, 0, nullptr, 2, innerBarriers);
+            recordBlit(logicalDevice, innerCmd, destination, target, m_extent);
+            VkImageMemoryBarrier innerBackBarriers[2] = {
+                imageBarrier(target, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_NONE,
+                             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                              VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
                 imageBarrier(destination, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_NONE,
                              VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                              ours, external),
             };
-            logicalDevice->vkd.CmdPipelineBarrier(innerCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, transfer,
-                                                  0, 0, nullptr, 0, nullptr, 3, innerBarriers);
-            recordBlit(logicalDevice, innerCmd, destination, innerImage, m_extent);
+            logicalDevice->vkd.CmdPipelineBarrier(innerCmd, transfer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                                  0, 0, nullptr, 0, nullptr, 2, innerBackBarriers);
             logicalDevice->vkd.EndCommandBuffer(innerCmd);
 
-            VkSemaphore innerWaits[2] = { inner.acquireSemaphore, m_syncSemaphore };
-            // the binary acquire semaphore ignores its wait value
-            uint64_t waitValues[2] = { 0, appSignal + i + 1 };
+            // the host signals this frame at appSignal + i + 1; frame 0 waits
+            // only the host, later frames also wait their acquired image
+            VkSemaphore innerWaits[2] = { m_syncSemaphore, VK_NULL_HANDLE };
+            uint64_t waitValues[2] = { appSignal + i + 1, 0 };
+            uint32_t waitCount = 1;
+            if (!usesAppImage)
+            {
+                innerWaits[waitCount] = pass.innerSyncPasses[i - 1].acquireSemaphore;
+                waitValues[waitCount] = 0;
+                waitCount++;
+            }
             VkTimelineSemaphoreSubmitInfo innerTimeline{};
             innerTimeline.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
-            innerTimeline.waitSemaphoreValueCount = 2;
+            innerTimeline.waitSemaphoreValueCount = waitCount;
             innerTimeline.pWaitSemaphoreValues = waitValues;
-
             VkPipelineStageFlags innerStages[2] = {
                 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                 VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
@@ -652,7 +867,7 @@ namespace VKIntox::FrameGen
             VkSubmitInfo innerSubmit{};
             innerSubmit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             innerSubmit.pNext = &innerTimeline;
-            innerSubmit.waitSemaphoreCount = 2;
+            innerSubmit.waitSemaphoreCount = waitCount;
             innerSubmit.pWaitSemaphores = innerWaits;
             innerSubmit.pWaitDstStageMask = innerStages;
             innerSubmit.commandBufferCount = 1;
@@ -664,7 +879,8 @@ namespace VKIntox::FrameGen
             if (vr != VK_SUCCESS)
             {
                 Logger::err("FG: inner copy submit failed (" + std::to_string(vr) + ")");
-                return vr;
+                m_ready = false;
+                return presentAfterUpload(appSignal);
             }
 
             VkSemaphore presentWait = inner.copySemaphore;
@@ -676,21 +892,87 @@ namespace VKIntox::FrameGen
             innerPresent.pWaitSemaphores = &presentWait;
             innerPresent.swapchainCount = 1;
             innerPresent.pSwapchains = &swapchain->handle;
-            innerPresent.pImageIndices = &acquiredIndex;
+            innerPresent.pImageIndices = &targetIndex;
             VkResult presentResult = logicalDevice->vkd.QueuePresentKHR(queue, &innerPresent);
             if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR)
-                return presentResult;
+            {
+                Logger::err("FG: inner present failed (" + std::to_string(presentResult) + ")");
+                m_ready = false;
+                return presentAfterUpload(appSignal);
+            }
         }
 
-        // the host signaled the batch's frames; the counter advances past them
-        m_syncValue += generatedCount;
+        // the real composited frame waits in the source image; copy it into the
+        // last acquired image after the host has released its sources, then
+        // present it after the generated frames
+        const uint32_t realIndex = acquired.back();
+        VkImage realTarget = swapchain->images[realIndex];
+        VkCommandBuffer realCmd = pass.realCopyCmdbuf;
+        vr = logicalDevice->vkd.BeginCommandBuffer(realCmd, &beginInfo);
+        if (vr != VK_SUCCESS)
+            return presentAfterUpload(appSignal);
+        VkImageMemoryBarrier realBarriers[2] = {
+            imageBarrier(source, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_READ_BIT,
+                         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                         external, ours),
+            imageBarrier(realTarget, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT,
+                         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
+        };
+        logicalDevice->vkd.CmdPipelineBarrier(realCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, transfer,
+                                              0, 0, nullptr, 0, nullptr, 2, realBarriers);
+        recordBlit(logicalDevice, realCmd, source, realTarget, m_extent);
+        VkImageMemoryBarrier realBackBarriers[2] = {
+            imageBarrier(realTarget, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_NONE,
+                         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
+            imageBarrier(source, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_NONE,
+                         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                         ours, external),
+        };
+        logicalDevice->vkd.CmdPipelineBarrier(realCmd, transfer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                              0, 0, nullptr, 0, nullptr, 2, realBackBarriers);
+        logicalDevice->vkd.EndCommandBuffer(realCmd);
 
-        // finally the real composited frame, waiting for the last insertion
-        VkSemaphore finalWait = pass.innerSyncPasses.back().copySemaphore;
+        VkSemaphore realWaits[2] = { pass.innerSyncPasses[insertCount - 1].acquireSemaphore, m_syncSemaphore };
+        uint64_t realWaitValues[2] = { 0, appSignal + generatedCount };
+        VkTimelineSemaphoreSubmitInfo realTimeline{};
+        realTimeline.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+        realTimeline.waitSemaphoreValueCount = 2;
+        realTimeline.pWaitSemaphoreValues = realWaitValues;
+        VkPipelineStageFlags realStages[2] = {
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        };
+        VkSubmitInfo realSubmit{};
+        realSubmit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        realSubmit.pNext = &realTimeline;
+        realSubmit.waitSemaphoreCount = 2;
+        realSubmit.pWaitSemaphores = realWaits;
+        realSubmit.pWaitDstStageMask = realStages;
+        realSubmit.commandBufferCount = 1;
+        realSubmit.pCommandBuffers = &realCmd;
+        realSubmit.signalSemaphoreCount = 1;
+        realSubmit.pSignalSemaphores = &pass.realCopySemaphore;
+        vr = logicalDevice->vkd.QueueSubmit(queue, 1, &realSubmit, VK_NULL_HANDLE);
+        if (vr != VK_SUCCESS)
+        {
+            Logger::err("FG: real frame submit failed (" + std::to_string(vr) + ")");
+            m_ready = false;
+            return presentAfterUpload(appSignal);
+        }
+
+        // every batch advances the timeline by the trigger plus the frames
+        // the host generated; the next trigger must follow the host's last
+        // value, not the trigger's (an off-by-one here stalls the host)
+        m_syncValue = appSignal + generatedCount;
+        m_sourceIndex ^= 1;
+        m_firstSourceUpload = false;
+
         VkPresentInfoKHR finalPresent = *originalPresentInfo;
         finalPresent.waitSemaphoreCount = 1;
-        finalPresent.pWaitSemaphores = &finalWait;
-        m_iteration++;
+        finalPresent.pWaitSemaphores = &pass.realCopySemaphore;
+        finalPresent.pImageIndices = &realIndex;
         return logicalDevice->vkd.QueuePresentKHR(queue, &finalPresent);
     }
 
@@ -710,6 +992,10 @@ namespace VKIntox::FrameGen
 
         for (auto& pass : m_syncPasses)
         {
+            if (pass.presentSemaphore != VK_NULL_HANDLE)
+                logicalDevice->vkd.DestroySemaphore(logicalDevice->device, pass.presentSemaphore, nullptr);
+            if (pass.realCopySemaphore != VK_NULL_HANDLE)
+                logicalDevice->vkd.DestroySemaphore(logicalDevice->device, pass.realCopySemaphore, nullptr);
             for (auto& inner : pass.innerSyncPasses)
             {
                 if (inner.acquireSemaphore != VK_NULL_HANDLE)
