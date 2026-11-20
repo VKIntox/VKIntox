@@ -29,7 +29,7 @@ namespace VKIntox
         // Reserve the footer before laying out the content so it stays visible
         // when the view is short; the content scrolls in what is left.
         const char* disclaimer = "This project uses a design heavily inspired by Google's Material 3 / Material You. Not affiliated with or endorsed by Google.";
-        const float wrapWidth = ImGui::GetContentRegionAvail().x;
+        const float wrapWidth = ImFloor(ImMax(200.0f, ImGui::GetContentRegionAvail().x) / 8.0f) * 8.0f;
         const float disclaimerHeight = ImGui::CalcTextSize(disclaimer, nullptr, false, wrapWidth).y;
         const float spacing = ImGui::GetStyle().ItemSpacing.y;
         const float footerHeight = disclaimerHeight + ImGui::GetTextLineHeight() * 2.5f + spacing * 6.0f + 8.0f;
@@ -114,9 +114,9 @@ namespace VKIntox
         ImGui::EndChild();
 
         // Footer, pinned below the content by the reserved height.
-        ImGui::Spacing();
+        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footerHeight);
         UI::PushSupport();
-        ImGui::PushTextWrapPos(0.0f);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
         ImGui::TextDisabled("%s", disclaimer);
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
