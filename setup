@@ -216,6 +216,16 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# the host binary and weights are too large to rely on every checkout carrying
+# them; fetch the package when a source archive omits it
+fetch_mako_fg() {
+    local dir="$SCRIPT_DIR/src/framegen/mako-fg"
+    [[ -x "$dir/mako-fg-host" && -s "$dir/model/weights.bin" ]] && return 0
+    run_progress "fetching MAKO frame generation package" \
+        "$SCRIPT_DIR/scripts/fetch-mako-fg" "$dir" "${VKINTOX_FG_REF:-framegen}"
+}
+fetch_mako_fg
+
 # uninstall needs neither just nor a shader download, so it branches before the
 # install dependency check rather than failing on tools it will not use
 if [[ $UNINSTALL -eq 1 ]]; then
