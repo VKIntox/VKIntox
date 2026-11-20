@@ -136,7 +136,7 @@ namespace VKIntox::Icon
     constexpr const char* BrushUtf8         = "\xEE\x8E\xAE";
     constexpr const char* ImageUtf8         = "\xEE\x89\x91";
     constexpr const char* LayersUtf8        = "\xEE\x94\xBB";
-    constexpr const char* MaskedTransitionsUtf8 = "\xE7\x92\xAE";
+    constexpr const char* MaskedTransitionsUtf8 = "\xEE\x9C\xAE";
     constexpr const char* TextureUtf8       = "\xEE\x90\xA1";
     constexpr const char* BlurOnUtf8        = "\xEE\x8E\xA5";
     constexpr const char* GrainUtf8         = "\xEE\x8F\xAA";

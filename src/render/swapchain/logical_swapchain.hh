@@ -153,6 +153,9 @@ namespace VKIntox
         // engine init is expensive; a failed attempt is latched until the
         // next swapchain instead of being retried every present
         bool fgInitFailed = false;
+        // delay engine startup until the swapchain has settled; games often
+        // create a tiny window first and replace it with the real one
+        uint32_t fgPresentCount = 0;
 
         bool destroy();
         void reloadEffects(Config* config);

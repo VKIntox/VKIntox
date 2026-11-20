@@ -4285,6 +4285,7 @@ namespace VKIntox
             if (swapIt != swapchainMap.end() && swapIt->second && !swapIt->second->passthrough)
             {
                 LogicalSwapchain* logicalSwapchain = swapIt->second.get();
+                logicalSwapchain->fgPresentCount++;
                 FrameGen::FgProfile profile;
                 profile.enabled         = settingsManager.getFgEnabled();
                 profile.multiplier      = static_cast<uint32_t>(settingsManager.getFgMultiplier());
@@ -4301,63 +4302,56 @@ namespace VKIntox
                         && a.halfPrecision == b.halfPrecision
                         && a.dllPath == b.dllPath;
                 };
-                const bool poolMatches = logicalSwapchain->fgCreateProfile.enabled
-                    && sameEngineProfile(logicalSwapchain->fgCreateProfile, profile);
-                const bool engineProfileChanged = logicalSwapchain->fg
-                    && !sameEngineProfile(logicalSwapchain->fgProfile, profile);
+                const bool sameEngine = logicalSwapchain->fg
+                    && logicalSwapchain->fgProfile.enabled == profile.enabled
+                    && sameEngineProfile(logicalSwapchain->fgProfile, profile);
 
-                // Settings changes never rebuild the live engine from the
-                // present path: its context, host and image pool are tied to
-                // the swapchain generation. Latch the change and keep the old
-                // engine until the next launch.
-                if (engineProfileChanged)
+                if (logicalSwapchain->fg && !sameEngine)
                 {
-                    if (!logicalSwapchain->fgChangeLogged)
-                        Logger::info("FG: settings changed; restart the game to apply them");
-                    logicalSwapchain->fgChangeLogged = true;
-                    logicalSwapchain->fgStale = true;
+                    // settings changed between frames: retire the old generator
+                    // only after the queue has finished the frame it was given
+                    if (logicalDevice->vkd.QueueWaitIdle)
+                        logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
+                    logicalSwapchain->fg.reset();
+                    logicalSwapchain->fgProfile = {};
+                    logicalSwapchain->fgInitFailed = false;
+                    logicalSwapchain->fgStale = false;
+                    logicalSwapchain->fgChangeLogged = false;
+                    Logger::info("FG: rebuilding generator for new settings");
                 }
-                else if (logicalSwapchain->fg)
+
+                if (!profile.enabled)
                 {
                     logicalSwapchain->fgStale = false;
                     logicalSwapchain->fgChangeLogged = false;
                 }
-
-                if (profile.enabled && !logicalSwapchain->fgStale && !logicalSwapchain->fgInitFailed
-                    && FrameGen::FgSwapchain::active(logicalDevice, profile))
+                else if (!logicalSwapchain->fg && !logicalSwapchain->fgInitFailed
+                         && logicalSwapchain->fgPresentCount >= 30
+                         && FrameGen::FgSwapchain::active(logicalDevice, profile))
                 {
-                    if (!logicalSwapchain->fg)
+                    try
                     {
-                        if (!poolMatches)
-                        {
-                            if (!logicalSwapchain->fgChangeLogged)
-                                Logger::info("FG: this swapchain was built without these frame generation settings; restart the game to apply them");
-                            logicalSwapchain->fgChangeLogged = true;
-                        }
-                        else
-                        {
-                            try
-                            {
-                                logicalSwapchain->fg = std::make_unique<FrameGen::FgSwapchain>(
-                                    logicalDevice, logicalSwapchain, profile);
-                                logicalSwapchain->fgProfile = profile;
-                            }
-                            catch (const std::exception& e)
-                            {
-                                Logger::err("FG: init failed, frame generation stays off until the next launch: "
-                                            + std::string(e.what()));
-                                logicalSwapchain->fgInitFailed = true;
-                            }
-                        }
+                        logicalSwapchain->fg = std::make_unique<FrameGen::FgSwapchain>(
+                            logicalDevice, logicalSwapchain, profile);
+                        logicalSwapchain->fgProfile = profile;
                     }
-                    if (logicalSwapchain->fg && !logicalSwapchain->fgStale)
+                    catch (const std::exception& e)
                     {
-                        VkSemaphore compositedWait = presentSemaphores.back();
-                        return logicalSwapchain->fg->present(
-                            logicalDevice, logicalSwapchain,
-                            pPresentInfo->pImageIndices[0],
-                            queue, compositedWait, pPresentInfo);
+                        Logger::err("FG: init failed, frame generation stays off until the next settings change: "
+                                    + std::string(e.what()));
+                        logicalSwapchain->fgInitFailed = true;
                     }
+                }
+
+                if (logicalSwapchain->fg && profile.enabled)
+                {
+                    logicalSwapchain->fgStale = false;
+                    logicalSwapchain->fgChangeLogged = false;
+                    VkSemaphore compositedWait = presentSemaphores.back();
+                    return logicalSwapchain->fg->present(
+                        logicalDevice, logicalSwapchain,
+                        pPresentInfo->pImageIndices[0],
+                        queue, compositedWait, pPresentInfo);
                 }
             }
         }
