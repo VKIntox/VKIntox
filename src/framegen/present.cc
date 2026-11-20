@@ -886,8 +886,8 @@ namespace VKIntox::FrameGen
             VkSemaphore presentWait = inner.copySemaphore;
             VkPresentInfoKHR innerPresent{};
             innerPresent.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-            if (i == 0)
-                innerPresent.pNext = originalPresentInfo->pNext;
+            // the application's pNext chain (present ids, timing) belongs to
+            // the real frame, which is presented last
             innerPresent.waitSemaphoreCount = 1;
             innerPresent.pWaitSemaphores = &presentWait;
             innerPresent.swapchainCount = 1;
