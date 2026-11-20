@@ -1099,14 +1099,20 @@ build_versions
 choose_version
 
 SKIP_LAYER=0
-if ((FORCE == 0)); then
-    if marker_matches && { [[ "$METHOD" != "flatpak" ]] || flatpak_layer_installed; }; then
+if ((FORCE == 0)) && marker_matches; then
+    if [[ "$METHOD" == "flatpak" ]]; then
+        flatpak_layer_installed && SKIP_LAYER=1
+    else
+        # the marker alone is not proof: the package can vanish from the
+        # system while the marker file survives, so require the package to
+        # actually be installed before skipping the layer
+        [[ -n "$(installed_pkg_version || true)" ]] && SKIP_LAYER=1
+    fi
+fi
+if ((SKIP_LAYER == 0)) && ((FORCE == 0)) && [[ "$METHOD" == "system" ]]; then
+    installed_version=$(installed_pkg_version || true)
+    if [[ -n "$installed_version" && "${installed_version%%-*}" == "${SELECTED_TAG#v}" ]]; then
         SKIP_LAYER=1
-    elif [[ "$METHOD" == "system" ]]; then
-        installed_version=$(installed_pkg_version || true)
-        if [[ -n "$installed_version" && "${installed_version%%-*}" == "${SELECTED_TAG#v}" ]]; then
-            SKIP_LAYER=1
-        fi
     fi
 fi
 
