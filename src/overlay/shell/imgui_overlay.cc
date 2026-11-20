@@ -2324,11 +2324,16 @@ namespace VKIntox
         }
         if (shellAnimating)
             shellForcePos = true;
+        if (shellForcePos)
         {
             const float keep = ImMin(avail.x, avail.y) * 0.05f;
             shellBaseX = ImClamp(shellBaseX, screenMin.x, ImMax(screenMin.x, screenMax.x - keep));
             shellBaseY = ImClamp(shellBaseY, screenMin.y, ImMax(screenMin.y, screenMax.y - keep));
             ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY + shellOffsetY), ImGuiCond_Always);
+        }
+        else
+        {
+            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY), ImGuiCond_FirstUseEver);
         }
         // The game often starts in a small window and grows a moment later, so
         // the first frames' size clamp would shrink the saved size for good.
