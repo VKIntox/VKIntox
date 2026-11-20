@@ -29,15 +29,15 @@ namespace VKIntox
         bool enabled = settingsManager.getFgEnabled();
         if (ImGui::M3HeroSwitch(Icon::MaskedTransitionsUtf8, "Generate frames", "##fg_enabled", &enabled,
                                 "Interpolates extra frames between the game's own ones.\n"
-                                "The swapchain is rebuilt when this changes: the next frame asks the game to recreate it.",
+                                "The swapchain image pool is fixed when the game creates it, so settings are latched per launch.",
                                 1.15f))
         {
             settingsManager.setFgEnabled(enabled);
             saveSettings();
         }
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Toggling or changing the multiplier recreates the swapchain:\n"
-                              "expect a brief flicker, no restart needed.");
+            ImGui::SetTooltip("Turning it off stops insertion immediately.\n"
+                              "Turning it on or changing the multiplier takes effect on the next launch.");
 
         if (enabled)
         {
@@ -55,6 +55,9 @@ namespace VKIntox
                 settingsManager.setFgMultiplier(index + 2);
                 saveSettings();
             }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The image pool was sized for the launch multiplier.\n"
+                                  "Restart the game to apply a different one.");
 
             // flow scale
             ImGui::Spacing();
@@ -117,6 +120,7 @@ namespace VKIntox
         }
 
         ImGui::Spacing();
+        UI::TextSupport("Settings are latched when the game creates its swapchain; changes never rebuild frame generation mid-game. Restart the game to apply a new setting.");
         UI::TextSupport("The model is open-weight and needs no Lossless Scaling. Generated frames run in a separate process, so a failure there never takes the game down.");
 
         ImGui::EndChild();
