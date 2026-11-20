@@ -72,7 +72,8 @@ namespace VKIntox
 
             // Blocks until the host finished the batch's GPU work. The host
             // rejects a new schedule while its last batch is in flight.
-            void waitForIdle();
+            // False means the host stayed busy past the bounded wait.
+            bool waitForIdle();
 
         private:
             struct ObjectDeleter { void operator()(void* p) const; };
