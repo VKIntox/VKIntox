@@ -21,18 +21,20 @@ namespace VKIntox
 
         ImGui::BeginChild("FgContent", ImVec2(0, 0), false);
 
+        ImGui::M3CardBegin("fg_card");
+
         bool enabled = settingsManager.getFgEnabled();
         if (ImGui::M3HeroSwitch(Icon::MaskedTransitionsUtf8, "Generate frames", "##fg_enabled", &enabled,
-                                "Interpolates extra frames between the game's own ones.\n"
+                                "Generated frames are inserted between the game's own frames.\n"
                                 "Changes rebuild the generator between frames.",
                                 1.15f))
         {
             settingsManager.setFgEnabled(enabled);
             saveSettings();
         }
+        ImGui::Indent(72.0f * ImGuiM3GetMetrics().density);
         UI::TextSupport("Generate frames using MAKO.");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Generated frames are inserted between the game's own frames.");
+        ImGui::Unindent(72.0f * ImGuiM3GetMetrics().density);
 
         if (enabled)
         {
@@ -87,46 +89,10 @@ namespace VKIntox
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Keeps the game's HUD and the overlay out of the interpolated image where the game supports it.\n"
                                   "Applies on the next launch.");
+
         }
 
-        // engine diagnostics
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::TextUnformatted("Engine");
-        if (FrameGen::engineAvailable())
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_Primary));
-            ImGui::TextUnformatted("MAKO FG backend linked");
-            ImGui::PopStyleColor();
-        }
-        else
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_Error));
-            ImGui::TextUnformatted(FrameGen::engineStatus().c_str());
-            ImGui::PopStyleColor();
-        }
-
-        const std::string package = FrameGen::modelPackagePath();
-        if (!package.empty() && std::filesystem::exists(package))
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_Primary));
-            ImGui::TextUnformatted("MAKO FG model installed");
-            ImGui::PopStyleColor();
-        }
-        else
-        {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_Error));
-            ImGui::TextUnformatted("MAKO FG model missing");
-            ImGui::PopStyleColor();
-            UI::TextSupport("The bundled mako-fg package should sit beside the layer (mako-fg/ in the layer's directory).");
-        }
-
-        ImGui::Spacing();
-        UI::TextSupport("Settings rebuild the generator between frames.");
-        UI::TextSupport("The model is open-weight and needs no Lossless Scaling. Generated frames run in a separate process, so a failure there never takes the game down.");
-
+        ImGui::M3CardEnd();
         ImGui::EndChild();
     }
 } // namespace VKIntox

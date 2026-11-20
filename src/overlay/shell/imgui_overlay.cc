@@ -180,6 +180,9 @@ namespace VKIntox
     {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
+        // finer circles for switches, sliders and radio marks; the default
+        // tessellation is visibly polygonal at this density
+        ImGui::GetStyle().CircleTessellationMaxError = 0.08f;
         // imconfig disables ImGui's default shell handler, so TextLinkOpenURL
         // would silently do nothing. route it through our xdg-open helper.
         ImGui::GetPlatformIO().Platform_OpenInShellFn = [](ImGuiContext*, const char* url) -> bool
@@ -553,7 +556,7 @@ namespace VKIntox
         constexpr float kFadeSeconds = 0.6f;
         const auto now = std::chrono::steady_clock::now();
 
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
         const float margin = 28.0f;
         const float gap = 10.0f;
         const float padX = 22.0f;
@@ -568,7 +571,7 @@ namespace VKIntox
         const float shadowDrop = ImMax(tm.ambient_shadow_y[toastElevation], tm.key_shadow_y[toastElevation]);
         const float shadowPad = ImCeil((shadowReach + shadowDrop) * tm.density) + 1.0f;
         // never let a collapsed game window produce a negative card width
-        const float maxCardWidth = ImMax(160.0f, ImMin(560.0f, viewport->WorkSize.x - margin * 2.0f));
+        const float maxCardWidth = ImMax(160.0f, ImMin(560.0f, displaySize.x - margin * 2.0f));
 
         std::vector<size_t> expired;
         for (size_t i = 0; i < snapshot.size(); ++i)
@@ -576,7 +579,7 @@ namespace VKIntox
                 expired.push_back(i);
 
         // the newest toast sits nearest the bottom edge, older ones stack upward
-        float cursorY = viewport->WorkPos.y + viewport->WorkSize.y - margin;
+        float cursorY = displaySize.y - margin;
         for (size_t i = 0; i < snapshot.size(); ++i)
         {
             const float age = std::chrono::duration<float>(now - snapshot[i].createdAt).count();
@@ -596,7 +599,7 @@ namespace VKIntox
             const float windowHeight = cardHeight + shadowPad * 2.0f;
 
             cursorY -= windowHeight;
-            const ImVec2 windowPos(viewport->WorkPos.x + (viewport->WorkSize.x - windowWidth) * 0.5f, cursorY);
+            const ImVec2 windowPos((displaySize.x - windowWidth) * 0.5f, cursorY);
             ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(windowWidth, windowHeight), ImGuiCond_Always);
 
@@ -669,7 +672,7 @@ namespace VKIntox
             return;
 
         const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 
         char text[32];
         const float fps = FpsMetrics::fps();
@@ -753,10 +756,8 @@ namespace VKIntox
         const int corner = settingsManager.getFpsCorner();
         const bool right = (corner == 1 || corner == 3);
         const bool bottom = (corner == 2 || corner == 3);
-        const float cardX = right ? viewport->WorkPos.x + viewport->WorkSize.x - margin - cardW
-                                  : viewport->WorkPos.x + margin;
-        const float cardY = bottom ? viewport->WorkPos.y + viewport->WorkSize.y - margin - cardH
-                                   : viewport->WorkPos.y + margin;
+        const float cardX = right ? displaySize.x - margin - cardW : margin;
+        const float cardY = bottom ? displaySize.y - margin - cardH : margin;
         const ImVec2 windowPos(cardX - shadowPad, cardY - shadowPad);
 
         ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
