@@ -224,7 +224,6 @@ fetch_mako_fg() {
     run_progress "fetching MAKO frame generation package" \
         "$SCRIPT_DIR/scripts/fetch-mako-fg" "$dir" "${VKINTOX_FG_REF:-framegen}"
 }
-fetch_mako_fg
 
 # uninstall needs neither just nor a shader download, so it branches before the
 # install dependency check rather than failing on tools it will not use
@@ -270,6 +269,7 @@ fi
 
 if [[ "$MODE" == "system" ]]; then
     section "system install"
+    fetch_mako_fg
     run_progress "configured" just configure
 
     run_progress "compiled" just build
