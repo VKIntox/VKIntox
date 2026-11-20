@@ -21,7 +21,7 @@ namespace VKIntox::Icon
     // Navigation.
     constexpr ImWchar AutoAwesome    = 0xE65F;  // Effects
     constexpr ImWchar Palette        = 0xE3B7;  // Shaders
-    constexpr ImWchar MaskedTransitions = 0xE72E;  // LSFG frame generation
+    constexpr ImWchar MaskedTransitions = 0xE72E;  // FG frame generation
     constexpr ImWchar Settings       = 0xE8B8;  // Settings
     constexpr ImWchar Tune           = 0xE429;  // Advanced
     constexpr ImWchar MonitorHeart   = 0xEAA2;  // Diagnostics

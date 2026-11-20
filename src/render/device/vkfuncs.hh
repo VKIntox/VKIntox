@@ -107,6 +107,8 @@
     FORVKFUNC(GetQueueCheckpointData2NV) \
     FORVKFUNC(GetQueueCheckpointDataNV) \
     FORVKFUNC(GetSwapchainImagesKHR) \
+    FORVKFUNC(GetMemoryFdKHR) \
+    FORVKFUNC(GetSemaphoreFdKHR) \
     FORVKFUNC(ImportSemaphoreFdKHR) \
     FORVKFUNC(AcquireNextImageKHR) \
     FORVKFUNC(MapMemory) \

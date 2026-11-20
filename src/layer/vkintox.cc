@@ -47,7 +47,7 @@
 #include "config/config.hh"
 #include "config/config_serializer.hh"
 #include "config/settings_manager.hh"
-#include "framegen/lsfg_present.hh"
+#include "framegen/present.hh"
 #include "render/swapchain/fake_swapchain.hh"
 #include "render/resources/format.hh"
 #include "util/logger.hh"
@@ -2036,23 +2036,23 @@ namespace VKIntox
                 Logger::warn("VKINTOX_GPU_CRASH_DIAGNOSTICS=1 but VK_EXT_device_fault is not supported by this device");
             }
         }
-        // LSFG frame generation moves frames across two Vulkan devices through
+        // FG frame generation moves frames across two Vulkan devices through
         // exported fds; the game's device needs the import side of those
         // extensions, and timeline semaphores for the engine's pacing signal.
         // Adding supported extensions is inert for apps that never use them.
-        const bool lsfgExternalMemoryOk = hasDeviceExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
+        const bool fgExternalMemoryOk = hasDeviceExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
             && hasDeviceExtension(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
-        const bool lsfgTimelineExtOk = hasDeviceExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)
+        const bool fgTimelineExtOk = hasDeviceExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)
             || deviceProps.apiVersion >= VK_API_VERSION_1_2;
-        if (lsfgExternalMemoryOk && lsfgTimelineExtOk)
+        if (fgExternalMemoryOk && fgTimelineExtOk)
         {
             addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
             addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
             addUniqueCString(enabledExtensionNames, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
         }
-        else if (settingsManager.getLsfgEnabled())
+        else if (settingsManager.getFgEnabled())
         {
-            Logger::warn("LSFG is enabled but this device lacks the external memory/semaphore fd extensions; frame generation is unavailable");
+            Logger::warn("FG is enabled but this device lacks the external memory/semaphore fd extensions; frame generation is unavailable");
         }
 
         modifiedCreateInfo.ppEnabledExtensionNames = enabledExtensionNames.data();
@@ -2143,15 +2143,15 @@ namespace VKIntox
             extendedDevicePNext = &diagnosticsConfigInfo;
         }
 
-        // LSFG timeline semaphore feature for the engine's pacing signal
-        VkPhysicalDeviceTimelineSemaphoreFeaturesKHR lsfgTimelineFeature{};
-        if (lsfgExternalMemoryOk && lsfgTimelineExtOk &&
+        // FG timeline semaphore feature for the engine's pacing signal
+        VkPhysicalDeviceTimelineSemaphoreFeaturesKHR fgTimelineFeature{};
+        if (fgExternalMemoryOk && fgTimelineExtOk &&
             !pNextChainContainsSType(extendedDevicePNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR))
         {
-            lsfgTimelineFeature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
-            lsfgTimelineFeature.timelineSemaphore = VK_TRUE;
-            lsfgTimelineFeature.pNext = extendedDevicePNext;
-            extendedDevicePNext = &lsfgTimelineFeature;
+            fgTimelineFeature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
+            fgTimelineFeature.timelineSemaphore = VK_TRUE;
+            fgTimelineFeature.pNext = extendedDevicePNext;
+            extendedDevicePNext = &fgTimelineFeature;
         }
 
         modifiedCreateInfo.pNext = extendedDevicePNext;
@@ -2500,16 +2500,16 @@ namespace VKIntox
         // app's requested usage and is valid on both swapchain paths.
         modifiedCreateInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
-        // LSFG frame generation: grow the image pool so the inserted frames
+        // FG frame generation: grow the image pool so the inserted frames
         // have somewhere to land, and allow blitting into the extra images.
-        FrameGen::LsfgProfile lsfgProfile;
-        lsfgProfile.enabled   = settingsManager.getLsfgEnabled();
-        lsfgProfile.multiplier = static_cast<uint32_t>(settingsManager.getLsfgMultiplier());
-        lsfgProfile.flowScale = settingsManager.getLsfgFlowScale();
-        lsfgProfile.performanceMode = settingsManager.getLsfgPerformanceMode();
-        lsfgProfile.halfPrecision = settingsManager.getLsfgHalfPrecision();
-        lsfgProfile.dllPath   = settingsManager.getLsfgDllPath();
-        if (FrameGen::modifySwapchainCreateInfo(logicalDevice, modifiedCreateInfo, lsfgProfile))
+        FrameGen::FgProfile fgProfile;
+        fgProfile.enabled   = settingsManager.getFgEnabled();
+        fgProfile.multiplier = static_cast<uint32_t>(settingsManager.getFgMultiplier());
+        fgProfile.flowScale = settingsManager.getFgFlowScale();
+        fgProfile.performanceMode = settingsManager.getFgPerformanceMode();
+        fgProfile.halfPrecision = settingsManager.getFgHalfPrecision();
+        fgProfile.dllPath   = settingsManager.getFgModelPath();
+        if (FrameGen::modifySwapchainCreateInfo(logicalDevice, modifiedCreateInfo, fgProfile))
         {
             // remember the applied profile so the first present can reject a
             // stale pool without re-querying settings under the device lock
@@ -4278,7 +4278,7 @@ namespace VKIntox
             return VK_ERROR_OUT_OF_DATE_KHR;
         }
 
-        // LSFG frame insertion: the composited frame just finished on
+        // FG frame insertion: the composited frame just finished on
         // presentSemaphores.back(); the engine generates the intermediate
         // frames and presents them ahead of this one. Single swapchain only —
         // inserted frames must own the compositor's FIFO ordering.
@@ -4288,64 +4288,62 @@ namespace VKIntox
             if (swapIt != swapchainMap.end() && swapIt->second && !swapIt->second->passthrough)
             {
                 LogicalSwapchain* logicalSwapchain = swapIt->second.get();
-                FrameGen::LsfgProfile profile;
-                profile.enabled         = settingsManager.getLsfgEnabled();
-                profile.multiplier      = static_cast<uint32_t>(settingsManager.getLsfgMultiplier());
-                profile.flowScale       = settingsManager.getLsfgFlowScale();
-                profile.performanceMode = settingsManager.getLsfgPerformanceMode();
-                profile.halfPrecision   = settingsManager.getLsfgHalfPrecision();
-                profile.dllPath         = settingsManager.getLsfgDllPath();
+                FrameGen::FgProfile profile;
+                profile.enabled         = settingsManager.getFgEnabled();
+                profile.multiplier      = static_cast<uint32_t>(settingsManager.getFgMultiplier());
+                profile.flowScale       = settingsManager.getFgFlowScale();
+                profile.performanceMode = settingsManager.getFgPerformanceMode();
+                profile.halfPrecision   = settingsManager.getFgHalfPrecision();
+                profile.dllPath         = settingsManager.getFgModelPath();
 
-                bool profileChanged = logicalSwapchain->lsfgProfile.enabled != profile.enabled
-                    || logicalSwapchain->lsfgProfile.multiplier != profile.multiplier
-                    || logicalSwapchain->lsfgProfile.flowScale != profile.flowScale
-                    || logicalSwapchain->lsfgProfile.performanceMode != profile.performanceMode
-                    || logicalSwapchain->lsfgProfile.halfPrecision != profile.halfPrecision
-                    || logicalSwapchain->lsfgProfile.dllPath != profile.dllPath;
-                if (logicalSwapchain->lsfg && profileChanged)
+                bool profileChanged = logicalSwapchain->fgProfile.enabled != profile.enabled
+                    || logicalSwapchain->fgProfile.multiplier != profile.multiplier
+                    || logicalSwapchain->fgProfile.flowScale != profile.flowScale
+                    || logicalSwapchain->fgProfile.performanceMode != profile.performanceMode
+                    || logicalSwapchain->fgProfile.halfPrecision != profile.halfPrecision
+                    || logicalSwapchain->fgProfile.dllPath != profile.dllPath;
+                if (logicalSwapchain->fg && profileChanged)
                 {
                     // the image pool was sized for the old multiplier; ask the
                     // app to recreate so vkCreateSwapchainKHR can re-apply it
-                    Logger::info("LSFG: profile changed; recreating the swapchain");
-                    logicalSwapchain->lsfg.reset();
-                    logicalSwapchain->lsfgInitFailed = false;
-                    logicalSwapchain->lsfgProfile = profile;
+                    Logger::info("FG: profile changed; recreating the swapchain");
+                    logicalSwapchain->fg.reset();
+                    logicalSwapchain->fgInitFailed = false;
+                    logicalSwapchain->fgProfile = profile;
                     return VK_ERROR_OUT_OF_DATE_KHR;
                 }
-                logicalSwapchain->lsfgProfile = profile;
+                logicalSwapchain->fgProfile = profile;
 
                 // a failed init is latched: engine creation builds a whole
                 // Vulkan device, so retrying every present would tank the frame
                 // rate. the latch lifts when the profile changes.
-                if (logicalSwapchain->lsfgInitFailed && !profileChanged)
+                if (logicalSwapchain->fgInitFailed && !profileChanged)
                 {
                     // fall through to the normal present path
                 }
-                else if (profile.enabled && FrameGen::LsfgSwapchain::active(logicalDevice, profile))
+                else if (profile.enabled && FrameGen::FgSwapchain::active(logicalDevice, profile))
                 {
-                    if (!logicalSwapchain->lsfg)
+                    if (!logicalSwapchain->fg)
                     {
                         try
                         {
-                            logicalSwapchain->lsfg = std::make_unique<FrameGen::LsfgSwapchain>(
+                            logicalSwapchain->fg = std::make_unique<FrameGen::FgSwapchain>(
                                 logicalDevice, logicalSwapchain, profile);
                         }
                         catch (const std::exception& e)
                         {
-                            Logger::err("LSFG: init failed, frame generation stays off until its settings change: "
+                            Logger::err("FG: init failed, frame generation stays off until its settings change: "
                                         + std::string(e.what()));
-                            logicalSwapchain->lsfgInitFailed = true;
+                            logicalSwapchain->fgInitFailed = true;
                         }
                     }
-                    if (logicalSwapchain->lsfg)
+                    if (logicalSwapchain->fg)
                     {
                         VkSemaphore compositedWait = presentSemaphores.back();
-                        VkSemaphore originalWait = pPresentInfo->waitSemaphoreCount > 0
-                            ? pPresentInfo->pWaitSemaphores[0] : VK_NULL_HANDLE;
-                        return logicalSwapchain->lsfg->present(
+                        return logicalSwapchain->fg->present(
                             logicalDevice, logicalSwapchain,
                             pPresentInfo->pImageIndices[0],
-                            queue, compositedWait, originalWait, pPresentInfo);
+                            queue, compositedWait, pPresentInfo);
                     }
                 }
             }

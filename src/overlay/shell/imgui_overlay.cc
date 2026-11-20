@@ -2676,7 +2676,7 @@ namespace VKIntox
         // destination shows its label; the rest show only their icon. Its height
         // comes off the content region below.
         static int activeView = 0;
-        static const char* const kViewLabels[] = {"Effects", "Shaders", "LSFG", "Settings", "About"};
+        static const char* const kViewLabels[] = {"Effects", "Shaders", "FG", "Settings", "About"};
         static const ImWchar kViewIcons[] = {Icon::WandShine, Icon::Function, Icon::MaskedTransitions, Icon::Settings, Icon::Info};
         constexpr int kViewCount = (int)(sizeof(kViewLabels) / sizeof(kViewLabels[0]));
         const float dockHeight = ImGuiM3GetMetrics().nav_bar_height * ImGuiM3GetMetrics().density;
@@ -2711,7 +2711,7 @@ namespace VKIntox
             case 5: renderAdvancedView(); break;
             case 6: renderDiagnosticsView(); break;
             case 7: renderAboutView(); break;
-            case 13: renderLsfgView(); break;
+            case 13: renderFgView(); break;
             case 8: renderDepthBuffersView(); break;
             case 9: renderThemeColorsView(); break;
             case 10: renderThemeBlurView(); break;

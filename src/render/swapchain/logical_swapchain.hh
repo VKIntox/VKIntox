@@ -10,7 +10,7 @@
 
 #include "render/device/logical_device.hh"
 
-#include "framegen/lsfg_present.hh"
+#include "framegen/present.hh"
 
 namespace VKIntox
 {
@@ -67,7 +67,7 @@ namespace VKIntox
     {
         LogicalDevice*                       logicalDevice;
         VkSwapchainCreateInfoKHR             swapchainCreateInfo;
-        // the real swapchain this wraps; the inner LSFG acquires present
+        // the real swapchain this wraps; the inner FG acquires present
         // against it directly
         VkSwapchainKHR                       handle = VK_NULL_HANDLE;
         VkExtent2D                           imageExtent;
@@ -138,13 +138,13 @@ namespace VKIntox
         bool                                  depthReallocPending = false;
         bool                                  rebuildEffectsOnNextPresent = false;
 
-        // LSFG frame generation; lives with the swapchain so a rebuild drops
+        // FG frame generation; lives with the swapchain so a rebuild drops
         // the engine objects with it
-        std::unique_ptr<FrameGen::LsfgSwapchain> lsfg;
-        FrameGen::LsfgProfile lsfgProfile;
+        std::unique_ptr<FrameGen::FgSwapchain> fg;
+        FrameGen::FgProfile fgProfile;
         // engine init is expensive; a failed attempt is latched until the
         // profile changes instead of being retried every present
-        bool lsfgInitFailed = false;
+        bool fgInitFailed = false;
 
         bool destroy();
         void reloadEffects(Config* config);
