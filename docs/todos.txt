@@ -99,3 +99,16 @@ TODOS for v0.2.0
   adding the effect again from the effects list, which is what VKIntoxEffects
   does now. repro: vkcube under the layer with a config whose one effect declares
   N identical copy passes.
+
+================================================
+TODOS for v0.3.0 framegen
+================================================
+
+- presenting: frame generation submits real frames (overlay counts 31 real + 92 gen
+  in Roseline/TTD3 and 60 + 180 in vk3dtriangle at x4), but motion does not get
+  smoother on a 120 Hz output and can look worse with generation on. the layer
+  paces generated frames with a sleep between the generated and real presents;
+  verify with a high-speed capture whether the compositor is coalescing or
+  ordering them. suspects: the pacing sleep, generated/real present order, or
+  the compositor dropping one buffer per surface commit. reproduce with
+  vk3dtriangle at --fps-limit 60 and multiplier x2 on a 120 Hz panel.
