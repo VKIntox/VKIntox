@@ -21,23 +21,18 @@ namespace VKIntox
 
         ImGui::BeginChild("FgContent", ImVec2(0, 0), false);
 
-        ImGui::M3HeroHeader(Icon::MaskedTransitionsUtf8, "Frame generation",
-                            "Motion-interpolated frames through the bundled MAKO FG model");
-
-        ImGui::Spacing();
-
         bool enabled = settingsManager.getFgEnabled();
         if (ImGui::M3HeroSwitch(Icon::MaskedTransitionsUtf8, "Generate frames", "##fg_enabled", &enabled,
                                 "Interpolates extra frames between the game's own ones.\n"
-                                "The swapchain image pool is fixed when the game creates it, so settings are latched per launch.",
+                                "Changes rebuild the generator between frames.",
                                 1.15f))
         {
             settingsManager.setFgEnabled(enabled);
             saveSettings();
         }
+        UI::TextSupport("Generate frames using MAKO.");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Turning it off stops insertion immediately.\n"
-                              "Turning it on or changing the multiplier takes effect on the next launch.");
+            ImGui::SetTooltip("Generated frames are inserted between the game's own frames.");
 
         if (enabled)
         {
@@ -56,8 +51,7 @@ namespace VKIntox
                 saveSettings();
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("The image pool was sized for the launch multiplier.\n"
-                                  "Restart the game to apply a different one.");
+                ImGui::SetTooltip("Rebuilds the generator live.");
 
             // flow scale
             ImGui::Spacing();
@@ -83,6 +77,16 @@ namespace VKIntox
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Faster interpolation at a small quality cost.");
+
+            bool fxOverUi = settingsManager.getFxOverUi();
+            if (ImGui::M3Switch("FX-Over-UI for generated frames##fg_overui", &fxOverUi))
+            {
+                settingsManager.setFxOverUi(fxOverUi);
+                saveSettings();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Keeps the game's HUD and the overlay out of the interpolated image where the game supports it.\n"
+                                  "Applies on the next launch.");
         }
 
         // engine diagnostics
@@ -120,7 +124,7 @@ namespace VKIntox
         }
 
         ImGui::Spacing();
-        UI::TextSupport("Settings are latched when the game creates its swapchain; changes never rebuild frame generation mid-game. Restart the game to apply a new setting.");
+        UI::TextSupport("Settings rebuild the generator between frames.");
         UI::TextSupport("The model is open-weight and needs no Lossless Scaling. Generated frames run in a separate process, so a failure there never takes the game down.");
 
         ImGui::EndChild();

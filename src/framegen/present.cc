@@ -5,12 +5,14 @@
 #include "render/resources/format.hh"
 #include "render/swapchain/logical_swapchain.hh"
 #include "util/logger.hh"
+#include "overlay/shell/fps_metrics.hh"
 
 #include <algorithm>
 #include <chrono>
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 namespace VKIntox::FrameGen
@@ -246,24 +248,22 @@ namespace VKIntox::FrameGen
                 + (profile.enabled ? "true" : "false")
                 + ", multiplier=" + std::to_string(profile.multiplier) + ")";
         });
-        if (!profile.enabled || profile.multiplier < 2)
-            return false;
-        if (!FgSwapchain::active(logicalDevice, profile))
+        // the pool is sized for the largest multiplier so a live settings
+        // change never has to wait for the application to recreate its swapchain
+        if (profile.multiplier < 2 || !engineAvailable() || !deviceSupportsFgExtensions(logicalDevice))
             return false;
 
         info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-        // inserted frames plus the frame the compositor holds back; capped the
-        // same way the engine caps it so drivers with small pools stay happy
         VkSurfaceCapabilitiesKHR caps{};
         if (logicalDevice->vki.GetPhysicalDeviceSurfaceCapabilitiesKHR)
             logicalDevice->vki.GetPhysicalDeviceSurfaceCapabilitiesKHR(
                 logicalDevice->physicalDevice, info.surface, &caps);
-        info.minImageCount += profile.multiplier;
+        info.minImageCount += 4;
         info.minImageCount = std::min<uint32_t>({info.minImageCount, 8u,
                                                  caps.maxImageCount == 0 ? 999u : caps.maxImageCount});
         Logger::info("FG: swapchain image pool grown to " + std::to_string(info.minImageCount)
-                     + " for a x" + std::to_string(profile.multiplier) + " multiplier");
+                     + " for live frame generation");
         return true;
     }
 
@@ -602,10 +602,14 @@ namespace VKIntox::FrameGen
             && presentGapUs < 500000)
         {
             // insertion stole a display slot; two in a row means no headroom
+            Logger::debug("FG: cadence slip gap=" + std::to_string(presentGapUs)
+                + " pass=" + std::to_string(m_passIntervalUs)
+                + " streak=" + std::to_string(m_slowStreak + 1));
             if (++m_slowStreak >= 2)
             {
                 m_probeCooldown = 600;
                 m_slowStreak = 0;
+                Logger::debug("FG: headroom probe backing off for 600 presents");
             }
         }
         else if (!hadHeadroomLastFrame && presentGapUs >= 2000 && presentGapUs <= 200000)
@@ -812,6 +816,8 @@ namespace VKIntox::FrameGen
         m_probeCooldown = 0;
         m_lastInserted = true;
         const uint32_t insertCount = static_cast<uint32_t>(acquired.size());
+        Logger::debug("FG: insert batch " + std::to_string(insertCount) + "/"
+            + std::to_string(generatedCount) + " cooldown=" + std::to_string(m_probeCooldown));
 
         // generated frame i is copied from the host's destination image; frame
         // 0 goes into the application's image, the rest into the acquired ones
@@ -909,7 +915,15 @@ namespace VKIntox::FrameGen
                 m_ready = false;
                 return presentAfterUpload(appSignal);
             }
+            if (m_passIntervalUs > 0)
+            {
+                // one refresh apart, or the compositor keeps only the last
+                // commit and the generated frame never reaches the screen
+                std::this_thread::sleep_for(std::chrono::microseconds(
+                    m_passIntervalUs / m_multiplier));
+            }
         }
+        FpsMetrics::addGeneratedFrames(static_cast<int>(insertCount));
 
         // the real composited frame waits in the source image; copy it into the
         // last acquired image after the host has released its sources, then
