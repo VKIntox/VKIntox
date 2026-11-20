@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
@@ -618,6 +619,14 @@ namespace VKIntox::FrameGen
         {
             m_slowStreak = 0;
         }
+        if (presentGapUs > 150000)
+        {
+            // the surface was hidden or the app paused: the host history is
+            // from another era, so restart it instead of interpolating across
+            m_firstSourceUpload = true;
+            m_probeCooldown = 60;
+            m_slowStreak = 0;
+        }
         if (m_warmupFrames > 0)
         {
             --m_warmupFrames;
@@ -645,7 +654,7 @@ namespace VKIntox::FrameGen
                 uint32_t acquiredIndex = 0;
                 VkResult acquireResult = logicalDevice->vkd.AcquireNextImageKHR(
                     logicalDevice->device, swapchain->handle,
-                    0, acquire, VK_NULL_HANDLE, &acquiredIndex);
+                    30'000'000ull, acquire, VK_NULL_HANDLE, &acquiredIndex);
                 if (acquireResult == VK_SUCCESS || acquireResult == VK_SUBOPTIMAL_KHR)
                 {
                     acquired.push_back(acquiredIndex);
@@ -802,10 +811,10 @@ namespace VKIntox::FrameGen
         Logger::debug("FG: batch scheduled after host idle");
         m_probeCooldown = 0;
         m_lastInserted = true;
+        const uint32_t insertCount = static_cast<uint32_t>(acquired.size());
 
         // generated frame i is copied from the host's destination image; frame
         // 0 goes into the application's image, the rest into the acquired ones
-        const uint32_t insertCount = static_cast<uint32_t>(acquired.size());
         for (uint32_t i = 0; i < insertCount; ++i)
         {
             InnerSyncPass& inner = pass.innerSyncPasses[i];
@@ -983,6 +992,10 @@ namespace VKIntox::FrameGen
 
     void FgSwapchain::destroy()
     {
+        // the host may still be reading the exchange images even when the app
+        // queue went idle; let it finish before the engine and images go away
+        if (m_engineContext)
+            m_engineContext->waitForIdle();
         m_engineContext.reset();
         m_engineInstance.reset();
 

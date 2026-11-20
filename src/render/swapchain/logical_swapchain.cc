@@ -10,7 +10,6 @@ namespace VKIntox
 
     bool LogicalSwapchain::destroy()
     {
-        fg.reset();
         if (imageCount > 0)
         {
             // Wait for GPU to finish before destroying resources. Bounded: if
@@ -22,6 +21,10 @@ namespace VKIntox
                 Logger::warn("[DESTROY-TRACE] swapchain destroy idle timed out; leaving this swapchain's resources alone");
                 return false;
             }
+
+            // the engine imports this swapchain's exchange images; close it
+            // only after the queue is idle, never before
+            fg.reset();
 
             // destroy the pool before the effects: that frees this swapchain's
             // buffers and clears driver tracking without touching a
@@ -117,6 +120,10 @@ namespace VKIntox
             imageViews.clear();
 
             // Note: ImGui overlay is now at device level, not destroyed here
+        }
+        else
+        {
+            fg.reset();
         }
         return true;
     }

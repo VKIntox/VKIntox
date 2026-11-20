@@ -141,9 +141,17 @@ namespace VKIntox
         // FG frame generation; lives with the swapchain so a rebuild drops
         // the engine objects with it
         std::unique_ptr<FrameGen::FgSwapchain> fg;
+        // profile the live engine was created with
         FrameGen::FgProfile fgProfile;
+        // profile the swapchain image pool was created for; a pool built for
+        // another multiplier cannot host the engine
+        FrameGen::FgProfile fgCreateProfile;
+        // settings changed after creation: keep the live engine untouched and
+        // wait for the next launch instead of tearing it down mid-frame
+        bool fgStale = false;
+        bool fgChangeLogged = false;
         // engine init is expensive; a failed attempt is latched until the
-        // profile changes instead of being retried every present
+        // next swapchain instead of being retried every present
         bool fgInitFailed = false;
 
         bool destroy();

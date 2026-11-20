@@ -2509,12 +2509,7 @@ namespace VKIntox
         fgProfile.performanceMode = settingsManager.getFgPerformanceMode();
         fgProfile.halfPrecision = settingsManager.getFgHalfPrecision();
         fgProfile.dllPath   = settingsManager.getFgModelPath();
-        if (FrameGen::modifySwapchainCreateInfo(logicalDevice, modifiedCreateInfo, fgProfile))
-        {
-            // remember the applied profile so the first present can reject a
-            // stale pool without re-querying settings under the device lock
-            // (the swapchain object reads it again lazily)
-        }
+        const bool fgCreateApplied = FrameGen::modifySwapchainCreateInfo(logicalDevice, modifiedCreateInfo, fgProfile);
 
         // Keep application-provided usage bits unchanged on the non-mutable path.
         // Some drivers/apps are sensitive to swapchain usage mutation.
@@ -2546,6 +2541,8 @@ namespace VKIntox
         logicalSwapchain->format              = modifiedCreateInfo.imageFormat;
         logicalSwapchain->imageCount          = 0;
         logicalSwapchain->useMutableFormat    = useMutableFormat;
+        if (fgCreateApplied)
+            logicalSwapchain->fgCreateProfile = fgProfile;
 
         VkResult result = logicalDevice->vkd.CreateSwapchainKHR(device, &modifiedCreateInfo, pAllocator, swapchain);
         if (result == VK_SUCCESS && swapchain != nullptr && *swapchain != VK_NULL_HANDLE)
@@ -4296,48 +4293,64 @@ namespace VKIntox
                 profile.halfPrecision   = settingsManager.getFgHalfPrecision();
                 profile.dllPath         = settingsManager.getFgModelPath();
 
-                bool profileChanged = logicalSwapchain->fgProfile.enabled != profile.enabled
-                    || logicalSwapchain->fgProfile.multiplier != profile.multiplier
-                    || logicalSwapchain->fgProfile.flowScale != profile.flowScale
-                    || logicalSwapchain->fgProfile.performanceMode != profile.performanceMode
-                    || logicalSwapchain->fgProfile.halfPrecision != profile.halfPrecision
-                    || logicalSwapchain->fgProfile.dllPath != profile.dllPath;
-                if (logicalSwapchain->fg && profileChanged)
+                const auto sameEngineProfile = [](const FrameGen::FgProfile& a, const FrameGen::FgProfile& b)
                 {
-                    // the image pool was sized for the old multiplier; ask the
-                    // app to recreate so vkCreateSwapchainKHR can re-apply it
-                    Logger::info("FG: profile changed; recreating the swapchain");
-                    logicalSwapchain->fg.reset();
-                    logicalSwapchain->fgInitFailed = false;
-                    logicalSwapchain->fgProfile = profile;
-                    return VK_ERROR_OUT_OF_DATE_KHR;
-                }
-                logicalSwapchain->fgProfile = profile;
+                    return a.multiplier == b.multiplier
+                        && a.flowScale == b.flowScale
+                        && a.performanceMode == b.performanceMode
+                        && a.halfPrecision == b.halfPrecision
+                        && a.dllPath == b.dllPath;
+                };
+                const bool poolMatches = logicalSwapchain->fgCreateProfile.enabled
+                    && sameEngineProfile(logicalSwapchain->fgCreateProfile, profile);
+                const bool engineProfileChanged = logicalSwapchain->fg
+                    && !sameEngineProfile(logicalSwapchain->fgProfile, profile);
 
-                // a failed init is latched: engine creation builds a whole
-                // Vulkan device, so retrying every present would tank the frame
-                // rate. the latch lifts when the profile changes.
-                if (logicalSwapchain->fgInitFailed && !profileChanged)
+                // Settings changes never rebuild the live engine from the
+                // present path: its context, host and image pool are tied to
+                // the swapchain generation. Latch the change and keep the old
+                // engine until the next launch.
+                if (engineProfileChanged)
                 {
-                    // fall through to the normal present path
+                    if (!logicalSwapchain->fgChangeLogged)
+                        Logger::info("FG: settings changed; restart the game to apply them");
+                    logicalSwapchain->fgChangeLogged = true;
+                    logicalSwapchain->fgStale = true;
                 }
-                else if (profile.enabled && FrameGen::FgSwapchain::active(logicalDevice, profile))
+                else if (logicalSwapchain->fg)
+                {
+                    logicalSwapchain->fgStale = false;
+                    logicalSwapchain->fgChangeLogged = false;
+                }
+
+                if (profile.enabled && !logicalSwapchain->fgStale && !logicalSwapchain->fgInitFailed
+                    && FrameGen::FgSwapchain::active(logicalDevice, profile))
                 {
                     if (!logicalSwapchain->fg)
                     {
-                        try
+                        if (!poolMatches)
                         {
-                            logicalSwapchain->fg = std::make_unique<FrameGen::FgSwapchain>(
-                                logicalDevice, logicalSwapchain, profile);
+                            if (!logicalSwapchain->fgChangeLogged)
+                                Logger::info("FG: this swapchain was built without these frame generation settings; restart the game to apply them");
+                            logicalSwapchain->fgChangeLogged = true;
                         }
-                        catch (const std::exception& e)
+                        else
                         {
-                            Logger::err("FG: init failed, frame generation stays off until its settings change: "
-                                        + std::string(e.what()));
-                            logicalSwapchain->fgInitFailed = true;
+                            try
+                            {
+                                logicalSwapchain->fg = std::make_unique<FrameGen::FgSwapchain>(
+                                    logicalDevice, logicalSwapchain, profile);
+                                logicalSwapchain->fgProfile = profile;
+                            }
+                            catch (const std::exception& e)
+                            {
+                                Logger::err("FG: init failed, frame generation stays off until the next launch: "
+                                            + std::string(e.what()));
+                                logicalSwapchain->fgInitFailed = true;
+                            }
                         }
                     }
-                    if (logicalSwapchain->fg)
+                    if (logicalSwapchain->fg && !logicalSwapchain->fgStale)
                     {
                         VkSemaphore compositedWait = presentSemaphores.back();
                         return logicalSwapchain->fg->present(
