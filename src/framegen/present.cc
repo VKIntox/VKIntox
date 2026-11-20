@@ -597,19 +597,26 @@ namespace VKIntox::FrameGen
         m_lastPresentTime = presentNow;
         const bool hadHeadroomLastFrame = m_lastInserted;
         m_lastInserted = false;
+        // the pacing sleep is inside the previous present, so subtract it before
+        // judging the application's own cadence; otherwise the sleep that makes
+        // generated frames visible looks like the game slowing down
+        uint64_t pacingUs = 0;
+        if (hadHeadroomLastFrame && m_passIntervalUs > 0 && m_multiplier > 1)
+            pacingUs = (m_passIntervalUs * (m_multiplier - 1)) / m_multiplier;
+        const uint64_t appGapUs = presentGapUs > pacingUs ? presentGapUs - pacingUs : 0;
         if (hadHeadroomLastFrame && m_passIntervalUs > 0
-            && presentGapUs > std::max<uint64_t>(m_passIntervalUs * 4 / 3 + 500, m_passIntervalUs + 4000)
+            && appGapUs > std::max<uint64_t>(m_passIntervalUs * 3 / 2 + 1000, m_passIntervalUs + 6000)
             && presentGapUs < 500000)
         {
-            // insertion stole a display slot; two in a row means no headroom
             Logger::debug("FG: cadence slip gap=" + std::to_string(presentGapUs)
+                + " app=" + std::to_string(appGapUs)
                 + " pass=" + std::to_string(m_passIntervalUs)
                 + " streak=" + std::to_string(m_slowStreak + 1));
-            if (++m_slowStreak >= 2)
+            if (++m_slowStreak >= 3)
             {
-                m_probeCooldown = 600;
+                m_probeCooldown = 120;
                 m_slowStreak = 0;
-                Logger::debug("FG: headroom probe backing off for 600 presents");
+                Logger::debug("FG: headroom probe backing off for 120 presents");
             }
         }
         else if (!hadHeadroomLastFrame && presentGapUs >= 2000 && presentGapUs <= 200000)
