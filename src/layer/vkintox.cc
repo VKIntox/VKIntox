@@ -4288,6 +4288,19 @@ namespace VKIntox
                 logicalSwapchain->fgPresentCount++;
                 FrameGen::FgProfile profile;
                 profile.enabled         = settingsManager.getFgEnabled();
+                static thread_local VkSwapchainKHR fgLoggedSwapchain = VK_NULL_HANDLE;
+                if (pPresentInfo->pSwapchains[0] != fgLoggedSwapchain
+                    || (logicalSwapchain->fgPresentCount % 300) == 0)
+                {
+                    fgLoggedSwapchain = pPresentInfo->pSwapchains[0];
+                    Logger::debug("FG: present sc=" + convertToString(pPresentInfo->pSwapchains[0])
+                        + " images=" + std::to_string(logicalSwapchain->imageCount)
+                        + " extent=" + std::to_string(logicalSwapchain->imageExtent.width) + "x"
+                        + std::to_string(logicalSwapchain->imageExtent.height)
+                        + " fg=" + (logicalSwapchain->fg ? "1" : "0")
+                        + " presents=" + std::to_string(logicalSwapchain->fgPresentCount)
+                        + " enabled=" + (profile.enabled ? "1" : "0"));
+                }
                 profile.multiplier      = static_cast<uint32_t>(settingsManager.getFgMultiplier());
                 profile.flowScale       = settingsManager.getFgFlowScale();
                 profile.performanceMode = settingsManager.getFgPerformanceMode();
