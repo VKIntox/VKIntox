@@ -420,7 +420,7 @@ namespace VKIntox
         file << "maxEffects = " << clampedMaxEffects << "\n";
         file << "autoApply = " << (settings.autoApply ? "true" : "false") << "\n";
         file << "autoApplyDelay = " << settings.autoApplyDelay << "\n";
-        file << "# showFps: floating FPS counter; fpsExtended: 1%/0.1% lows next to it;\n";
+        file << "# showFps: floating FPS counter; fpsExtended: 1%/0.1% lows, and real vs generated frames when FG is on;\n";
         file << "# fpsCorner: top-right (default), top-left, bottom-left, bottom-right\n";
         file << "showFps = " << (settings.showFps ? "true" : "false") << "\n";
         file << "fpsExtended = " << (settings.fpsExtended ? "true" : "false") << "\n";

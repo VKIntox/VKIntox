@@ -103,6 +103,7 @@ namespace VKIntox
             UI::PopSupport();
         };
         credit("VKIntox by", "@buwryme", "https://github.com/buwryme");
+        credit("MAKO framegen by", "@eugeniosegala", "https://github.com/eugeniosegala/MAKO");
         credit("vkShade by", "@slobodaapl", "https://github.com/slobodaapl");
         credit("vkBasalt by", "@DadSchoorse", "https://github.com/DadSchoorse/vkBasalt");
         credit("Overlay fork by", "@Boux", "https://github.com/Boux/vkBasalt_overlay");

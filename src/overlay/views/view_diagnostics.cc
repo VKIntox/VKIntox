@@ -541,6 +541,9 @@ namespace VKIntox
             ImGui::SameLine();
             UI::PushSupport();
             ImGui::TextDisabled("(1%% low: %.0f   ·   0.1%% low: %.0f)", fps1Low, fps01Low);
+            if (settingsManager.getFgEnabled())
+                ImGui::TextDisabled("real %.0f  ·  generated %.0f",
+                                    FpsMetrics::realFps(), FpsMetrics::generatedFps());
             UI::PopSupport();
         }
         ImGui::Spacing();
