@@ -101,7 +101,15 @@ namespace VKIntox
         return result;
     }
 
+    // isKeyPressedX11 is already a held-state check: the keymap bit plus what
+    // the grab handoff cleared server-side. The keymap query is cached per
+    // frame, so callers can ask as often as they like.
     bool isKeyPressedX11(uint32_t ks)
+    {
+        return isKeyHeldX11(ks);
+    }
+
+    bool isKeyHeldX11(uint32_t ks)
     {
         Display* display = x11Display();
         if (!display)

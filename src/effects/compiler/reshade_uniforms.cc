@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "util/logger.hh"
+#include "input/common/keyboard_input.hh"
 
 namespace VKIntox
 {
@@ -308,6 +309,75 @@ namespace VKIntox
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Windows virtual-key codes, which is what ReShade effects put in the
+    // keycode annotation, mapped to the X11 keysyms the input layer speaks.
+    // 0 for unknown keys.
+    static uint32_t vkToKeySym(uint32_t vk)
+    {
+        switch (vk)
+        {
+            case 0x08: return 0xFF08;            // backspace
+            case 0x09: return 0xFF09;            // tab
+            case 0x0C: return 0xFF0B;            // clear
+            case 0x0D: return 0xFF0D;            // return
+            case 0x13: return 0xFF13;            // pause
+            case 0x14: return 0xFFE5;            // caps lock
+            case 0x1B: return 0xFF1B;            // escape
+            case 0x20: return 0x0020;            // space
+            case 0x21: return 0xFF55;            // page up
+            case 0x22: return 0xFF56;            // page down
+            case 0x23: return 0xFF57;            // end
+            case 0x24: return 0xFF50;            // home
+            case 0x25: return 0xFF51;            // left
+            case 0x26: return 0xFF52;            // up
+            case 0x27: return 0xFF53;            // right
+            case 0x28: return 0xFF54;            // down
+            case 0x2C: return 0xFF61;            // print screen
+            case 0x2D: return 0xFF63;            // insert
+            case 0x2E: return 0xFFFF;            // delete
+            case 0x2F: return 0xFF6A;            // help
+            case 0x5B: return 0xFFEB;            // left windows
+            case 0x5C: return 0xFFEC;            // right windows
+            case 0x5D: return 0xFF67;            // application
+            case 0x6A: return 0xFFAA;            // numpad multiply
+            case 0x6B: return 0xFFAB;            // numpad add
+            case 0x6C: return 0xFFAC;            // numpad separator
+            case 0x6D: return 0xFFAD;            // numpad subtract
+            case 0x6E: return 0xFFAE;            // numpad decimal
+            case 0x6F: return 0xFFAF;            // numpad divide
+            case 0x90: return 0xFF7F;            // num lock
+            case 0x91: return 0xFF14;            // scroll lock
+            case 0xA0: return 0xFFE1;            // left shift
+            case 0xA1: return 0xFFE2;            // right shift
+            case 0xA2: return 0xFFE3;            // left control
+            case 0xA3: return 0xFFE4;            // right control
+            case 0xA4: return 0xFFE9;            // left alt
+            case 0xA5: return 0xFFEA;            // right alt
+            case 0xBA: return 0x003B;            // ;
+            case 0xBB: return 0x003D;            // =
+            case 0xBC: return 0x002C;            // ,
+            case 0xBD: return 0x002D;            // -
+            case 0xBE: return 0x002E;            // .
+            case 0xBF: return 0x002F;            // /
+            case 0xC0: return 0x0060;            // `
+            case 0xDB: return 0x005B;            // [
+            case 0xDC: return 0x005C;            // backslash
+            case 0xDD: return 0x005D;            // ]
+            case 0xDE: return 0x0027;            // '
+            default: break;
+        }
+
+        if (vk >= '0' && vk <= '9')
+            return vk;                         // XK_0..XK_9 share the VK codes
+        if (vk >= 'A' && vk <= 'Z')
+            return vk + 0x20;                  // XK_a..XK_z sit below the capitals
+        if (vk >= 0x60 && vk <= 0x69)
+            return 0xFFB0 + (vk - 0x60);       // numpad 0-9
+        if (vk >= 0x70 && vk <= 0x87)
+            return 0xFFBE + (vk - 0x70);       // F1..F24
+        return 0;
+    }
+
     KeyUniform::KeyUniform(reshadefx::uniform_info uniformInfo)
     {
         auto source = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "source"; });
@@ -317,11 +387,130 @@ namespace VKIntox
         }
         offset = uniformInfo.offset;
         size   = uniformInfo.size;
+        base   = uniformInfo.type.base;
+        components = std::max<uint32_t>(uniformInfo.type.components(), 1u);
+
+        uint32_t vk = 0;
+        if (auto keycode = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "keycode"; });
+            keycode != uniformInfo.annotations.end())
+        {
+            vk = keycode->value.as_uint[0];
+        }
+        if (vk <= 7 || vk >= 256)
+        {
+            // ReShade leaves the uniform at its initializer value in this case
+            Logger::warn("key uniform uses an unusable keycode (" + std::to_string(vk) + "); it will not react to input");
+            keysymA = keysymB = 0;
+            return;
+        }
+
+        keysymA = vkToKeySym(vk);
+        // the generic modifier VKs stand for either physical side
+        switch (vk)
+        {
+            case 0x10: keysymA = 0xFFE1; keysymB = 0xFFE2; break; // shift
+            case 0x11: keysymA = 0xFFE3; keysymB = 0xFFE4; break; // control
+            case 0x12: keysymA = 0xFFE9; keysymB = 0xFFEA; break; // alt
+            default: break;
+        }
+        if (keysymA == 0)
+        {
+            Logger::warn("key uniform uses an unmapped keycode (" + std::to_string(vk) + "); it will not react to input");
+            return;
+        }
+
+        if (auto modeAnnotation = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "mode"; });
+            modeAnnotation != uniformInfo.annotations.end())
+        {
+            if (modeAnnotation->value.string_data == "toggle")
+                mode = Mode::toggle;
+            else if (modeAnnotation->value.string_data == "press")
+                mode = Mode::press;
+        }
+        else if (auto toggle = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "toggle"; });
+                 toggle != uniformInfo.annotations.end() && toggle->value.as_int[0] != 0)
+        {
+            mode = Mode::toggle;
+        }
+
+        if (auto invertAnnotation = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "invert"; });
+            invertAnnotation != uniformInfo.annotations.end() && invertAnnotation->value.as_uint[0] != 0)
+        {
+            invert = true;
+        }
+
+        Logger::debug("key uniform keycode=" + std::to_string(vk) + " keysym=" + std::to_string(keysymA)
+                      + " mode=" + (mode == Mode::toggle ? "toggle" : mode == Mode::press ? "press" : "hold")
+                      + (invert ? " inverted" : ""));
     }
+
+    // Bools are 4-byte VkBool32 in the uniform buffer (the SPIR-V codegen
+    // lowers them to ints), ints and uints are 4 bytes, floats are floats.
+    void KeyUniform::writeValue(void* mappedBuffer, bool value)
+    {
+        uint8_t* dst = (uint8_t*)mappedBuffer + offset;
+        for (uint32_t i = 0; i < components; ++i)
+        {
+            switch (base)
+            {
+                case reshadefx::type::t_bool:
+                {
+                    VkBool32 v = value ? VK_TRUE : VK_FALSE;
+                    std::memcpy(dst + i * sizeof(VkBool32), &v, sizeof(VkBool32));
+                    break;
+                }
+                case reshadefx::type::t_int:
+                {
+                    int32_t v = value ? 1 : 0;
+                    std::memcpy(dst + i * sizeof(int32_t), &v, sizeof(int32_t));
+                    break;
+                }
+                case reshadefx::type::t_uint:
+                {
+                    uint32_t v = value ? 1u : 0u;
+                    std::memcpy(dst + i * sizeof(uint32_t), &v, sizeof(uint32_t));
+                    break;
+                }
+                case reshadefx::type::t_float:
+                {
+                    float v = value ? 1.0f : 0.0f;
+                    std::memcpy(dst + i * sizeof(float), &v, sizeof(float));
+                    break;
+                }
+                default:
+                    return;
+            }
+        }
+    }
+
     void KeyUniform::update(void* mappedBuffer)
     {
-        VkBool32 keyDown = VK_FALSE; // TODO
-        std::memcpy((uint8_t*) mappedBuffer + offset, &(keyDown), sizeof(VkBool32));
+        // an unusable or unmapped keycode never writes: the uniform keeps its
+        // initializer value, same as ReShade
+        if (keysymA == 0)
+            return;
+
+        bool down = VKIntox::isKeyHeld(keysymA) || (keysymB != 0 && VKIntox::isKeyHeld(keysymB));
+        bool value = false;
+        switch (mode)
+        {
+            case Mode::hold:
+                value = down;
+                break;
+            case Mode::press:
+                value = down && !lastDown;
+                break;
+            case Mode::toggle:
+                if (down && !lastDown)
+                    toggleState = !toggleState;
+                value = toggleState;
+                break;
+        }
+        lastDown = down;
+        if (invert)
+            value = !value;
+
+        writeValue(mappedBuffer, value);
     }
     KeyUniform::~KeyUniform()
     {
