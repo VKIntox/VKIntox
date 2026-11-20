@@ -760,6 +760,36 @@ PY
     fi
 }
 
+ensure_mako_fg() {
+    [[ "$METHOD" == "flatpak" ]] && return 0
+    local lib dir base tmp runner=()
+    lib=$(ldconfig -p 2>/dev/null | awk '/libvkintox\.so/{print $NF; exit}')
+    if [[ -z "$lib" ]]; then
+        lib=$(find /usr/lib /usr/lib64 /usr/local/lib -name libvkintox.so 2>/dev/null | head -1)
+    fi
+    [[ -n "$lib" ]] || return 0
+    dir="$(dirname "$lib")/mako-fg"
+    if [[ -x "$dir/mako-fg-host" && -s "$dir/model/weights.bin" ]]; then
+        return 0
+    fi
+    section "frame generation"
+    base="https://raw.githubusercontent.com/$REPO/${VKINTOX_FG_REF:-framegen}/src/framegen/mako-fg"
+    tmp="$TMP_DIR/mako-fg"
+    mkdir -p "$tmp/model"
+    local file
+    for file in mako-fg-host version.json model/weights.bin model/ops.spv model/transport.spv model/mixture.spv; do
+        run_progress "fetching $file" curl -fL --retry 3 --retry-delay 1 -o "$tmp/$file" "$base/$file"
+    done
+    ((EUID != 0)) && runner=(sudo)
+    "${runner[@]}" install -d "$dir/model"
+    "${runner[@]}" install -m 755 "$tmp/mako-fg-host" "$dir/mako-fg-host"
+    "${runner[@]}" install -m 644 "$tmp/version.json" "$dir/version.json"
+    for file in weights.bin ops.spv transport.spv mixture.spv; do
+        "${runner[@]}" install -m 644 "$tmp/model/$file" "$dir/model/$file"
+    done
+    ok "MAKO frame generation package installed"
+}
+
 installed_pkg_version() {
     case "$SYSTEM_KIND" in
         rpm) rpm -q --qf '%{VERSION}' vkintox 2>/dev/null ;;
@@ -1200,6 +1230,7 @@ else
         fi
     fi
     if ((DRY_RUN == 0)); then
+        ensure_mako_fg
         write_marker
     fi
 fi

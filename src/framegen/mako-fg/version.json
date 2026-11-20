@@ -1,0 +1,19 @@
+{
+  "version": "1.24",
+  "display": "MAKO FG V1.24",
+  "folder": "V1.24",
+  "format": 2,
+  "created_at_utc": "2026-11-12T14:44:49.268132+00:00",
+  "notes": "Balanced and Performance now correct the motion they carry between fully estimated frames, so uneven frame rates and camera turns or speed changes look like Quality while keeping much of the GPU saving; Extra Performance corrects it whenever the frame rate is uneven. The model is unchanged from V1.23.",
+  "model": "V1.24/model",
+  "model_files": [
+    "weights.bin",
+    "ops.spv",
+    "transport.spv",
+    "mixture.spv"
+  ],
+  "runtime": "V1.24/runtime",
+  "license": "V1.24/LICENSE",
+  "card": "V1.24/MODEL_CARD.md",
+  "manifest": "V1.24/MANIFEST.json"
+}
