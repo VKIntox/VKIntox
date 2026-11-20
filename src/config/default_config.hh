@@ -77,12 +77,12 @@ namespace VKIntox::DefaultConfig
         settings.autoApplyDelay = 200;
         settings.showFps = false;
         settings.fpsExtended = false;
-        settings.lsfgEnabled = false;
-        settings.lsfgMultiplier = 2;
-        settings.lsfgFlowScale = 1.0f;
-        settings.lsfgPerformanceMode = false;
-        settings.lsfgHalfPrecision = false;
-        settings.lsfgDllPath.clear();
+        settings.fgEnabled = false;
+        settings.fgMultiplier = 2;
+        settings.fgFlowScale = 1.0f;
+        settings.fgPerformanceMode = false;
+        settings.fgHalfPrecision = false;
+        settings.fgModelPath.clear();
         settings.fpsCorner = 1;     // top-right
         settings.overlayX = 0;
         settings.overlayY = 0;

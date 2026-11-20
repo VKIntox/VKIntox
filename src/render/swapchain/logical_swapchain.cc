@@ -10,7 +10,7 @@ namespace VKIntox
 
     bool LogicalSwapchain::destroy()
     {
-        lsfg.reset();
+        fg.reset();
         if (imageCount > 0)
         {
             // Wait for GPU to finish before destroying resources. Bounded: if

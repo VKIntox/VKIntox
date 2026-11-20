@@ -7,6 +7,6 @@
 [submodule "assets/builtInShaders"]
 	path = assets/builtInShaders
 	url = https://github.com/VKIntox/VKIntoxEffects.git
-[submodule "vendor/lsfg-vk"]
-	path = src/vendor/lsfg-vk
-	url = https://git.lsfg-vk.dev/lsfg-vk.git
+[submodule "src/vendor/mako"]
+	path = src/vendor/mako
+	url = https://github.com/eugeniosegala/MAKO.git

@@ -103,65 +103,65 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.showFps;
         }
-        bool getLsfgEnabled() const
+        bool getFgEnabled() const
         {
             std::lock_guard<std::mutex> lock(mutex);
-            return settings.lsfgEnabled;
+            return settings.fgEnabled;
         }
-        int getLsfgMultiplier() const
+        int getFgMultiplier() const
         {
             std::lock_guard<std::mutex> lock(mutex);
-            return std::clamp(settings.lsfgMultiplier, 2, 4);
+            return std::clamp(settings.fgMultiplier, 2, 4);
         }
-        float getLsfgFlowScale() const
+        float getFgFlowScale() const
         {
             std::lock_guard<std::mutex> lock(mutex);
-            return settings.lsfgFlowScale;
+            return settings.fgFlowScale;
         }
-        bool getLsfgPerformanceMode() const
+        bool getFgPerformanceMode() const
         {
             std::lock_guard<std::mutex> lock(mutex);
-            return settings.lsfgPerformanceMode;
+            return settings.fgPerformanceMode;
         }
-        bool getLsfgHalfPrecision() const
+        bool getFgHalfPrecision() const
         {
             std::lock_guard<std::mutex> lock(mutex);
-            return settings.lsfgHalfPrecision;
+            return settings.fgHalfPrecision;
         }
-        std::string getLsfgDllPath() const
+        std::string getFgModelPath() const
         {
             std::lock_guard<std::mutex> lock(mutex);
-            return settings.lsfgDllPath;
+            return settings.fgModelPath;
         }
-        void setLsfgEnabled(bool value)
+        void setFgEnabled(bool value)
         {
             std::lock_guard<std::mutex> lock(mutex);
-            settings.lsfgEnabled = value;
+            settings.fgEnabled = value;
         }
-        void setLsfgMultiplier(int value)
+        void setFgMultiplier(int value)
         {
             std::lock_guard<std::mutex> lock(mutex);
-            settings.lsfgMultiplier = std::clamp(value, 2, 4);
+            settings.fgMultiplier = std::clamp(value, 2, 4);
         }
-        void setLsfgFlowScale(float value)
+        void setFgFlowScale(float value)
         {
             std::lock_guard<std::mutex> lock(mutex);
-            settings.lsfgFlowScale = value;
+            settings.fgFlowScale = value;
         }
-        void setLsfgPerformanceMode(bool value)
+        void setFgPerformanceMode(bool value)
         {
             std::lock_guard<std::mutex> lock(mutex);
-            settings.lsfgPerformanceMode = value;
+            settings.fgPerformanceMode = value;
         }
-        void setLsfgHalfPrecision(bool value)
+        void setFgHalfPrecision(bool value)
         {
             std::lock_guard<std::mutex> lock(mutex);
-            settings.lsfgHalfPrecision = value;
+            settings.fgHalfPrecision = value;
         }
-        void setLsfgDllPath(const std::string& value)
+        void setFgModelPath(const std::string& value)
         {
             std::lock_guard<std::mutex> lock(mutex);
-            settings.lsfgDllPath = value;
+            settings.fgModelPath = value;
         }
         bool getFpsExtended() const
         {
