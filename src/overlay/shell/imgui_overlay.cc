@@ -2324,16 +2324,11 @@ namespace VKIntox
         }
         if (shellAnimating)
             shellForcePos = true;
-        if (shellForcePos)
         {
             const float keep = ImMin(avail.x, avail.y) * 0.05f;
             shellBaseX = ImClamp(shellBaseX, screenMin.x, ImMax(screenMin.x, screenMax.x - keep));
             shellBaseY = ImClamp(shellBaseY, screenMin.y, ImMax(screenMin.y, screenMax.y - keep));
             ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY + shellOffsetY), ImGuiCond_Always);
-        }
-        else
-        {
-            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY), ImGuiCond_FirstUseEver);
         }
         // The game often starts in a small window and grows a moment later, so
         // the first frames' size clamp would shrink the saved size for good.
@@ -2830,7 +2825,7 @@ namespace VKIntox
 
         // Slidefade: a spatial travel of a fifth of the width, with the incoming
         // view fading in and the outgoing view fading out on the same clock.
-        const float travel    = 0.20f * viewSize.x * static_cast<float>(viewSlideDir);
+        const float travel    = 0.0f;
         const float offsetIn  = showingFrom ? (1.0f - viewEase) * travel : 0.0f;
         const float offsetOut = showingFrom ? -viewEase * travel : 0.0f;
         const float alphaIn   = showingFrom ? ImClamp(viewEase, 0.0f, 1.0f) : 1.0f;
