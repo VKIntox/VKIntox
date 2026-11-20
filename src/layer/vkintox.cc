@@ -4339,7 +4339,9 @@ namespace VKIntox
                     logicalSwapchain->fgChangeLogged = false;
                 }
                 else if (!logicalSwapchain->fg && !logicalSwapchain->fgInitFailed
-                         && logicalSwapchain->fgPresentCount >= 30
+                         && (logicalSwapchain->fgPresentCount >= 30
+                             || (logicalSwapchain->imageExtent.width >= 640
+                                 && logicalSwapchain->imageExtent.height >= 360))
                          && FrameGen::FgSwapchain::active(logicalDevice, profile))
                 {
                     try
