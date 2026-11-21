@@ -80,6 +80,18 @@ namespace VKIntox
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Faster interpolation at a small quality cost.");
 
+            bool forceVsync = settingsManager.getFgForceVsync();
+            if (ImGui::M3Switch("Force VSync while generating##fg_vsync", &forceVsync))
+            {
+                settingsManager.setFgForceVsync(forceVsync);
+                saveSettings();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Switches the game to FIFO (vsync) so every generated frame is shown.\n"
+                                  "Without it, MAILBOX/IMMEDIATE replace generated frames before they\n"
+                                  "reach the screen: the counter rises but motion does not get smoother.\n"
+                                  "The game may recreate its swapchain once when this changes.");
+
             bool fxOverUi = settingsManager.getFxOverUi();
             if (ImGui::M3Switch("FX-Over-UI for generated frames##fg_overui", &fxOverUi))
             {
