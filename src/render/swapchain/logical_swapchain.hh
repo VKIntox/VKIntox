@@ -156,6 +156,12 @@ namespace VKIntox
         // delay engine startup until the swapchain has settled; games often
         // create a tiny window first and replace it with the real one
         uint32_t fgPresentCount = 0;
+        // present mode the swapchain was really created with (after the FG
+        // create hook); generated frames only reach the screen under FIFO
+        VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        // FG wanted vsync but the swapchain predates it: asked the app once
+        // to recreate (SUBOPTIMAL) so the create hook can switch it to FIFO
+        bool fgRecreateRequested = false;
 
         bool destroy();
         void reloadEffects(Config* config);
