@@ -9,14 +9,14 @@
 <p align="center">
   <a href="https://git.buwryy.net/VKIntox/VKIntox/src/branch/main/VERSION">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/version-v0.2.2_Preview_1.svg?variant=secondary&size=sm&mode=dark&logo=git">
-      <img alt="Version" src="https://shieldcn.dev/badge/version-v0.2.2_Preview_1.svg?variant=secondary&size=sm&mode=light&logo=git">
+      <source media="(prefers-color-scheme: dark)" srcset="https://badge.buwryy.net/vkintox/version.svg?mode=dark">
+      <img alt="Version" src="https://badge.buwryy.net/vkintox/version.svg?mode=light">
     </picture>
   </a>
   <a href="https://git.buwryy.net/VKIntox/VKIntox/releases">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
-      <img alt="Release" src="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+      <source media="(prefers-color-scheme: dark)" srcset="https://badge.buwryy.net/vkintox/release.svg?mode=dark">
+      <img alt="Release" src="https://badge.buwryy.net/vkintox/release.svg?mode=light">
     </picture>
   </a>
   <a href="https://git.buwryy.net/VKIntox/VKIntox/src/branch/main/LICENSE">
@@ -47,8 +47,8 @@
   </a>
   <a href="https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
-      <img alt="CI" src="https://shieldcn.dev/github/ci/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+      <source media="(prefers-color-scheme: dark)" srcset="https://badge.buwryy.net/vkintox/ci.svg?mode=dark">
+      <img alt="CI" src="https://badge.buwryy.net/vkintox/ci.svg?mode=light">
     </picture>
   </a>
 </p>
