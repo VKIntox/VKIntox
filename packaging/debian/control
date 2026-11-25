@@ -19,7 +19,7 @@ Build-Depends:
  wayland-protocols,
  libgio-2.0-dev
 Standards-Version: 4.7.0
-Homepage: https://github.com/VKIntox/VKIntox
+Homepage: https://git.buwryy.net/VKIntox/VKIntox
 Rules-Requires-Root: no
 
 Package: vkintox

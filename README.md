@@ -7,50 +7,7 @@
 <p align="center">Linux-first Vulkan PostFX layer with actually functioning depth effects, and lots more features...</p>
 
 <p align="center">
-  <a href="https://github.com/VKIntox/VKIntox/blob/main/VERSION">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/version-v0.2.2_Preview_1.svg?variant=secondary&size=sm&mode=dark&logo=git">
-      <img alt="Version" src="https://shieldcn.dev/badge/version-v0.2.2_Preview_1.svg?variant=secondary&size=sm&mode=light&logo=git">
-    </picture>
-  </a>
-  <a href="https://github.com/VKIntox/VKIntox/releases/latest">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
-      <img alt="Release" src="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
-    </picture>
-  </a>
-  <a href="https://github.com/VKIntox/VKIntox#License">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" 
-              srcset="https://shieldcn.dev/badge/license-GPL--3.0%20%7C%20Zlib.svg?variant=secondary&size=sm&mode=dark&logo=lu:scale">
-      <img alt="License: GPL-3.0 | Zlib" 
-           src="https://shieldcn.dev/badge/license-GPL--3.0%20%7C%20Zlib.svg?variant=secondary&size=sm&mode=light&logo=lu:scale&nocache=1">
-    </picture>
-  </a>
-  <a href="https://github.com/VKIntox/VKIntox/stargazers">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/stars/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
-      <img alt="GitHub Stars" src="https://shieldcn.dev/github/stars/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
-    </picture>
-  </a>
-  <a href="https://github.com/VKIntox/VKIntox/network">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/forks/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
-      <img alt="GitHub Forks" src="https://shieldcn.dev/github/forks/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
-    </picture>
-  </a>
-  <a href="https://discord.gg/HrUrzXAxPV">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/discord/members/HrUrzXAxPV.svg?variant=secondary&size=sm&mode=dark">
-      <img alt="Discord Members" src="https://shieldcn.dev/discord/members/HrUrzXAxPV.svg?variant=secondary&size=sm&mode=light">
-    </picture>
-  </a>
-  <a href="https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
-      <img alt="CI" src="https://shieldcn.dev/github/ci/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
-    </picture>
-  </a>
+  <a href="https://git.buwryy.net/VKIntox/VKIntox">source</a> · <a href="https://git.buwryy.net/VKIntox/VKIntox/releases">releases</a> · <a href="https://discord.gg/HrUrzXAxPV">discord</a>
 </p>
 
 
@@ -67,19 +24,19 @@ VKIntox is a Vulkan PostFX layer with ReShade `.fx` shader support, that has dev
 ## Install
 
 ```sh
-curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
+curl -fsSL https://vkintox.buwryy.net/setup | bash
 ```
 
 uninstall:
 
 ```bash
-curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
+curl -fsSL https://vkintox.buwryy.net/setup | bash -s -- uninstall
 ```
 
 ### Or, build manually:
 
 ```bash
-git clone https://github.com/VKIntox/VKIntox.git
+git clone https://git.buwryy.net/VKIntox/VKIntox.git
 cd VKIntox
 ./setup # ... shows usage
 ```
@@ -132,4 +89,4 @@ VKIntox builds on x86_64 and aarch64. On x86_64, `scripts/arm64-smoke.sh` runs a
 
 All original VKIntox code/modifications are licensed under [**GPL-3.0-or-later**](LICENSE). Code inherited from [vkBasalt](https://github.com/DadSchoorse/vkBasalt), [vkBasalt_overlay](https://github.com/Boux/vkBasalt_overlay) and [vkDaedalus](https://github.com/Daaboulex/vkDaedalus) are licensed under [**the Zlib license**](LICENSE-zlib). Modified versions of inherited code fall under GPL-3.0-or-later. Submodules may have their own separate licenses and/or terms.
 
-<p align="center">made with ♡ by <a href="https://github.com/buwryme">buwryme</a>. join the <a href="https://discord.gg/HrUrzXAxPV">discord server!</a></p>
+<p align="center">made with ♡ by <a href="https://git.buwryy.net/buwryy">buwryy</a>. join the <a href="https://discord.gg/HrUrzXAxPV">discord server!</a></p>

@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 DEFAULT_MANIFEST_URL = (
-    "https://raw.githubusercontent.com/VKIntox/VKIntox/refs/heads/main/assets/EffectPackages.ini"
+    "https://git.buwryy.net/VKIntox/VKIntox/raw/branch/main/assets/EffectPackages.ini"
 )
 
 

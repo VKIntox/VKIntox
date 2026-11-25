@@ -102,7 +102,7 @@ namespace VKIntox
             ImGui::TextLinkOpenURL(handle, url);
             UI::PopSupport();
         };
-        credit("VKIntox by", "@buwryme", "https://github.com/buwryme");
+        credit("VKIntox by", "@buwryy", "https://git.buwryy.net/buwryy");
         credit("vkShade by", "@slobodaapl", "https://github.com/slobodaapl");
         credit("vkBasalt by", "@DadSchoorse", "https://github.com/DadSchoorse/vkBasalt");
         credit("Overlay fork by", "@Boux", "https://github.com/Boux/vkBasalt_overlay");
@@ -123,7 +123,7 @@ namespace VKIntox
         ImGui::TextDisabled("VKIntox by buwryme  \xC2\xB7  version %s", runtimeVersion());
         ImGui::TextDisabled("Report issues:");
         ImGui::SameLine();
-        ImGui::TextLinkOpenURL("github.com/VKIntox/VKIntox/issues", "https://github.com/VKIntox/VKIntox/issues");
+        ImGui::TextLinkOpenURL("git.buwryy.net/VKIntox/VKIntox/issues", "https://git.buwryy.net/VKIntox/VKIntox/issues");
         UI::PopSupport();
     }
 

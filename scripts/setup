@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # vkintox remote installer
-# usage: curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
+# usage: curl -fsSL https://vkintox.buwryy.net/setup | bash
 
 set -euo pipefail
 
 REPO="VKIntox/VKIntox"
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
-RELEASES_URL="${VKINTOX_RELEASES_URL:-https://api.github.com/repos/$REPO/releases?per_page=100}"
-EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/main/assets/EffectPackages.ini}"
+RELEASES_URL="${VKINTOX_RELEASES_URL:-https://git.buwryy.net/api/v1/repos/$REPO/releases?limit=100}"
+EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://git.buwryy.net/$REPO/raw/branch/main/assets/EffectPackages.ini}"
 MARKER_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/VKIntox"
 MARKER=""
 
@@ -142,10 +142,10 @@ trap 'exit 143' TERM
 usage() {
     cat <<'EOF'
 usage:
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- --system --latest --yes
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- --flatpak --app org.vinegarhq.Sober --version v0.2.0 --yes
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
+  curl -fsSL https://vkintox.buwryy.net/setup | bash
+  curl -fsSL https://vkintox.buwryy.net/setup | bash -s -- --system --latest --yes
+  curl -fsSL https://vkintox.buwryy.net/setup | bash -s -- --flatpak --app org.vinegarhq.Sober --version v0.2.0 --yes
+  curl -fsSL https://vkintox.buwryy.net/setup | bash -s -- uninstall
 
 options:
   uninstall             remove the layer, keeping the config
@@ -1238,7 +1238,7 @@ EFFECTS_MARKER="$RESHADE_DIR/.vkintox_effects_hash"
 
 section "config dirs"
 mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$APP_CONFIG/font"
-curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version" 2>/dev/null || true
+curl -fsSL "https://git.buwryy.net/$REPO/raw/branch/main/VERSION" -o "$APP_CONFIG/version" 2>/dev/null || true
 seed_fonts
 ok "created config dirs"
 seed_fx_over_ui
