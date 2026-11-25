@@ -7,7 +7,50 @@
 <p align="center">Linux-first Vulkan PostFX layer with actually functioning depth effects, and lots more features...</p>
 
 <p align="center">
-  <a href="https://git.buwryy.net/VKIntox/VKIntox">source</a> · <a href="https://git.buwryy.net/VKIntox/VKIntox/releases">releases</a> · <a href="https://discord.gg/HrUrzXAxPV">discord</a>
+  <a href="https://git.buwryy.net/VKIntox/VKIntox/src/branch/main/VERSION">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/version-v0.2.2_Preview_1.svg?variant=secondary&size=sm&mode=dark&logo=git">
+      <img alt="Version" src="https://shieldcn.dev/badge/version-v0.2.2_Preview_1.svg?variant=secondary&size=sm&mode=light&logo=git">
+    </picture>
+  </a>
+  <a href="https://git.buwryy.net/VKIntox/VKIntox/releases">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="Release" src="https://shieldcn.dev/github/release/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+    </picture>
+  </a>
+  <a href="https://git.buwryy.net/VKIntox/VKIntox/src/branch/main/LICENSE">
+    <picture>
+      <source media="(prefers-color-scheme: dark)"
+              srcset="https://shieldcn.dev/badge/license-GPL--3.0%20%7C%20Zlib.svg?variant=secondary&size=sm&mode=dark&logo=lu:scale">
+      <img alt="License: GPL-3.0 | Zlib"
+           src="https://shieldcn.dev/badge/license-GPL--3.0%20%7C%20Zlib.svg?variant=secondary&size=sm&mode=light&logo=lu:scale&nocache=1">
+    </picture>
+  </a>
+  <a href="https://github.com/VKIntox/VKIntox/stargazers">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/stars/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="GitHub Stars" src="https://shieldcn.dev/github/stars/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+    </picture>
+  </a>
+  <a href="https://github.com/VKIntox/VKIntox/network">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/forks/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="GitHub Forks" src="https://shieldcn.dev/github/forks/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+    </picture>
+  </a>
+  <a href="https://discord.gg/HrUrzXAxPV">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/discord/members/HrUrzXAxPV.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="Discord Members" src="https://shieldcn.dev/discord/members/HrUrzXAxPV.svg?variant=secondary&size=sm&mode=light">
+    </picture>
+  </a>
+  <a href="https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=dark">
+      <img alt="CI" src="https://shieldcn.dev/github/ci/VKIntox/VKIntox.svg?variant=secondary&size=sm&mode=light">
+    </picture>
+  </a>
 </p>
 
 
