@@ -52,6 +52,9 @@ and an in-game Material 3 overlay, for Wayland and X11.
 %{_bindir}/vkintox-run
 %{_bindir}/vkintox-shader-check
 %{_datadir}/vulkan/implicit_layer.d/VKIntox.json
+%ifarch x86_64
+%{_libdir}/mako-fg
+%endif
 %license %{_datadir}/licenses/vkintox/*
 
 %changelog

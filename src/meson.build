@@ -318,7 +318,9 @@ framegen_src = files(
 # the MAKO FG host program and its model ship beside the layer: the backend
 # finds the host by walking up from the layer's own directory
 fg_pkg = meson.project_source_root() / 'src/framegen/mako-fg'
-if have_fg_engine and fs.is_dir(fg_pkg)
+# the prebuilt MAKO host is x86_64-only. other architectures still build the
+# backend but ship no package; the engine falls back to Lossless Scaling's DLL
+if have_fg_engine and fs.is_dir(fg_pkg) and host_machine.cpu_family() == 'x86_64'
     install_subdir('framegen/mako-fg',
                    install_dir: lib_dir / 'mako-fg',
                    strip_directory: true,
