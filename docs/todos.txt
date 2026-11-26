@@ -104,11 +104,18 @@ TODOS for v0.2.0
 TODOS for v0.3.0 framegen
 ================================================
 
-- presenting: frame generation submits real frames (overlay counts 31 real + 92 gen
-  in Roseline/TTD3 and 60 + 180 in vk3dtriangle at x4), but motion does not get
-  smoother on a 120 Hz output and can look worse with generation on. the layer
-  paces generated frames with a sleep between the generated and real presents;
-  verify with a high-speed capture whether the compositor is coalescing or
-  ordering them. suspects: the pacing sleep, generated/real present order, or
-  the compositor dropping one buffer per surface commit. reproduce with
-  vk3dtriangle at --fps-limit 60 and multiplier x2 on a 120 Hz panel.
+- presenting: FIXED, NEEDS HARDWARE VERIFICATION. The counter rose (31 real +
+  92 gen in Roseline/TTD3) while motion stayed the same because
+  1. the swapchain kept the app's MAILBOX/IMMEDIATE mode, so the real frame
+     replaced or tore over the generated one before scanout; now FIFO is
+     forced while FG is on (fgForceVsync, also patched per present for
+     swapchain_maintenance1 apps such as DXVK);
+  2. the cadence back-off read FIFO's intended back-pressure (game at
+     refresh / multiplier) as "no headroom" and toggled FG off for 120
+     presents, then on again: periodic stutter. Skipped under FIFO, as is
+     the CPU pacing sleep;
+  3. the real frame round-tripped through the 8-bit exchange image into
+     another swapchain image; it now stays in the app's own image and is
+     presented last.
+  verify with vk3dtriangle --fps-limit 60, x2, on a 120 Hz panel: expect a
+  steady 120 on the pill and visibly smoother motion than FG off.

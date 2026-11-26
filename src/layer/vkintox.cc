@@ -2504,6 +2504,7 @@ namespace VKIntox
         // have somewhere to land, and allow blitting into the extra images.
         FrameGen::FgProfile fgProfile;
         fgProfile.enabled   = settingsManager.getFgEnabled();
+        fgProfile.forceVsync = settingsManager.getFgForceVsync();
         fgProfile.multiplier = static_cast<uint32_t>(settingsManager.getFgMultiplier());
         fgProfile.flowScale = settingsManager.getFgFlowScale();
         fgProfile.performanceMode = settingsManager.getFgPerformanceMode();
@@ -2541,6 +2542,7 @@ namespace VKIntox
         logicalSwapchain->format              = modifiedCreateInfo.imageFormat;
         logicalSwapchain->imageCount          = 0;
         logicalSwapchain->useMutableFormat    = useMutableFormat;
+        logicalSwapchain->presentMode         = modifiedCreateInfo.presentMode;
         if (fgCreateApplied)
             logicalSwapchain->fgCreateProfile = fgProfile;
 
@@ -4288,6 +4290,7 @@ namespace VKIntox
                 logicalSwapchain->fgPresentCount++;
                 FrameGen::FgProfile profile;
                 profile.enabled         = settingsManager.getFgEnabled();
+                profile.forceVsync      = settingsManager.getFgForceVsync();
                 static thread_local VkSwapchainKHR fgLoggedSwapchain = VK_NULL_HANDLE;
                 if (pPresentInfo->pSwapchains[0] != fgLoggedSwapchain
                     || (logicalSwapchain->fgPresentCount % 300) == 0)
@@ -4362,11 +4365,27 @@ namespace VKIntox
                 {
                     logicalSwapchain->fgStale = false;
                     logicalSwapchain->fgChangeLogged = false;
+                    const bool fifo = FrameGen::presentModeQueuesEveryFrame(logicalSwapchain->presentMode);
+                    // DXVK and others switch present modes per present through
+                    // swapchain_maintenance1; keep them on FIFO while generating
+                    if (fifo && profile.forceVsync)
+                        FrameGen::forceFifoInPresentChain(pPresentInfo);
                     VkSemaphore compositedWait = presentSemaphores.back();
-                    return logicalSwapchain->fg->present(
+                    VkResult fgResult = logicalSwapchain->fg->present(
                         logicalDevice, logicalSwapchain,
                         pPresentInfo->pImageIndices[0],
                         queue, compositedWait, pPresentInfo);
+                    // FG was switched on while the swapchain ran MAILBOX or
+                    // IMMEDIATE: ask once for a recreate so the create hook
+                    // can make it FIFO. Until then the CPU-paced path runs.
+                    if (!fifo && profile.forceVsync && !logicalSwapchain->fgRecreateRequested
+                        && fgResult == VK_SUCCESS)
+                    {
+                        logicalSwapchain->fgRecreateRequested = true;
+                        Logger::info("FG: swapchain is not FIFO; requesting a recreate to enable vsync pacing");
+                        return VK_SUBOPTIMAL_KHR;
+                    }
+                    return fgResult;
                 }
             }
         }

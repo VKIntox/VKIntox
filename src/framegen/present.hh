@@ -3,7 +3,9 @@
 // FG frame insertion in the layer's present path. Mirrors the frame generation engine's own
 // swapchain wrapper: the composited frame is copied into the engine's source
 // image, the engine generates the intermediate frames, and each one is blitted
-// into an extra swapchain image and presented ahead of the real frame.
+// into an extra swapchain image and presented ahead of the real frame, which
+// stays in the application's image. Pacing comes from FIFO (forced while FG is
+// on); a CPU sleep only stands in when the swapchain could not be made FIFO.
 
 #include <chrono>
 #include <cstdint>
@@ -30,8 +32,19 @@ namespace VKIntox
             float flowScale = 1.0f;
             bool performanceMode = false;
             bool halfPrecision = false;
+            // force FIFO while generating: under MAILBOX/IMMEDIATE the real
+            // frame replaces the generated one before it is ever scanned out
+            bool forceVsync = true;
             std::string dllPath;
         };
+
+        // True for present modes that show every queued image in order, which
+        // is what lets the presentation engine pace the inserted frames.
+        bool presentModeQueuesEveryFrame(VkPresentModeKHR mode);
+
+        // Patches a VK_EXT_swapchain_maintenance1 per-present mode switch in
+        // the chain back to FIFO, so the app cannot leave vsync mid-session.
+        void forceFifoInPresentChain(const VkPresentInfoKHR* presentInfo);
 
         // Swapchain creation: widen usage and grow the image pool so the
         // inserted frames have somewhere to land. Returns true when the info
@@ -77,11 +90,10 @@ namespace VKIntox
                 VkCommandBuffer uploadCmdbuf = VK_NULL_HANDLE;
                 // the last inner copy's semaphore; the real frame waits on it
                 VkSemaphore presentSemaphore = VK_NULL_HANDLE;
-                // generated frames 1..N-1 present pre-acquired images; the real
-                // frame takes the last one, so presentation stays in
-                // acquisition order behind the application's image
+                // the real frame stays in the application's image and is
+                // presented after the generated ones; this empty submit turns
+                // the upload's timeline value into presentSemaphore
                 VkCommandBuffer realCopyCmdbuf = VK_NULL_HANDLE;
-                VkSemaphore realCopySemaphore = VK_NULL_HANDLE;
                 std::vector<InnerSyncPass> innerSyncPasses;
             };
 
@@ -91,6 +103,9 @@ namespace VKIntox
             LogicalDevice* m_logicalDevice = nullptr;
             uint32_t m_multiplier = 2;
             VkExtent2D m_extent = {0, 0};
+            // FIFO: the presentation engine shows one queued image per
+            // refresh, so it paces the generated frames by itself
+            bool m_fifo = false;
             // exchange image the next real frame is copied into; the host
             // swaps the pair on every trigger
             uint32_t m_sourceIndex = 0;

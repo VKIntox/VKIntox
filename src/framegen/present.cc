@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <thread>
@@ -264,7 +263,65 @@ namespace VKIntox::FrameGen
                                                  caps.maxImageCount == 0 ? 999u : caps.maxImageCount});
         Logger::info("FG: swapchain image pool grown to " + std::to_string(info.minImageCount)
                      + " for live frame generation");
+
+        // Generated frames are only ever seen when the presentation engine
+        // shows every queued image: under MAILBOX the real frame replaces the
+        // generated one in the queue, under IMMEDIATE they tear into one
+        // scanout. Both count as presented, so the fps pill rose while motion
+        // stayed exactly as smooth as before. FIFO is always supported.
+        if (profile.enabled && profile.forceVsync && !presentModeQueuesEveryFrame(info.presentMode))
+        {
+            // with VK_EXT_swapchain_maintenance1 the app lists the modes it
+            // may switch between; FIFO must be one of them to be valid here
+            bool fifoAllowed = true;
+            for (auto* next = static_cast<const VkBaseInStructure*>(info.pNext); next; next = next->pNext)
+            {
+                if (next->sType != VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT)
+                    continue;
+                const auto* modes = reinterpret_cast<const VkSwapchainPresentModesCreateInfoEXT*>(next);
+                fifoAllowed = false;
+                for (uint32_t i = 0; i < modes->presentModeCount; ++i)
+                    fifoAllowed |= modes->pPresentModes[i] == VK_PRESENT_MODE_FIFO_KHR;
+            }
+            if (fifoAllowed)
+            {
+                Logger::info("FG: present mode " + std::to_string(info.presentMode)
+                             + " -> FIFO so generated frames reach the display");
+                info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+            }
+            else
+            {
+                Logger::warn("FG: the app's present mode list excludes FIFO; generated frames "
+                             "fall back to CPU pacing and may be dropped by the compositor");
+            }
+        }
         return true;
+    }
+
+    bool presentModeQueuesEveryFrame(VkPresentModeKHR mode)
+    {
+        // FIFO_RELAXED only tears when the app is late, which with FG on means
+        // the generator fell behind; it still queues every image otherwise
+        return mode == VK_PRESENT_MODE_FIFO_KHR || mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    }
+
+    void forceFifoInPresentChain(const VkPresentInfoKHR* presentInfo)
+    {
+        // same approach as lsfg-vk: the per-present array belongs to the app,
+        // and is overwritten in place for the duration of the call
+        static const VkPresentModeKHR fifo[8] = {
+            VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_FIFO_KHR,
+            VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_FIFO_KHR,
+        };
+        for (auto* next = static_cast<const VkBaseInStructure*>(presentInfo->pNext); next; next = next->pNext)
+        {
+            if (next->sType != VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT)
+                continue;
+            auto* modeInfo = const_cast<VkSwapchainPresentModeInfoEXT*>(
+                reinterpret_cast<const VkSwapchainPresentModeInfoEXT*>(next));
+            if (modeInfo->swapchainCount <= 8)
+                modeInfo->pPresentModes = fifo;
+        }
     }
 
     bool FgSwapchain::active(LogicalDevice* logicalDevice, const FgProfile& profile)
@@ -279,8 +336,10 @@ namespace VKIntox::FrameGen
     }
 
     FgSwapchain::FgSwapchain(LogicalDevice* logicalDevice, LogicalSwapchain* swapchain, const FgProfile& profile)
-        : m_logicalDevice(logicalDevice), m_multiplier(profile.multiplier), m_extent(swapchain->imageExtent)
+        : m_logicalDevice(logicalDevice), m_multiplier(profile.multiplier), m_extent(swapchain->imageExtent),
+          m_fifo(presentModeQueuesEveryFrame(swapchain->presentMode))
     {
+        Logger::info(std::string("FG: pacing by ") + (m_fifo ? "vsync (FIFO)" : "CPU sleep (non-FIFO swapchain)"));
         if (!createEngineObjects(logicalDevice, swapchain, profile))
         {
             destroy();
@@ -380,9 +439,7 @@ namespace VKIntox::FrameGen
                 return false;
             }
             pass.presentSemaphore = createBinarySemaphore(logicalDevice);
-            pass.realCopySemaphore = createBinarySemaphore(logicalDevice);
-            if (pass.presentSemaphore == VK_NULL_HANDLE
-                || pass.realCopySemaphore == VK_NULL_HANDLE)
+            if (pass.presentSemaphore == VK_NULL_HANDLE)
             {
                 Logger::err("FG: present semaphore creation failed");
                 return false;
@@ -604,7 +661,15 @@ namespace VKIntox::FrameGen
         if (hadHeadroomLastFrame && m_passIntervalUs > 0 && m_multiplier > 1)
             pacingUs = (m_passIntervalUs * (m_multiplier - 1)) / m_multiplier;
         const uint64_t appGapUs = presentGapUs > pacingUs ? presentGapUs - pacingUs : 0;
-        if (hadHeadroomLastFrame && m_passIntervalUs > 0
+        // Under FIFO a slower app cadence while inserting is the intended
+        // back-pressure (the game runs at refresh / multiplier), not a lack of
+        // headroom. Backing off there toggled FG on and off every couple of
+        // seconds, which is the stutter that made x2 feel worse than x1.
+        if (m_fifo)
+        {
+            m_slowStreak = 0;
+        }
+        else if (hadHeadroomLastFrame && m_passIntervalUs > 0
             && appGapUs > std::max<uint64_t>(m_passIntervalUs * 3 / 2 + 1000, m_passIntervalUs + 6000)
             && presentGapUs < 500000)
         {
@@ -647,10 +712,11 @@ namespace VKIntox::FrameGen
             return presentComposited();
         }
 
-        // Insert only while the swapchain has a spare image right now. A
-        // blocking acquire here steals vblanks from the application: on a
-        // display already fed by its real frames it halves the game's rate
-        // instead of adding frames.
+        // One extra image per generated frame. Under FIFO the acquire blocks
+        // until the display frees one, which caps the game at refresh /
+        // multiplier: that is the intended pacing, and every presented frame
+        // gets its own refresh. Without FIFO a short timeout keeps insertion
+        // from stealing the application's own vblanks.
         std::vector<uint32_t> acquired;
         acquired.reserve(generatedCount);
         if (m_probeCooldown > 0)
@@ -663,9 +729,12 @@ namespace VKIntox::FrameGen
             {
                 VkSemaphore acquire = pass.innerSyncPasses[j].acquireSemaphore;
                 uint32_t acquiredIndex = 0;
+                // under FIFO the acquire blocking until the display frees an
+                // image IS the pacing; give it a few refreshes before falling
+                // back, or a 30 Hz stretch would read as "no headroom"
                 VkResult acquireResult = logicalDevice->vkd.AcquireNextImageKHR(
                     logicalDevice->device, swapchain->handle,
-                    30'000'000ull, acquire, VK_NULL_HANDLE, &acquiredIndex);
+                    m_fifo ? 150'000'000ull : 30'000'000ull, acquire, VK_NULL_HANDLE, &acquiredIndex);
                 if (acquireResult == VK_SUCCESS || acquireResult == VK_SUBOPTIMAL_KHR)
                 {
                     acquired.push_back(acquiredIndex);
@@ -826,13 +895,14 @@ namespace VKIntox::FrameGen
         Logger::debug("FG: insert batch " + std::to_string(insertCount) + "/"
             + std::to_string(generatedCount) + " cooldown=" + std::to_string(m_probeCooldown));
 
-        // generated frame i is copied from the host's destination image; frame
-        // 0 goes into the application's image, the rest into the acquired ones
+        // generated frame i is copied from the host's destination image into
+        // the i-th extra acquired image; the application's own image keeps the
+        // real frame and is presented last. Present order is call order, not
+        // acquisition order, so the real frame never needs a second copy.
         for (uint32_t i = 0; i < insertCount; ++i)
         {
             InnerSyncPass& inner = pass.innerSyncPasses[i];
-            const bool usesAppImage = (i == 0);
-            const uint32_t targetIndex = usesAppImage ? index : acquired[i - 1];
+            const uint32_t targetIndex = acquired[i];
             VkImage target = swapchain->images[targetIndex];
             VkImage destination = m_destinationImages[i];
             VkCommandBuffer innerCmd = inner.copyCmdbuf;
@@ -848,8 +918,7 @@ namespace VKIntox::FrameGen
                              VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                              external, ours),
                 imageBarrier(target, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT,
-                             usesAppImage ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED,
-                             VK_IMAGE_LAYOUT_GENERAL,
+                             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                              VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
             };
             logicalDevice->vkd.CmdPipelineBarrier(innerCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, transfer,
@@ -867,17 +936,11 @@ namespace VKIntox::FrameGen
                                                   0, 0, nullptr, 0, nullptr, 2, innerBackBarriers);
             logicalDevice->vkd.EndCommandBuffer(innerCmd);
 
-            // the host signals this frame at appSignal + i + 1; frame 0 waits
-            // only the host, later frames also wait their acquired image
-            VkSemaphore innerWaits[2] = { m_syncSemaphore, VK_NULL_HANDLE };
+            // the host signals this frame at appSignal + i + 1; the copy also
+            // waits for its acquired image to be released by the display
+            VkSemaphore innerWaits[2] = { m_syncSemaphore, inner.acquireSemaphore };
             uint64_t waitValues[2] = { appSignal + i + 1, 0 };
-            uint32_t waitCount = 1;
-            if (!usesAppImage)
-            {
-                innerWaits[waitCount] = pass.innerSyncPasses[i - 1].acquireSemaphore;
-                waitValues[waitCount] = 0;
-                waitCount++;
-            }
+            const uint32_t waitCount = 2;
             VkTimelineSemaphoreSubmitInfo innerTimeline{};
             innerTimeline.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
             innerTimeline.waitSemaphoreValueCount = waitCount;
@@ -922,75 +985,16 @@ namespace VKIntox::FrameGen
                 m_ready = false;
                 return presentAfterUpload(appSignal);
             }
-            if (m_passIntervalUs > 0)
+            if (!m_fifo && m_passIntervalUs > 0)
             {
-                // one refresh apart, or the compositor keeps only the last
-                // commit and the generated frame never reaches the screen
+                // without FIFO nothing paces the queue: space the commits one
+                // slot apart, or the compositor keeps only the last one and
+                // the generated frame never reaches the screen
                 std::this_thread::sleep_for(std::chrono::microseconds(
                     m_passIntervalUs / m_multiplier));
             }
         }
         FpsMetrics::addGeneratedFrames(static_cast<int>(insertCount));
-
-        // the real composited frame waits in the source image; copy it into the
-        // last acquired image after the host has released its sources, then
-        // present it after the generated frames
-        const uint32_t realIndex = acquired.back();
-        VkImage realTarget = swapchain->images[realIndex];
-        VkCommandBuffer realCmd = pass.realCopyCmdbuf;
-        vr = logicalDevice->vkd.BeginCommandBuffer(realCmd, &beginInfo);
-        if (vr != VK_SUCCESS)
-            return presentAfterUpload(appSignal);
-        VkImageMemoryBarrier realBarriers[2] = {
-            imageBarrier(source, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_READ_BIT,
-                         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                         external, ours),
-            imageBarrier(realTarget, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT,
-                         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
-        };
-        logicalDevice->vkd.CmdPipelineBarrier(realCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, transfer,
-                                              0, 0, nullptr, 0, nullptr, 2, realBarriers);
-        recordBlit(logicalDevice, realCmd, source, realTarget, m_extent);
-        VkImageMemoryBarrier realBackBarriers[2] = {
-            imageBarrier(realTarget, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_NONE,
-                         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                         VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
-            imageBarrier(source, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_NONE,
-                         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                         ours, external),
-        };
-        logicalDevice->vkd.CmdPipelineBarrier(realCmd, transfer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                              0, 0, nullptr, 0, nullptr, 2, realBackBarriers);
-        logicalDevice->vkd.EndCommandBuffer(realCmd);
-
-        VkSemaphore realWaits[2] = { pass.innerSyncPasses[insertCount - 1].acquireSemaphore, m_syncSemaphore };
-        uint64_t realWaitValues[2] = { 0, appSignal + generatedCount };
-        VkTimelineSemaphoreSubmitInfo realTimeline{};
-        realTimeline.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
-        realTimeline.waitSemaphoreValueCount = 2;
-        realTimeline.pWaitSemaphoreValues = realWaitValues;
-        VkPipelineStageFlags realStages[2] = {
-            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-        };
-        VkSubmitInfo realSubmit{};
-        realSubmit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        realSubmit.pNext = &realTimeline;
-        realSubmit.waitSemaphoreCount = 2;
-        realSubmit.pWaitSemaphores = realWaits;
-        realSubmit.pWaitDstStageMask = realStages;
-        realSubmit.commandBufferCount = 1;
-        realSubmit.pCommandBuffers = &realCmd;
-        realSubmit.signalSemaphoreCount = 1;
-        realSubmit.pSignalSemaphores = &pass.realCopySemaphore;
-        vr = logicalDevice->vkd.QueueSubmit(queue, 1, &realSubmit, VK_NULL_HANDLE);
-        if (vr != VK_SUCCESS)
-        {
-            Logger::err("FG: real frame submit failed (" + std::to_string(vr) + ")");
-            m_ready = false;
-            return presentAfterUpload(appSignal);
-        }
 
         // every batch advances the timeline by the trigger plus the frames
         // the host generated; the next trigger must follow the host's last
@@ -999,11 +1003,11 @@ namespace VKIntox::FrameGen
         m_sourceIndex ^= 1;
         m_firstSourceUpload = false;
 
-        VkPresentInfoKHR finalPresent = *originalPresentInfo;
-        finalPresent.waitSemaphoreCount = 1;
-        finalPresent.pWaitSemaphores = &pass.realCopySemaphore;
-        finalPresent.pImageIndices = &realIndex;
-        return logicalDevice->vkd.QueuePresentKHR(queue, &finalPresent);
+        // the real frame is still in the application's image (the upload only
+        // read it). It is presented last, after the generated ones, and only
+        // has to wait for the upload; the presentation engine shows it one
+        // refresh after the last generated frame.
+        return presentAfterUpload(appSignal);
     }
 
     FgSwapchain::~FgSwapchain()
@@ -1028,8 +1032,6 @@ namespace VKIntox::FrameGen
         {
             if (pass.presentSemaphore != VK_NULL_HANDLE)
                 logicalDevice->vkd.DestroySemaphore(logicalDevice->device, pass.presentSemaphore, nullptr);
-            if (pass.realCopySemaphore != VK_NULL_HANDLE)
-                logicalDevice->vkd.DestroySemaphore(logicalDevice->device, pass.realCopySemaphore, nullptr);
             for (auto& inner : pass.innerSyncPasses)
             {
                 if (inner.acquireSemaphore != VK_NULL_HANDLE)
