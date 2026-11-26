@@ -10,3 +10,5 @@ issues to fix:
  - framegen still applies to the VKIntox overlay and game HUD
  - forcing FIFO may crash *some* games... framegen is opt-in anyway, so this is okay to keep i'd guess?
 then we can release v0.3.0 preview 1 <3
+
+- fix fx-over-ui & input blocking
