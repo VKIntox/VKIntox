@@ -421,6 +421,13 @@ namespace VKIntox
             if (fb != VK_NULL_HANDLE)
                 queue.push(DestroyPhase::RenderPass, [vkd, device, fb] { vkd.DestroyFramebuffer(device, fb, nullptr); });
         }
+        for (auto& entry : replayFramebuffers)
+        {
+            VkFramebuffer fb = entry.framebuffer;
+            if (fb != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::RenderPass, [vkd, device, fb] { vkd.DestroyFramebuffer(device, fb, nullptr); });
+        }
+        replayFramebuffers.clear();
         if (pass != VK_NULL_HANDLE)
             queue.push(DestroyPhase::RenderPass, [vkd, device, pass] { vkd.DestroyRenderPass(device, pass, nullptr); });
 
@@ -1441,6 +1448,7 @@ namespace VKIntox
             }
             framebuffers.clear();
             framebufferImageViews.clear();
+            destroyReplayFramebuffers();
 
             if (commandPool != VK_NULL_HANDLE)
             {
@@ -1998,6 +2006,66 @@ namespace VKIntox
         }
     }
 
+    void ImGuiOverlay::destroyReplayFramebuffers()
+    {
+        if (!logicalDevice)
+            return;
+        for (auto& entry : replayFramebuffers)
+        {
+            if (entry.framebuffer != VK_NULL_HANDLE)
+                logicalDevice->vkd.DestroyFramebuffer(logicalDevice->device, entry.framebuffer, nullptr);
+        }
+        replayFramebuffers.clear();
+    }
+
+    void ImGuiOverlay::recordOverlayDrawData(VkCommandBuffer cmd, uint32_t imageIndex,
+                                             VkImageView imageView, uint32_t width, uint32_t height)
+    {
+        (void) imageIndex;
+        if (!backendInitialized || cmd == VK_NULL_HANDLE || renderPass == VK_NULL_HANDLE)
+            return;
+        if (imageView == VK_NULL_HANDLE || width == 0 || height == 0)
+            return;
+        ImDrawData* drawData = ImGui::GetDrawData();
+        if (!drawData)
+            return;
+
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
+        for (const auto& entry : replayFramebuffers)
+        {
+            if (entry.view == imageView && entry.width == width && entry.height == height)
+            {
+                framebuffer = entry.framebuffer;
+                break;
+            }
+        }
+        if (framebuffer == VK_NULL_HANDLE)
+        {
+            VkFramebufferCreateInfo fbInfo = {};
+            fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fbInfo.renderPass = renderPass;
+            fbInfo.attachmentCount = 1;
+            fbInfo.pAttachments = &imageView;
+            fbInfo.width = width;
+            fbInfo.height = height;
+            fbInfo.layers = 1;
+            if (logicalDevice->vkd.CreateFramebuffer(logicalDevice->device, &fbInfo, nullptr,
+                                                     &framebuffer) != VK_SUCCESS)
+                return;
+            replayFramebuffers.push_back({imageView, framebuffer, width, height});
+        }
+
+        VkRenderPassBeginInfo rpBegin = {};
+        rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rpBegin.renderPass = renderPass;
+        rpBegin.framebuffer = framebuffer;
+        rpBegin.renderArea.extent.width = width;
+        rpBegin.renderArea.extent.height = height;
+        logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+        ImGui_ImplVulkan_RenderDrawData(drawData, cmd);
+        logicalDevice->vkd.CmdEndRenderPass(cmd);
+    }
+
     VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height)
     {
         // a frame dump must not bake the UI into the file; the request arms a
@@ -2125,6 +2193,9 @@ namespace VKIntox
 
         if (needRecreate)
         {
+            // a new swapchain view (or extent) means the replay targets from
+            // the old swapchain are gone; their framebuffers must go too
+            destroyReplayFramebuffers();
             if (framebuffers[imageIndex] != VK_NULL_HANDLE)
                 logicalDevice->vkd.DestroyFramebuffer(logicalDevice->device, framebuffers[imageIndex], nullptr);
 

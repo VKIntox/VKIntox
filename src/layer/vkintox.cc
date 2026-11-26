@@ -4374,7 +4374,7 @@ namespace VKIntox
                     VkResult fgResult = logicalSwapchain->fg->present(
                         logicalDevice, logicalSwapchain,
                         pPresentInfo->pImageIndices[0],
-                        queue, compositedWait, pPresentInfo);
+                        queue, compositedWait, true, pPresentInfo);
                     // FG was switched on while the swapchain ran MAILBOX or
                     // IMMEDIATE: ask once for a recreate so the create hook
                     // can make it FIFO. Until then the CPU-paced path runs.

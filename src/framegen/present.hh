@@ -74,6 +74,7 @@ namespace VKIntox
                              uint32_t index,
                              VkQueue queue,
                              VkSemaphore waitSemaphore,
+                             bool replayOverlay,
                              const VkPresentInfoKHR* originalPresentInfo);
 
             uint32_t multiplier() const { return m_multiplier; }

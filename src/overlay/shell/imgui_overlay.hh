@@ -186,6 +186,12 @@ namespace VKIntox
 
         VkCommandBuffer recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height);
 
+        // Replays the frame's ImGui draw data into another swapchain image.
+        // Used for generated frames: the overlay is built once, then stamped
+        // onto every presented image so it never appears at half rate.
+        void recordOverlayDrawData(VkCommandBuffer cmd, uint32_t imageIndex,
+                                   VkImageView imageView, uint32_t width, uint32_t height);
+
         // Get fence for command buffer synchronization (used by vkintox.cpp submit)
         VkFence getCommandBufferFence(uint32_t imageIndex) const
         {
@@ -298,6 +304,19 @@ namespace VKIntox
         std::vector<VkFence> commandBufferFences;  // Fences to track command buffer completion
         std::vector<VkFramebuffer> framebuffers;    // Pre-created per swapchain image
         std::vector<VkImageView> framebufferImageViews;  // Track which image views framebuffers were created for
+        // Generate-frames overlay replay stamps the current draw data onto the
+        // extra acquired images, so it needs framebuffers for those image views
+        // too. Kept apart from the per-index cache above: that one belongs to
+        // recordFrame and must not be retargeted by a replay.
+        struct ReplayFramebuffer
+        {
+            VkImageView   view = VK_NULL_HANDLE;
+            VkFramebuffer framebuffer = VK_NULL_HANDLE;
+            uint32_t      width = 0;
+            uint32_t      height = 0;
+        };
+        std::vector<ReplayFramebuffer> replayFramebuffers;
+        void destroyReplayFramebuffers();
         VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
         uint32_t imageCount = 0;
         uint32_t framebufferWidth = 0;   // Dimensions used to create framebuffers

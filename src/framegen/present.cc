@@ -4,6 +4,7 @@
 #include "render/device/logical_device.hh"
 #include "render/resources/format.hh"
 #include "render/swapchain/logical_swapchain.hh"
+#include "overlay/shell/imgui_overlay.hh"
 #include "util/logger.hh"
 #include "overlay/shell/fps_metrics.hh"
 
@@ -90,9 +91,6 @@ namespace VKIntox::FrameGen
             return semaphore;
         }
 
-        // an exchange image, created for concurrent sharing between the game's
-        // queue and the external host, with dedicated memory exported over an
-        // opaque fd
         bool createExportedImage(LogicalDevice* logicalDevice,
                                  uint32_t width, uint32_t height,
                                  VkFormat format, VkImageUsageFlags usage,
@@ -579,6 +577,7 @@ namespace VKIntox::FrameGen
                                   uint32_t index,
                                   VkQueue queue,
                                   VkSemaphore waitSemaphore,
+                                  bool replayOverlay,
                                   const VkPresentInfoKHR* originalPresentInfo)
     {
         // Presents must wait the composited semaphore, never the application's
@@ -934,6 +933,10 @@ namespace VKIntox::FrameGen
             };
             logicalDevice->vkd.CmdPipelineBarrier(innerCmd, transfer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                                                   0, 0, nullptr, 0, nullptr, 2, innerBackBarriers);
+            if (replayOverlay && logicalDevice->imguiOverlay)
+                logicalDevice->imguiOverlay->recordOverlayDrawData(
+                    innerCmd, targetIndex, swapchain->imageViews[targetIndex],
+                    m_extent.width, m_extent.height);
             logicalDevice->vkd.EndCommandBuffer(innerCmd);
 
             // the host signals this frame at appSignal + i + 1; the copy also
