@@ -400,6 +400,7 @@ namespace VKIntox::FrameGen
           m_fifo(presentModeQueuesEveryFrame(swapchain->presentMode))
     {
         Logger::info(std::string("FG: pacing by ") + (m_fifo ? "vsync (FIFO)" : "CPU sleep (non-FIFO swapchain)"));
+        m_lastReleaseProbe = std::chrono::steady_clock::now();
         if (!createEngineObjects(logicalDevice, swapchain, profile))
         {
             destroy();
@@ -763,9 +764,11 @@ namespace VKIntox::FrameGen
         const uint32_t external = externalQueueFamily();
         const VkPipelineStageFlags transfer = VK_PIPELINE_STAGE_TRANSFER_BIT;
 
-        // Learn the application's own cadence first. If inserting later makes
-        // its presents slower, the display had no headroom: back off instead
-        // of halving the game's frame rate.
+        // Adaptive insertion. The multiplier is a ceiling, never a divisor of
+        // the game's rate: a generated frame may only take a display slot the
+        // application is not already using. The target starts at one, every
+        // raise is validated against the application's own gap, and a failed
+        // raise reveals the display interval so later decisions need no trial.
         const auto presentNow = std::chrono::steady_clock::now();
         uint64_t presentGapUs = 0;
         if (m_lastPresentTime.time_since_epoch().count() != 0)
@@ -774,80 +777,247 @@ namespace VKIntox::FrameGen
                 presentNow - m_lastPresentTime).count());
         }
         m_lastPresentTime = presentNow;
-        const bool hadHeadroomLastFrame = m_lastInserted;
-        m_lastInserted = false;
-        // the pacing sleep is inside the previous present, so subtract it before
-        // judging the application's own cadence; otherwise the sleep that makes
-        // generated frames visible looks like the game slowing down
-        uint64_t pacingUs = 0;
-        if (hadHeadroomLastFrame && m_passIntervalUs > 0 && m_multiplier > 1)
-            pacingUs = (m_passIntervalUs * (m_multiplier - 1)) / m_multiplier;
-        const uint64_t appGapUs = presentGapUs > pacingUs ? presentGapUs - pacingUs : 0;
-        // Under FIFO a slower app cadence while inserting is the intended
-        // back-pressure (the game runs at refresh / multiplier), not a lack of
-        // headroom. Backing off there toggled FG on and off every couple of
-        // seconds, which is the stutter that made x2 feel worse than x1.
-        if (m_fifo)
-        {
-            m_slowStreak = 0;
-        }
-        else if (hadHeadroomLastFrame && m_passIntervalUs > 0
-            && appGapUs > std::max<uint64_t>(m_passIntervalUs * 3 / 2 + 1000, m_passIntervalUs + 6000)
-            && presentGapUs < 500000)
-        {
-            Logger::debug("FG: cadence slip gap=" + std::to_string(presentGapUs)
-                + " app=" + std::to_string(appGapUs)
-                + " pass=" + std::to_string(m_passIntervalUs)
-                + " streak=" + std::to_string(m_slowStreak + 1));
-            if (++m_slowStreak >= 3)
-            {
-                m_probeCooldown = 120;
-                m_slowStreak = 0;
-                Logger::debug("FG: headroom probe backing off for 120 presents");
-            }
-        }
-        else if (!hadHeadroomLastFrame && presentGapUs >= 2000 && presentGapUs <= 200000)
-        {
-            m_slowStreak = 0;
-            m_passIntervalUs = m_passIntervalUs == 0
-                ? presentGapUs
-                : (m_passIntervalUs * 7 + presentGapUs) / 8;
-        }
-        else
-        {
-            m_slowStreak = 0;
-        }
+        const uint32_t previousInserts = m_lastInsertCount;
+        m_lastInsertCount = 0;
+
+        const uint32_t insertCap = generatedCount;
+        const bool warming = m_warmupFrames > 0;
+        if (warming)
+            --m_warmupFrames;
+
         if (presentGapUs > 150000)
         {
             // the surface was hidden or the app paused: the host history is
             // from another era, so restart it instead of interpolating across
             m_firstSourceUpload = true;
-            m_probeCooldown = 60;
-            m_slowStreak = 0;
+            m_appIntervalUs = 0;
+            m_passIntervalUs = 0;
+            m_refreshIntervalUs = 0;
+            m_freeGapCount = 0;
+            m_freeGapNext = 0;
+            m_expectedGapUs = 0;
+            m_insertTarget = 1;
+            m_prevInsertTarget = 0;
+            m_lastInsertCount = 0;
+            m_goodFrames = 0;
+            m_releaseFrames = 0;
+            m_probeCooldown = 0;
+            m_checkFrames = 0;
+            m_checkSlowFrames = 0;
+            m_checkSlowGapUs = 0;
+            m_targetLatched = false;
+            m_holdUntil = {};
+        }
+        else
+        {
+            // the warmup presents nothing, so they are the cleanest samples of
+            // what the app can do on its own
+            if (presentGapUs >= 2000 && presentGapUs <= 150000 && previousInserts == 0)
+            {
+                // free-running cadence: median of the recent free gaps, so one
+                // duplicate or recreation frame cannot poison the estimate
+                m_freeGaps[m_freeGapNext] = presentGapUs;
+                m_freeGapNext = (m_freeGapNext + 1) % static_cast<uint32_t>(m_freeGaps.size());
+                if (m_freeGapCount < m_freeGaps.size())
+                    ++m_freeGapCount;
+                std::array<uint64_t, 16> sortedGaps = m_freeGaps;
+                std::sort(sortedGaps.begin(), sortedGaps.begin() + m_freeGapCount);
+                const uint64_t medianGap = m_freeGapCount >= 3
+                    ? sortedGaps[m_freeGapCount / 2] : sortedGaps[0];
+                m_appIntervalUs = medianGap;
+                m_passIntervalUs = m_appIntervalUs;
+
+                // the app itself slowed down while nothing was inserted: the
+                // display has room again, no probe needed
+                if (!warming && m_refreshIntervalUs > 0 && insertCap > 0 && m_checkFrames == 0)
+                {
+                    uint32_t fits = static_cast<uint32_t>(m_appIntervalUs / m_refreshIntervalUs);
+                    fits = fits > 0 ? fits - 1 : 0;
+                    fits = std::min(fits, insertCap);
+                    if (fits > m_insertTarget)
+                    {
+                        m_insertTarget = fits;
+                        m_expectedGapUs = presentGapUs;
+                        m_goodFrames = 0;
+                        m_targetLatched = false;
+                        Logger::debug("FG: app slowed, target=x" + std::to_string(m_insertTarget + 1));
+                    }
+                }
+            }
+
+            if (warming)
+            {
+                // still sampling; the first raise is armed when this ends
+            }
+            else if (m_checkFrames > 0)
+            {
+                // the raise is on trial. count the presents that took longer
+                // than the cadence that justified it and decide on the whole
+                // window, so queue slack cannot hide a frame the app needed.
+                if (previousInserts == m_prevInsertTarget + 1 && presentGapUs >= 2000)
+                {
+                    if (presentGapUs > m_expectedGapUs + 1500)
+                    {
+                        ++m_checkSlowFrames;
+                        m_checkSlowGapUs += presentGapUs;
+                    }
+                    if (--m_checkFrames == 0)
+                    {
+                        if (m_checkSlowFrames >= 3)
+                        {
+                            const uint64_t refresh = (m_checkSlowGapUs / m_checkSlowFrames)
+                                / (m_prevInsertTarget + 2);
+                            const bool plausible = refresh >= 3000 && refresh <= 40000
+                                && (m_refreshIntervalUs == 0
+                                    || (refresh * 100 > m_refreshIntervalUs * 70
+                                        && refresh * 100 < m_refreshIntervalUs * 130));
+                            if (plausible)
+                                m_refreshIntervalUs = m_refreshIntervalUs == 0 ? refresh
+                                    : (m_refreshIntervalUs * 3 + refresh) / 4;
+                            m_insertTarget = m_prevInsertTarget;
+                            m_targetLatched = true;
+                            m_holdUntil = presentNow + std::chrono::seconds(5);
+                            Logger::debug("FG: insert target does not fit, back to x"
+                                + std::to_string(m_insertTarget + 1)
+                                + " slow=" + std::to_string(m_checkSlowFrames)
+                                + " gap=" + std::to_string(m_checkSlowGapUs / m_checkSlowFrames)
+                                + " refresh=" + std::to_string(m_refreshIntervalUs));
+                        }
+                        else
+                        {
+                            m_targetLatched = false;
+                        }
+                        m_checkSlowFrames = 0;
+                        m_checkSlowGapUs = 0;
+                        m_goodFrames = 0;
+                    }
+                }
+            }
+            else if (previousInserts > 0 && presentGapUs >= 2000)
+            {
+                const uint64_t batchUs = m_refreshIntervalUs > 0
+                    ? static_cast<uint64_t>(previousInserts + 1) * m_refreshIntervalUs : 0;
+                if (!m_targetLatched && batchUs > 0 && presentGapUs > batchUs + batchUs / 8)
+                {
+                    // the app is now slower than the batch: it has room for
+                    // more generated frames
+                    m_appIntervalUs = (m_appIntervalUs * 3 + presentGapUs) / 4;
+                    m_expectedGapUs = presentGapUs;
+                    if (m_refreshIntervalUs > 0)
+                    {
+                        uint32_t fits = static_cast<uint32_t>(m_appIntervalUs / m_refreshIntervalUs);
+                        fits = fits > 0 ? fits - 1 : 0;
+                        fits = std::min(fits, insertCap);
+                        if (fits > m_insertTarget)
+                        {
+                            m_insertTarget = fits;
+                            m_goodFrames = 0;
+                        }
+                    }
+                }
+                else if (presentGapUs <= m_expectedGapUs + 1500)
+                {
+                    ++m_goodFrames;
+                }
+                else
+                {
+                    m_goodFrames = 0;
+                }
+            }
+
+            if (m_checkFrames == 0 && !m_targetLatched && m_insertTarget < insertCap
+                && m_goodFrames >= 30 && presentGapUs >= 2000)
+            {
+                bool room = true;
+                if (m_refreshIntervalUs > 0 && m_appIntervalUs > 0)
+                {
+                    uint32_t fits = static_cast<uint32_t>(m_appIntervalUs / m_refreshIntervalUs);
+                    fits = fits > 0 ? fits - 1 : 0;
+                    fits = std::min(fits, insertCap);
+                    room = fits > m_insertTarget;
+                }
+                if (room)
+                {
+                    m_prevInsertTarget = m_insertTarget;
+                    m_expectedGapUs = presentGapUs;
+                    ++m_insertTarget;
+                    m_checkFrames = 24;
+                    m_checkSlowFrames = 0;
+                    m_checkSlowGapUs = 0;
+                    m_goodFrames = 0;
+                    Logger::debug("FG: raising insert target to x" + std::to_string(m_insertTarget + 1));
+                }
+                else
+                {
+                    m_goodFrames = 0;
+                }
+            }
+
+            // a faster app cannot show up while we are pacing it, so every few
+            // seconds present two free-running frames and re-learn its cadence
+            if (m_releaseFrames > 0)
+            {
+                if (--m_releaseFrames == 0 && m_appIntervalUs > 0 && m_refreshIntervalUs > 0)
+                {
+                    const uint64_t freeGap = std::max(m_appIntervalUs, m_refreshIntervalUs);
+                    uint32_t fits = static_cast<uint32_t>(freeGap / m_refreshIntervalUs);
+                    fits = fits > 0 ? fits - 1 : 0;
+                    fits = std::min(fits, insertCap);
+                    if (fits != m_insertTarget)
+                    {
+                        m_insertTarget = fits;
+                        m_checkFrames = 0;
+                        m_targetLatched = false;
+                        m_goodFrames = 0;
+                    }
+                    m_expectedGapUs = freeGap;
+                }
+            }
+            else if (m_checkFrames == 0 && m_insertTarget > 0 && m_refreshIntervalUs > 0
+                && (presentNow - m_lastReleaseProbe > std::chrono::seconds(12)
+                    || (m_targetLatched && m_holdUntil.time_since_epoch().count() != 0
+                        && presentNow >= m_holdUntil)))
+            {
+                m_lastReleaseProbe = presentNow;
+                m_holdUntil = {};
+                m_freeGapCount = 0;
+                m_freeGapNext = 0;
+                m_releaseFrames = 2;
+            }
+        }
+
+        if (warming && m_warmupFrames == 0)
+        {
+            // first generated frame is a raise from zero: validate it next time
+            m_expectedGapUs = m_appIntervalUs;
+            m_prevInsertTarget = 0;
+            m_insertTarget = 1;
+            m_checkFrames = m_appIntervalUs > 0 ? 24 : 0;
+            m_checkSlowFrames = 0;
+            m_checkSlowGapUs = 0;
         }
         if (m_warmupFrames > 0)
         {
-            --m_warmupFrames;
             // skipped frames never reach the host, so the next insertion must
             // not interpolate against a stale source
             m_firstSourceUpload = true;
             return presentComposited();
         }
 
-        // One extra image per generated frame. Under FIFO the acquire blocks
-        // until the display frees one, which caps the game at refresh /
-        // multiplier: that is the intended pacing, and every presented frame
-        // gets its own refresh. Without FIFO a short timeout keeps insertion
-        // from stealing the application's own vblanks.
+        // One extra image per generated frame, up to the target the cadence
+        // logic allows. Under FIFO the acquire blocks until the display frees
+        // an image; the target is chosen so that wait fits between the app's
+        // own frames instead of replacing them.
+        const uint32_t wanted = m_releaseFrames > 0 ? 0 : m_insertTarget;
         std::vector<uint32_t> acquired;
-        acquired.reserve(generatedCount);
+        acquired.reserve(wanted);
         if (m_probeCooldown > 0)
         {
             --m_probeCooldown;
         }
         else
         {
-            for (uint32_t j = 0; j < generatedCount; ++j)
+            for (uint32_t j = 0; j < wanted; ++j)
             {
                 VkSemaphore acquire = pass.innerSyncPasses[j].acquireSemaphore;
                 uint32_t acquiredIndex = 0;
@@ -868,8 +1038,8 @@ namespace VKIntox::FrameGen
                 m_ready = false;
                 return presentComposited();
             }
-            if (acquired.empty())
-                m_probeCooldown = 30;
+            if (wanted > 0 && acquired.empty())
+                m_probeCooldown = 2;
         }
         if (acquired.empty())
         {
@@ -1019,10 +1189,12 @@ namespace VKIntox::FrameGen
         }
         Logger::debug("FG: batch scheduled after host idle");
         m_probeCooldown = 0;
-        m_lastInserted = true;
         const uint32_t insertCount = static_cast<uint32_t>(acquired.size());
+        m_lastInsertCount = insertCount;
         Logger::debug("FG: insert batch " + std::to_string(insertCount) + "/"
-            + std::to_string(generatedCount) + " cooldown=" + std::to_string(m_probeCooldown));
+            + std::to_string(wanted) + " target=x" + std::to_string(m_insertTarget + 1)
+            + " good=" + std::to_string(m_goodFrames)
+            + " refresh=" + std::to_string(m_refreshIntervalUs));
 
         // generated frame i is copied from the host's destination image into
         // the i-th extra acquired image; the application's own image keeps the

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <array>
 #include <vector>
 
 #include <vulkan/vulkan.h>
@@ -135,16 +136,39 @@ namespace VKIntox
             bool m_firstSourceUpload = true;
             bool m_ready = false;
             uint64_t m_syncValue = 0;
-            // frames to pass through after the swapchain showed no headroom,
-            // so insertion cannot steal the application's own frames
+            // frames to pass through after an acquire failed, so the display
+            // can hand images back before the next attempt
             uint32_t m_probeCooldown = 0;
-            // measure the application's own cadence before inserting, and stop
-            // when inserting makes that cadence collapse
+            // measures the application's own cadence. generation is a ceiling,
+            // not a divisor: the target rises only while the app's gap stays
+            // where it was, and falls back when a raise costs the app a slot.
             std::chrono::steady_clock::time_point m_lastPresentTime{};
             uint64_t m_passIntervalUs = 0;
+            uint64_t m_appIntervalUs = 0;
+            uint64_t m_refreshIntervalUs = 0;
+            // recent free-running gaps; a median keeps a duplicate or a
+            // swapchain-recreation frame from becoming the cadence estimate
+            std::array<uint64_t, 16> m_freeGaps{};
+            uint32_t m_freeGapCount = 0;
+            uint32_t m_freeGapNext = 0;
+            uint64_t m_expectedGapUs = 0;
             uint32_t m_warmupFrames = 20;
-            uint32_t m_slowStreak = 0;
-            bool m_lastInserted = false;
+            uint32_t m_insertTarget = 1;
+            uint32_t m_prevInsertTarget = 0;
+            uint32_t m_lastInsertCount = 0;
+            uint32_t m_goodFrames = 0;
+            uint32_t m_releaseFrames = 0;
+            // a raised target is on trial for a few presents: FIFO absorbs the
+            // extra frame briefly before pushing back, so one fast gap proves
+            // nothing
+            uint32_t m_checkFrames = 0;
+            uint32_t m_checkSlowFrames = 0;
+            uint64_t m_checkSlowGapUs = 0;
+            bool m_targetLatched = false;
+            // after a raise fails, leave the queue time to drain and the app
+            // time to settle before asking for another frame
+            std::chrono::steady_clock::time_point m_holdUntil{};
+            std::chrono::steady_clock::time_point m_lastReleaseProbe{};
 
             // caller-owned exchange images, exported to the host
             VkImage m_sourceImages[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
