@@ -639,6 +639,50 @@ fx_over_ui_value() {
     printf '%s\n' "$value"
 }
 
+ensure_mako_fg() {
+    [[ "$METHOD" == "flatpak" ]] && return 0
+    if [[ "$(uname -m)" != "x86_64" ]]; then
+        say "frame generation host is x86_64-only; skipping"
+        return 0
+    fi
+    local lib dir base="" tmp runner=() source file ref="${VKINTOX_FG_REF:-framegen}"
+    lib=$(ldconfig -p 2>/dev/null | awk '/libvkintox\.so/{print $NF; exit}')
+    if [[ -z "$lib" ]]; then
+        lib=$(find /usr/lib /usr/lib64 /usr/local/lib -name libvkintox.so 2>/dev/null | head -1)
+    fi
+    [[ -n "$lib" ]] || return 0
+    dir="$(dirname "$lib")/mako-fg"
+    if [[ -x "$dir/mako-fg-host" && -s "$dir/model/weights.bin" ]]; then
+        return 0
+    fi
+    if ((DRY_RUN)); then
+        say "dry run: would seed the MAKO frame generation package into $dir"
+        return 0
+    fi
+    section "frame generation"
+    tmp="$TMP_DIR/mako-fg"
+    mkdir -p "$tmp/model"
+    for source in "https://git.buwryy.net/$REPO/raw/branch/$ref/src/framegen/mako-fg" \
+                  "https://raw.githubusercontent.com/$REPO/$ref/src/framegen/mako-fg"; do
+        if curl -fsSL --retry 2 -o "$tmp/mako-fg-host" "$source/mako-fg-host"; then
+            base="$source"
+            break
+        fi
+    done
+    [[ -n "$base" ]] || die "could not download the MAKO frame generation package"
+    for file in version.json model/weights.bin model/ops.spv model/transport.spv model/mixture.spv; do
+        run_progress "fetching MAKO $file" curl -fsSL --retry 3 --retry-delay 1 -o "$tmp/$file" "$base/$file"
+    done
+    ((EUID != 0)) && runner=(sudo)
+    "${runner[@]}" install -d "$dir/model"
+    "${runner[@]}" install -m 755 "$tmp/mako-fg-host" "$dir/mako-fg-host"
+    "${runner[@]}" install -m 644 "$tmp/version.json" "$dir/version.json"
+    for file in weights.bin ops.spv transport.spv mixture.spv; do
+        "${runner[@]}" install -m 644 "$tmp/model/$file" "$dir/model/$file"
+    done
+    ok "MAKO frame generation package installed"
+}
+
 seed_fx_over_ui() {
     [[ -n "${APP_CONFIG:-}" ]] || return 0
     local config="$APP_CONFIG/VKIntox.conf" value
@@ -1208,6 +1252,7 @@ else
         fi
     fi
     if ((DRY_RUN == 0)); then
+        ensure_mako_fg
         write_marker
     fi
 fi
