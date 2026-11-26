@@ -54,6 +54,9 @@ namespace VKIntox
             ImGui::SetCursorScreenPos(ImVec2(textX, heroRow.Min.y + titleSize.y + 2.0f * d));
             UI::TextSupport("Generate frames using MAKO. This forces FIFO frame presenting.");
             ImGui::SetCursorScreenPos(rowEnd);
+            // SetCursorScreenPos alone may leave the cursor past the last
+            // submitted item; submit a dummy so ImGui can grow the boundaries
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
 
         if (enabled)
