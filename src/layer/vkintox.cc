@@ -1756,20 +1756,28 @@ namespace VKIntox
         logicalDevice->imguiOverlay->updateState(std::move(overlayState));
     }
 
-    // Submit overlay command buffer if visible, returns semaphore to wait on
+    // Submit the pre-overlay capture (if asked) and the overlay command buffer,
+    // in that order. returns semaphore to wait on
     VkResult submitOverlayFrame(LogicalDevice* logicalDevice, LogicalSwapchain* swapchain,
-                                uint32_t index, VkSemaphore& outSemaphore)
+                                uint32_t index, VkCommandBuffer preCommand, VkSemaphore& outSemaphore)
     {
-        outSemaphore = swapchain->semaphores[index];  // Default: wait on effects semaphore
+        // Nothing is drawn: the frame the caller gets back still waits on
+        // whatever produced the image it is about to present.
+        outSemaphore = swapchain->semaphores[index];
 
-        if (!logicalDevice->imguiOverlay)
-            return VK_SUCCESS;
+        VkCommandBuffer overlayCmd = VK_NULL_HANDLE;
+        if (logicalDevice->imguiOverlay)
+            overlayCmd = logicalDevice->imguiOverlay->recordFrame(
+                index, swapchain->images[index], swapchain->imageViews[index],
+                swapchain->imageExtent.width, swapchain->imageExtent.height);
 
-        VkCommandBuffer overlayCmd = logicalDevice->imguiOverlay->recordFrame(
-            index, swapchain->images[index], swapchain->imageViews[index],
-            swapchain->imageExtent.width, swapchain->imageExtent.height);
-
-        if (overlayCmd == VK_NULL_HANDLE)
+        VkCommandBuffer commandBuffers[2];
+        uint32_t commandCount = 0;
+        if (preCommand != VK_NULL_HANDLE)
+            commandBuffers[commandCount++] = preCommand;
+        if (overlayCmd != VK_NULL_HANDLE)
+            commandBuffers[commandCount++] = overlayCmd;
+        if (commandCount == 0)
             return VK_SUCCESS;
 
         // The wait must cover the capture blit's TRANSFER stage as well as the
@@ -1781,13 +1789,16 @@ namespace VKIntox
         overlaySubmit.waitSemaphoreCount = 1;
         overlaySubmit.pWaitSemaphores = &swapchain->semaphores[index];
         overlaySubmit.pWaitDstStageMask = &overlayWaitStage;
-        overlaySubmit.commandBufferCount = 1;
-        overlaySubmit.pCommandBuffers = &overlayCmd;
+        overlaySubmit.commandBufferCount = commandCount;
+        overlaySubmit.pCommandBuffers = commandBuffers;
         overlaySubmit.signalSemaphoreCount = 1;
         overlaySubmit.pSignalSemaphores = &swapchain->overlaySemaphores[index];
 
-        // Use fence to track command buffer completion (prevents reuse while in flight)
-        VkFence overlayFence = logicalDevice->imguiOverlay->getCommandBufferFence(index);
+        // Use fence to track the overlay command buffer's completion (prevents
+        // reuse while in flight); the capture buffer is recorded once and is
+        // safe to submit again as its previous use has completed by now.
+        VkFence overlayFence = overlayCmd != VK_NULL_HANDLE && logicalDevice->imguiOverlay
+            ? logicalDevice->imguiOverlay->getCommandBufferFence(index) : VK_NULL_HANDLE;
         recordSubmittedBatch(logicalDevice, "overlay", index,
                              swapchain->semaphores[index], swapchain->overlaySemaphores[index], overlayFence);
         VkResult vr = logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &overlaySubmit, overlayFence);
@@ -4243,35 +4254,30 @@ namespace VKIntox
 
             maybeDumpDepthResolveImage(logicalDevice, logicalSwapchain, index, logicalDevice->queue);
 
-            // Generate from the HUD-free scene when protection captured one
-            // for this image: the model then never sees the app HUD or the
-            // VKIntox overlay, and the overlay is stamped back onto every
-            // generated frame. Without a snapshot the app's composited image
-            // is the source; the overlay is already in it and is not replayed.
+            // The generator interpolates the app's frame as it looks before
+            // the VKIntox overlay: game HUD and effects stay in, the overlay
+            // stays out. It is replayed onto every generated frame below, so
+            // the game HUD never drops to half rate and the overlay never
+            // reaches the model.
             fgSourceReady = false;
             fgReplayOverlay = false;
-            if (logicalSwapchain->fg && settingsManager.getFgEnabled()
-                && pPresentInfo->swapchainCount == 1)
+            VkCommandBuffer fgSourceCopy = VK_NULL_HANDLE;
+            if (logicalSwapchain->fg && settingsManager.getFgEnabled())
             {
-                const VkImage hudScene = Hud::sceneSnapshot(logicalSwapchain, index);
-                if (hudScene != VK_NULL_HANDLE)
+                fgSourceCopy = logicalSwapchain->fg->copySourceCommand(index);
+                if (pPresentInfo->swapchainCount == 1 && fgSourceCopy != VK_NULL_HANDLE)
                 {
-                    fgSourceImage = hudScene;
-                    fgSourceLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                    fgSourceImage = logicalSwapchain->fg->frameSourceImage(index);
+                    fgSourceLayout = VK_IMAGE_LAYOUT_GENERAL;
                     fgSourceReady = true;
                     fgReplayOverlay = true;
-                }
-                else
-                {
-                    fgSourceImage = logicalSwapchain->images[index];
-                    fgSourceLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-                    fgSourceReady = true;
                 }
             }
             VkSemaphore finalSemaphore;
             try
             {
-                vr = submitOverlayFrame(logicalDevice, logicalSwapchain, index, finalSemaphore);
+                vr = submitOverlayFrame(logicalDevice, logicalSwapchain, index,
+                                        fgSourceCopy, finalSemaphore);
             }
             catch (const std::exception& e)
             {

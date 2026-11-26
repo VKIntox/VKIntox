@@ -91,6 +91,68 @@ namespace VKIntox::FrameGen
             return semaphore;
         }
 
+        // a plain device-local image for the pre-overlay copy; no sharing or
+        // export, it never leaves the layer's queue
+        bool createLocalImage(LogicalDevice* logicalDevice, uint32_t width, uint32_t height,
+                              VkFormat format, VkImageUsageFlags usage,
+                              VkImage& outImage, VkDeviceMemory& outMemory)
+        {
+            VkImageCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = format;
+            info.extent = {width, height, 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = usage;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            if (logicalDevice->vkd.CreateImage(logicalDevice->device, &info, nullptr, &outImage) != VK_SUCCESS)
+                return false;
+
+            VkMemoryRequirements requirements{};
+            logicalDevice->vkd.GetImageMemoryRequirements(logicalDevice->device, outImage, &requirements);
+            VkPhysicalDeviceMemoryProperties memoryProps{};
+            logicalDevice->vki.GetPhysicalDeviceMemoryProperties(logicalDevice->physicalDevice, &memoryProps);
+            int32_t memoryType = -1;
+            for (uint32_t i = 0; i < memoryProps.memoryTypeCount; ++i)
+            {
+                if ((requirements.memoryTypeBits & (1u << i))
+                    && (memoryProps.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+                {
+                    memoryType = static_cast<int32_t>(i);
+                    break;
+                }
+            }
+            if (memoryType < 0)
+            {
+                logicalDevice->vkd.DestroyImage(logicalDevice->device, outImage, nullptr);
+                outImage = VK_NULL_HANDLE;
+                return false;
+            }
+            VkMemoryAllocateInfo alloc{};
+            alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            alloc.allocationSize = requirements.size;
+            alloc.memoryTypeIndex = static_cast<uint32_t>(memoryType);
+            if (logicalDevice->vkd.AllocateMemory(logicalDevice->device, &alloc, nullptr, &outMemory) != VK_SUCCESS)
+            {
+                logicalDevice->vkd.DestroyImage(logicalDevice->device, outImage, nullptr);
+                outImage = VK_NULL_HANDLE;
+                return false;
+            }
+            if (logicalDevice->vkd.BindImageMemory(logicalDevice->device, outImage, outMemory, 0) != VK_SUCCESS)
+            {
+                logicalDevice->vkd.FreeMemory(logicalDevice->device, outMemory, nullptr);
+                logicalDevice->vkd.DestroyImage(logicalDevice->device, outImage, nullptr);
+                outImage = VK_NULL_HANDLE;
+                outMemory = VK_NULL_HANDLE;
+                return false;
+            }
+            return true;
+        }
+
         bool createExportedImage(LogicalDevice* logicalDevice,
                                  uint32_t width, uint32_t height,
                                  VkFormat format, VkImageUsageFlags usage,
@@ -421,6 +483,62 @@ namespace VKIntox::FrameGen
         {
             Logger::err("FG: command pool creation failed");
             return false;
+        }
+
+        // The generator interpolates the app's frame as it looks before the
+        // VKIntox overlay exists. The copy runs between the effect submit and
+        // the overlay submit, so the game HUD and effects stay in the source.
+        m_frameSourceImages.assign(swapchain->imageCount, VK_NULL_HANDLE);
+        m_frameSourceMemories.assign(swapchain->imageCount, VK_NULL_HANDLE);
+        m_frameCopyCmdbufs.assign(swapchain->imageCount, VK_NULL_HANDLE);
+        for (uint32_t i = 0; i < swapchain->imageCount; ++i)
+        {
+            if (!createLocalImage(logicalDevice, m_extent.width, m_extent.height, swapchain->format,
+                                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  m_frameSourceImages[i], m_frameSourceMemories[i]))
+            {
+                Logger::err("FG: pre-overlay source image creation failed");
+                return false;
+            }
+            VkCommandBufferAllocateInfo copyAlloc{};
+            copyAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            copyAlloc.commandPool = m_commandPool;
+            copyAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            copyAlloc.commandBufferCount = 1;
+            if (logicalDevice->vkd.AllocateCommandBuffers(logicalDevice->device, &copyAlloc,
+                                                          &m_frameCopyCmdbufs[i]) != VK_SUCCESS)
+                return false;
+            VkCommandBufferBeginInfo cbBegin{};
+            cbBegin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            if (logicalDevice->vkd.BeginCommandBuffer(m_frameCopyCmdbufs[i], &cbBegin) != VK_SUCCESS)
+                return false;
+            VkImageMemoryBarrier preCopy[2] = {
+                imageBarrier(swapchain->images[i],
+                             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                             VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                             VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
+                imageBarrier(m_frameSourceImages[i], VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT,
+                             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                             VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
+            };
+            logicalDevice->vkd.CmdPipelineBarrier(m_frameCopyCmdbufs[i], VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                                  VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                                                  2, preCopy);
+            recordBlit(logicalDevice, m_frameCopyCmdbufs[i], swapchain->images[i],
+                       m_frameSourceImages[i], m_extent);
+            VkImageMemoryBarrier postCopy[2] = {
+                imageBarrier(swapchain->images[i], VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_NONE,
+                             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                             VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
+                imageBarrier(m_frameSourceImages[i], VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+                             VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED),
+            };
+            logicalDevice->vkd.CmdPipelineBarrier(m_frameCopyCmdbufs[i], VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                  VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                                                  2, postCopy);
+            if (logicalDevice->vkd.EndCommandBuffer(m_frameCopyCmdbufs[i]) != VK_SUCCESS)
+                return false;
         }
 
         m_syncPasses.resize(swapchain->imageCount);
@@ -1042,6 +1160,17 @@ namespace VKIntox::FrameGen
         LogicalDevice* logicalDevice = m_logicalDevice;
         if (logicalDevice == nullptr)
             return;
+
+        for (size_t i = 0; i < m_frameSourceImages.size(); ++i)
+        {
+            if (m_frameSourceImages[i] != VK_NULL_HANDLE)
+                logicalDevice->vkd.DestroyImage(logicalDevice->device, m_frameSourceImages[i], nullptr);
+            if (m_frameSourceMemories[i] != VK_NULL_HANDLE)
+                logicalDevice->vkd.FreeMemory(logicalDevice->device, m_frameSourceMemories[i], nullptr);
+        }
+        m_frameSourceImages.clear();
+        m_frameSourceMemories.clear();
+        m_frameCopyCmdbufs.clear();
 
         for (auto& pass : m_syncPasses)
         {

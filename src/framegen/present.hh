@@ -80,7 +80,21 @@ namespace VKIntox
                              bool replayOverlay,
                              const VkPresentInfoKHR* originalPresentInfo);
 
+            // The recorded command buffer that copies the app's composited
+            // image into its private pre-overlay image. It must be submitted
+            // after the effect pass and before the overlay draw.
+            VkCommandBuffer copySourceCommand(uint32_t index) const
+            {
+                return m_ready && index < m_frameCopyCmdbufs.size()
+                    ? m_frameCopyCmdbufs[index] : VK_NULL_HANDLE;
+            }
+
             uint32_t multiplier() const { return m_multiplier; }
+
+            VkImage frameSourceImage(uint32_t index) const
+            {
+                return index < m_frameSourceImages.size() ? m_frameSourceImages[index] : VK_NULL_HANDLE;
+            }
 
         private:
             struct InnerSyncPass
@@ -106,6 +120,9 @@ namespace VKIntox
 
             LogicalDevice* m_logicalDevice = nullptr;
             uint32_t m_multiplier = 2;
+            std::vector<VkImage> m_frameSourceImages;
+            std::vector<VkDeviceMemory> m_frameSourceMemories;
+            std::vector<VkCommandBuffer> m_frameCopyCmdbufs;
             VkExtent2D m_extent = {0, 0};
             // FIFO: the presentation engine shows one queued image per
             // refresh, so it paces the generated frames by itself

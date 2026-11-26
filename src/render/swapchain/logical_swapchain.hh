@@ -50,15 +50,6 @@ namespace VKIntox
         std::vector<bool>                 sceneInitialized;
         std::vector<bool>                 finalInitialized;
         std::vector<bool>                 snapshotValid;
-
-        // sceneImages[index] only holds a HUD-free scene after the split final
-        // pass captured one for this slot. Generated frames interpolate from it
-        // when it is ready and fall back to the app image otherwise.
-        bool sceneReady(uint32_t index) const
-        {
-            return index < sceneImages.size() && index < snapshotValid.size()
-                && snapshotValid[index] && sceneImages[index] != VK_NULL_HANDLE;
-        }
         std::vector<VkImage>              compositeImages;
         std::vector<VkImageView>          compositeViews;
         std::vector<VkDeviceMemory>       compositeMemory;

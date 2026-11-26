@@ -440,16 +440,6 @@ namespace VKIntox::Hud
         return value;
     }
 
-    VkImage sceneSnapshot(LogicalSwapchain* logicalSwapchain, uint32_t index)
-    {
-        if (!logicalSwapchain)
-            return VK_NULL_HANDLE;
-        const HudProtectionState& hud = logicalSwapchain->hud;
-        if (!hud.initialized || !hud.hudPreserveValid || !hud.sceneReady(index))
-            return VK_NULL_HANDLE;
-        return hud.sceneImages[index];
-    }
-
     bool init(LogicalSwapchain* swapchain)
     {
         if (!enabled() || !swapchain || !swapchain->logicalDevice)

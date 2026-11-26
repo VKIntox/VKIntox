@@ -14,10 +14,6 @@ namespace VKIntox::Hud
     bool init(LogicalSwapchain* logicalSwapchain);
     void destroy(LogicalSwapchain* logicalSwapchain);
 
-    // The HUD-free scene captured for this image, in SHADER_READ_ONLY layout,
-    // or VK_NULL_HANDLE when protection has not captured one for the slot.
-    VkImage sceneSnapshot(LogicalSwapchain* logicalSwapchain, uint32_t index);
-
     // Builds the chain the present path records: scene-only input first when
     // protection is live, then the user effects, then the HUD composite and
     // its transfer to the real swapchain image.
