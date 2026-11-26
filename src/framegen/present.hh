@@ -74,6 +74,9 @@ namespace VKIntox
                              uint32_t index,
                              VkQueue queue,
                              VkSemaphore waitSemaphore,
+                             VkImage sourceImage,
+                             VkImageLayout sourceLayout,
+                             bool sourceReady,
                              bool replayOverlay,
                              const VkPresentInfoKHR* originalPresentInfo);
 

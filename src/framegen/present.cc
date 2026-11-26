@@ -577,6 +577,9 @@ namespace VKIntox::FrameGen
                                   uint32_t index,
                                   VkQueue queue,
                                   VkSemaphore waitSemaphore,
+                                  VkImage sourceImage,
+                                  VkImageLayout sourceLayout,
+                                  bool sourceReady,
                                   bool replayOverlay,
                                   const VkPresentInfoKHR* originalPresentInfo)
     {
@@ -596,10 +599,12 @@ namespace VKIntox::FrameGen
         const auto presentComposited = [&]() -> VkResult {
             return logicalDevice->vkd.QueuePresentKHR(queue, &fallback);
         };
+        if (!sourceReady || sourceImage == VK_NULL_HANDLE)
+            return presentComposited();
         if (!m_ready || index >= m_syncPasses.size() || m_engineContext == nullptr)
             return presentComposited();
         SyncPass& pass = m_syncPasses[index];
-        VkImage& presentImage = swapchain->images[index];
+        VkImage presentImage = sourceImage;
         VkImage source = m_sourceImages[m_sourceIndex];
         VkImage previousSource = m_sourceImages[m_sourceIndex ^ 1];
         const uint32_t generatedCount = m_multiplier - 1;
@@ -779,7 +784,7 @@ namespace VKIntox::FrameGen
         }
         uploadBarriers[uploadBarrierCount++] =
             imageBarrier(presentImage, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_READ_BIT,
-                         VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_GENERAL,
+                         sourceLayout, VK_IMAGE_LAYOUT_GENERAL,
                          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
         logicalDevice->vkd.CmdPipelineBarrier(uploadCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, transfer,
                                               0, 0, nullptr, 0, nullptr,
@@ -800,11 +805,18 @@ namespace VKIntox::FrameGen
                              VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                              ours, external);
         }
+        // the source is the app's image (restore PRESENT_SRC) or the HUD-free
+        // scene (restore SHADER_READ_ONLY, which the effect chain samples)
         backBarriers[backBarrierCount++] =
-            imageBarrier(presentImage, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_NONE,
-                         VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            imageBarrier(presentImage, VK_ACCESS_TRANSFER_READ_BIT,
+                         sourceLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                             ? VK_ACCESS_SHADER_READ_BIT : VK_ACCESS_NONE,
+                         VK_IMAGE_LAYOUT_GENERAL, sourceLayout,
                          VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
-        logicalDevice->vkd.CmdPipelineBarrier(uploadCmd, transfer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        logicalDevice->vkd.CmdPipelineBarrier(uploadCmd, transfer,
+                                              sourceLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                  ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                                                  : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                                               0, 0, nullptr, 0, nullptr,
                                               backBarrierCount, backBarriers);
         logicalDevice->vkd.EndCommandBuffer(uploadCmd);

@@ -4115,6 +4115,10 @@ namespace VKIntox
         presentSemaphores.reserve(pPresentInfo->swapchainCount);
         waitStages.assign(pPresentInfo->waitSemaphoreCount, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
 
+        VkImage fgSourceImage = VK_NULL_HANDLE;
+        VkImageLayout fgSourceLayout = VK_IMAGE_LAYOUT_GENERAL;
+        bool fgSourceReady = false;
+        bool fgReplayOverlay = false;
         for (unsigned int i = 0; i < pPresentInfo->swapchainCount; i++)
         {
             LogicalSwapchain* logicalSwapchain = presentSwapchains[i].get();
@@ -4239,6 +4243,31 @@ namespace VKIntox
 
             maybeDumpDepthResolveImage(logicalDevice, logicalSwapchain, index, logicalDevice->queue);
 
+            // Generate from the HUD-free scene when protection captured one
+            // for this image: the model then never sees the app HUD or the
+            // VKIntox overlay, and the overlay is stamped back onto every
+            // generated frame. Without a snapshot the app's composited image
+            // is the source; the overlay is already in it and is not replayed.
+            fgSourceReady = false;
+            fgReplayOverlay = false;
+            if (logicalSwapchain->fg && settingsManager.getFgEnabled()
+                && pPresentInfo->swapchainCount == 1)
+            {
+                const VkImage hudScene = Hud::sceneSnapshot(logicalSwapchain, index);
+                if (hudScene != VK_NULL_HANDLE)
+                {
+                    fgSourceImage = hudScene;
+                    fgSourceLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                    fgSourceReady = true;
+                    fgReplayOverlay = true;
+                }
+                else
+                {
+                    fgSourceImage = logicalSwapchain->images[index];
+                    fgSourceLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                    fgSourceReady = true;
+                }
+            }
             VkSemaphore finalSemaphore;
             try
             {
@@ -4329,6 +4358,8 @@ namespace VKIntox
                     if (logicalDevice->vkd.QueueWaitIdle)
                         logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
                     logicalSwapchain->fg.reset();
+                    fgSourceReady = false;
+                    fgSourceImage = VK_NULL_HANDLE;
                     logicalSwapchain->fgProfile = {};
                     logicalSwapchain->fgInitFailed = false;
                     logicalSwapchain->fgStale = false;
@@ -4374,7 +4405,8 @@ namespace VKIntox
                     VkResult fgResult = logicalSwapchain->fg->present(
                         logicalDevice, logicalSwapchain,
                         pPresentInfo->pImageIndices[0],
-                        queue, compositedWait, true, pPresentInfo);
+                        queue, compositedWait, fgSourceImage, fgSourceLayout, fgSourceReady,
+                        fgReplayOverlay, pPresentInfo);
                     // FG was switched on while the swapchain ran MAILBOX or
                     // IMMEDIATE: ask once for a recreate so the create hook
                     // can make it FIFO. Until then the CPU-paced path runs.
