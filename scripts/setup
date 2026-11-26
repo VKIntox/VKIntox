@@ -1182,7 +1182,9 @@ else
                 INSTALL_CMD=(env DEBIAN_FRONTEND=noninteractive apt-get install -y "$ASSET_PATH")
                 ;;
             arch)
-                INSTALL_CMD=(pacman -U --noconfirm "$ASSET_PATH")
+                # framegen builds before 0.3.0 fetched the MAKO package beside
+                # the layer outside pacman; the package owns those paths now
+                INSTALL_CMD=(pacman -U --noconfirm --overwrite '/usr/lib/mako-fg/*' "$ASSET_PATH")
                 ;;
         esac
         if ((EUID != 0)); then
