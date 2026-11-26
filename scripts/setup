@@ -760,6 +760,27 @@ PY
     fi
 }
 
+seed_builtin_shaders() {
+    local dir="$SHADERS_DIR/VKIntox" base="" source file
+    if ((DRY_RUN)); then
+        say "dry run: would install the VKIntox built-in shaders"
+        return 0
+    fi
+    mkdir -p "$dir"
+    for source in "https://git.buwryy.net/VKIntox/VKIntoxEffects/raw/branch/main" \
+                  "https://raw.githubusercontent.com/VKIntox/VKIntoxEffects/main"; do
+        if curl -fsSL --retry 2 -o "$dir/IntoxCommon.fxh" "$source/IntoxCommon.fxh"; then
+            base="$source"
+            break
+        fi
+    done
+    [[ -n "$base" ]] || { warn "couldn't fetch the VKIntox built-in shaders"; return 0; }
+    for file in MSAA.fx ExponentialFog.fx IntoxMXAO.fx IntoxSSR.fx IntoxRimlight.fx IntoxDepthColorCorrection.fx; do
+        run_progress "fetching $file" curl -fsSL --retry 3 --retry-delay 1 -o "$dir/$file" "$base/$file"
+    done
+    ok "VKIntox built-in shaders installed"
+}
+
 ensure_mako_fg() {
     [[ "$METHOD" == "flatpak" ]] && return 0
     if [[ "$(uname -m)" != "x86_64" ]]; then
@@ -1316,6 +1337,7 @@ if [[ "$WANT_EFFECTS" == "yes" ]]; then
 else
     say "skipping ReShade effects and textures"
 fi
+seed_builtin_shaders
 
 if ((DRY_RUN)); then
     finish "dry run complete"
