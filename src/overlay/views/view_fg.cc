@@ -24,18 +24,37 @@ namespace VKIntox
         ImGui::M3CardBegin("fg_card");
 
         bool enabled = settingsManager.getFgEnabled();
-        if (ImGui::M3HeroSwitch(Icon::MaskedTransitionsUtf8, "Generate frames", "##fg_enabled", &enabled,
+        ImRect heroRow;
+        if (ImGui::M3HeroSwitch(Icon::MaskedTransitionsUtf8, "", "##fg_enabled", &enabled,
                                 "Generated frames are inserted between the game's own frames.\n"
                                 "Changes rebuild the generator between frames.",
-                                1.15f))
+                                1.15f, 0.0f, &heroRow))
         {
             settingsManager.setFgEnabled(enabled);
             saveSettings();
         }
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 6.0f * ImGuiM3GetMetrics().density);
-        ImGui::Indent(72.0f * ImGuiM3GetMetrics().density);
-        UI::TextSupport("Generate frames using MAKO. This forces FIFO frame presenting.");
-        ImGui::Unindent(72.0f * ImGuiM3GetMetrics().density);
+
+        // the title and its description live at the top of the hero row, so the
+        // description sits directly under the title instead of under the whole
+        // 56px icon row; the icon and switch stay centered
+        {
+            const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
+            const float d = m.density;
+            const float titlePx = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge).size * d;
+            ImFont* titleFont = ImGuiM3FontBold();
+            ImGui::PushFont(titleFont, titlePx);
+            const ImVec2 titleSize = ImGui::CalcTextSize("Generate frames");
+            ImGui::PopFont();
+
+            const ImVec2 rowEnd = ImGui::GetCursorScreenPos();
+            const float textX = heroRow.Min.x + 72.0f * d;
+            ImGui::GetWindowDrawList()->AddText(titleFont, titlePx,
+                ImVec2(textX, heroRow.Min.y),
+                ImGuiM3ColorU32(ImGuiM3Role_OnSurface), "Generate frames");
+            ImGui::SetCursorScreenPos(ImVec2(textX, heroRow.Min.y + titleSize.y + 2.0f * d));
+            UI::TextSupport("Generate frames using MAKO. This forces FIFO frame presenting.");
+            ImGui::SetCursorScreenPos(rowEnd);
+        }
 
         if (enabled)
         {
