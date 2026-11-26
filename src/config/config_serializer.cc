@@ -313,8 +313,6 @@ namespace VKIntox
                 settings.fgHalfPrecision = (value == "true" || value == "1");
             else if (key == "fgModelPath")
                 settings.fgModelPath = value;
-            else if (key == "fgForceVsync")
-                settings.fgForceVsync = (value == "true" || value == "1");
             else if (key == "fpsCorner")
             {
                 if (value == "top-left") settings.fpsCorner = 0;
@@ -432,7 +430,6 @@ namespace VKIntox
         file << "fgPerformanceMode = " << (settings.fgPerformanceMode ? "true" : "false") << "\n";
         file << "fgHalfPrecision = " << (settings.fgHalfPrecision ? "true" : "false") << "\n";
         file << "fgModelPath = " << settings.fgModelPath << "\n";
-        file << "fgForceVsync = " << (settings.fgForceVsync ? "true" : "false") << "\n";
         {
             static const char* const kCorners[] = {"top-left", "top-right", "bottom-left", "bottom-right"};
             file << "fpsCorner = " << kCorners[std::clamp(settings.fpsCorner, 0, 3)] << "\n";

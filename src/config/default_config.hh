@@ -83,7 +83,6 @@ namespace VKIntox::DefaultConfig
         settings.fgPerformanceMode = false;
         settings.fgHalfPrecision = false;
         settings.fgModelPath.clear();
-        settings.fgForceVsync = true;
         settings.fpsCorner = 1;     // top-right
         settings.overlayX = 0;
         settings.overlayY = 0;

@@ -108,7 +108,7 @@ TODOS for v0.3.0 framegen
   92 gen in Roseline/TTD3) while motion stayed the same because
   1. the swapchain kept the app's MAILBOX/IMMEDIATE mode, so the real frame
      replaced or tore over the generated one before scanout; now FIFO is
-     forced while FG is on (fgForceVsync, also patched per present for
+     forced while FG is on (also patched per present for
      swapchain_maintenance1 apps such as DXVK);
   2. the cadence back-off read FIFO's intended back-pressure (game at
      refresh / multiplier) as "no headroom" and toggled FG off for 120

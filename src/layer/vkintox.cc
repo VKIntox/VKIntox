@@ -2504,7 +2504,7 @@ namespace VKIntox
         // have somewhere to land, and allow blitting into the extra images.
         FrameGen::FgProfile fgProfile;
         fgProfile.enabled   = settingsManager.getFgEnabled();
-        fgProfile.forceVsync = settingsManager.getFgForceVsync();
+        fgProfile.forceVsync = true;
         fgProfile.multiplier = static_cast<uint32_t>(settingsManager.getFgMultiplier());
         fgProfile.flowScale = settingsManager.getFgFlowScale();
         fgProfile.performanceMode = settingsManager.getFgPerformanceMode();
@@ -4290,7 +4290,7 @@ namespace VKIntox
                 logicalSwapchain->fgPresentCount++;
                 FrameGen::FgProfile profile;
                 profile.enabled         = settingsManager.getFgEnabled();
-                profile.forceVsync      = settingsManager.getFgForceVsync();
+                profile.forceVsync      = true;
                 static thread_local VkSwapchainKHR fgLoggedSwapchain = VK_NULL_HANDLE;
                 if (pPresentInfo->pSwapchains[0] != fgLoggedSwapchain
                     || (logicalSwapchain->fgPresentCount % 300) == 0)

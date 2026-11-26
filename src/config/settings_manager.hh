@@ -163,16 +163,6 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             settings.fgModelPath = value;
         }
-        bool getFgForceVsync() const
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            return settings.fgForceVsync;
-        }
-        void setFgForceVsync(bool value)
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            settings.fgForceVsync = value;
-        }
         bool getFpsExtended() const
         {
             std::lock_guard<std::mutex> lock(mutex);

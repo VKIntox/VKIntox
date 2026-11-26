@@ -71,7 +71,6 @@ namespace VKIntox
         bool fgPerformanceMode;
         bool fgHalfPrecision;
         std::string fgModelPath; // path to the Lossless Scaling the frame generation engine.dll
-        bool fgForceVsync;       // force FIFO while generating so inserted frames are shown
         int fpsCorner;       // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
         // Overlay window geometry in framebuffer pixels, kept across launches.
         // A width/height of 0 means "never placed": use the default layout.
