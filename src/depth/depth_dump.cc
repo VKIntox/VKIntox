@@ -112,7 +112,7 @@ namespace VKIntox
 
         // grayscale 16-bit, deflate in stored blocks so no zlib is needed to
         // write it. bigger file, still a plain PNG to every reader.
-        std::string encodeDepthPng(const std::vector<uint16_t>& depth, uint32_t width, uint32_t height,
+        [[maybe_unused]] std::string encodeDepthPng(const std::vector<uint16_t>& depth, uint32_t width, uint32_t height,
                                    const std::string& metaText)
         {
             std::string raw;
@@ -227,7 +227,7 @@ namespace VKIntox
 
         // depth as ReShade sees it: a 0..1 float channel. D24 keeps its range
         // scaled down, D16 maps one-to-one, float clamped.
-        void convertTexels(const uint8_t* src, size_t rowPitch, uint32_t width, uint32_t height,
+        [[maybe_unused]] void convertTexels(const uint8_t* src, size_t rowPitch, uint32_t width, uint32_t height,
                            VkFormat format, std::vector<uint16_t>& out)
         {
             out.assign(size_t(width) * height, 0);
