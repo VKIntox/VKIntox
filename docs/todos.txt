@@ -119,3 +119,9 @@ TODOS for v0.3.0 framegen
      presented last.
   verify with vk3dtriangle --fps-limit 60, x2, on a 120 Hz panel: expect a
   steady 120 on the pill and visibly smoother motion than FG off.
+
+- framegen still applies to the VKIntox overlay and the game HUD, so generated
+  frames interpolate UI. needs a separate overlay/HUD-excluded path.
+- forcing FIFO may crash some games. do not undo the FIFO swapchain when
+  framegen is toggled off; leaving it forced is deliberate for stability.
+  investigate the crash reports before relaxing it.
