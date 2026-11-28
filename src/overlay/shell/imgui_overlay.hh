@@ -317,6 +317,24 @@ namespace VKIntox
         };
         std::vector<ReplayFramebuffer> replayFramebuffers;
         void destroyReplayFramebuffers();
+
+        // One full-resolution overlay snapshot used only while the shell opens
+        // or closes. The live ImGui layout is never resized for the transition.
+        VkImage snapshotImage = VK_NULL_HANDLE;
+        VkDeviceMemory snapshotMemory = VK_NULL_HANDLE;
+        VkImageView snapshotView = VK_NULL_HANDLE;
+        VkFramebuffer snapshotFramebuffer = VK_NULL_HANDLE;
+        VkRenderPass snapshotRenderPass = VK_NULL_HANDLE;
+        VkSampler snapshotSampler = VK_NULL_HANDLE;
+        VkDescriptorSet snapshotTexture = VK_NULL_HANDLE;
+        uint32_t snapshotWidth = 0;
+        uint32_t snapshotHeight = 0;
+        ImVec4 snapshotRect = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        bool snapshotReady = false;
+        bool snapshotValid = false;
+        bool ensureSnapshotResources(uint32_t width, uint32_t height);
+        void releaseSnapshotResources(bool deferred = false);
+
         VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
         uint32_t imageCount = 0;
         uint32_t framebufferWidth = 0;   // Dimensions used to create framebuffers
@@ -414,6 +432,7 @@ namespace VKIntox
         // Shell appear/disappear. Mirrors the dialog motion exactly: same
         // 0.28s clock, same rise, same bezier, run backwards on hide.
         float  shellAlpha = 1.0f;
+        float  shellScale = 1.0f;
         double shellAnimStart = -1000.0;
         bool   shellAnimTarget = false;
         bool   shellBaseValid = false;

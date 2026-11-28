@@ -111,12 +111,19 @@ namespace VKIntox
         constexpr uint32_t kBlurDownsample = 2;
         constexpr float    kBlurSigma = 2.0f;
 
-        // Shell appear/disappear. Same clock, rise and bezier as the M3 dialogs
-        // so the overlay opens and closes the way every popup does.
-        constexpr float kShellAnimSeconds = 0.28f;
-        constexpr float kShellAnimDropDp  = 100.0f;
-        constexpr float kShellBezX1 = 0.05f, kShellBezY1 = 0.90f;
-        constexpr float kShellBezX2 = 0.10f, kShellBezY2 = 1.06f;
+        // Mango zoom/fade timings. scale and opacity use independent curves.
+        constexpr float kShellOpenSeconds = 0.32f;
+        constexpr float kShellCloseSeconds = 0.26f;
+        constexpr float kShellOpenScale = 0.85f;
+        constexpr float kShellCloseScale = 0.0f;
+        constexpr float kShellOpenX1 = 0.05f, kShellOpenY1 = 0.90f;
+        constexpr float kShellOpenX2 = 0.10f, kShellOpenY2 = 1.12f;
+        constexpr float kShellCloseX1 = 0.05f, kShellCloseY1 = 0.70f;
+        constexpr float kShellCloseX2 = 0.10f, kShellCloseY2 = 1.00f;
+        constexpr float kShellFadeInX1 = 0.05f, kShellFadeInY1 = 0.70f;
+        constexpr float kShellFadeInX2 = 0.10f, kShellFadeInY2 = 1.00f;
+        constexpr float kShellFadeOutX1 = 0.05f, kShellFadeOutY1 = 0.90f;
+        constexpr float kShellFadeOutX2 = 0.10f, kShellFadeOutY2 = 1.00f;
 
         // Matches the push_constant block in overlay_blur.frag.glsl exactly.
         struct BlurPushConstants
@@ -425,6 +432,7 @@ namespace VKIntox
         // Blur descriptors have to go back to ImGui's pool too before the backend
         // shuts down; the device handles go through the deferred queue below.
         releaseBlurResources(true);
+        releaseSnapshotResources(false);
 
         // The ImGui teardown stays inline and runs first, because it releases
         // ImGui's own references to the descriptor pool and the title icon
@@ -2085,6 +2093,176 @@ namespace VKIntox
         replayFramebuffers.clear();
     }
 
+    bool ImGuiOverlay::ensureSnapshotResources(uint32_t width, uint32_t height)
+    {
+        if (!logicalDevice || !backendInitialized || width == 0 || height == 0)
+            return false;
+        if (snapshotReady && snapshotWidth == width && snapshotHeight == height)
+            return true;
+
+        for (VkFence fence : commandBufferFences)
+        {
+            if (fence != VK_NULL_HANDLE
+                && logicalDevice->vkd.WaitForFences(logicalDevice->device, 1, &fence, VK_TRUE, 1'000'000'000ull) != VK_SUCCESS)
+            {
+                Logger::warn("overlay snapshot: fence wait before resize failed");
+                return false;
+            }
+        }
+        releaseSnapshotResources(false);
+
+        auto& vkd = logicalDevice->vkd;
+        const VkDevice dev = logicalDevice->device;
+        bool ok = true;
+
+        VkAttachmentDescription attachment{};
+        attachment.format         = swapchainFormat;
+        attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+        attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachment.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments    = &colorRef;
+        VkSubpassDependency deps[2]{};
+        deps[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+        deps[0].dstSubpass    = 0;
+        deps[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        deps[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        deps[1].srcSubpass    = 0;
+        deps[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+        deps[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        deps[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        VkRenderPassCreateInfo rp{};
+        rp.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rp.attachmentCount = 1;
+        rp.pAttachments    = &attachment;
+        rp.subpassCount    = 1;
+        rp.pSubpasses      = &subpass;
+        rp.dependencyCount = 2;
+        rp.pDependencies   = deps;
+        ok = vkd.CreateRenderPass(dev, &rp, nullptr, &snapshotRenderPass) == VK_SUCCESS;
+
+        if (ok)
+        {
+            VkImageCreateInfo ci{};
+            ci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            ci.imageType     = VK_IMAGE_TYPE_2D;
+            ci.format        = swapchainFormat;
+            ci.extent        = {width, height, 1};
+            ci.mipLevels     = 1;
+            ci.arrayLayers   = 1;
+            ci.samples       = VK_SAMPLE_COUNT_1_BIT;
+            ci.tiling        = VK_IMAGE_TILING_OPTIMAL;
+            ci.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            ci.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+            ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            ok = vkd.CreateImage(dev, &ci, nullptr, &snapshotImage) == VK_SUCCESS;
+        }
+        if (ok)
+        {
+            VkMemoryRequirements req{};
+            vkd.GetImageMemoryRequirements(dev, snapshotImage, &req);
+            VkMemoryAllocateInfo ai{};
+            ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            ai.allocationSize  = req.size;
+            ai.memoryTypeIndex = findMemoryTypeIndex(logicalDevice, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            ok = vkd.AllocateMemory(dev, &ai, nullptr, &snapshotMemory) == VK_SUCCESS;
+        }
+        if (ok)
+            ok = vkd.BindImageMemory(dev, snapshotImage, snapshotMemory, 0) == VK_SUCCESS;
+        if (ok)
+        {
+            VkImageViewCreateInfo vi{};
+            vi.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            vi.image                           = snapshotImage;
+            vi.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+            vi.format                          = swapchainFormat;
+            vi.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+            vi.subresourceRange.baseMipLevel   = 0;
+            vi.subresourceRange.levelCount     = 1;
+            vi.subresourceRange.baseArrayLayer = 0;
+            vi.subresourceRange.layerCount     = 1;
+            ok = vkd.CreateImageView(dev, &vi, nullptr, &snapshotView) == VK_SUCCESS;
+        }
+        if (ok)
+        {
+            VkFramebufferCreateInfo fi{};
+            fi.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fi.renderPass      = snapshotRenderPass;
+            fi.attachmentCount = 1;
+            fi.pAttachments    = &snapshotView;
+            fi.width           = width;
+            fi.height          = height;
+            fi.layers          = 1;
+            ok = vkd.CreateFramebuffer(dev, &fi, nullptr, &snapshotFramebuffer) == VK_SUCCESS;
+        }
+        if (ok)
+        {
+            VkSamplerCreateInfo si{};
+            si.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            si.magFilter    = VK_FILTER_LINEAR;
+            si.minFilter    = VK_FILTER_LINEAR;
+            si.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.maxLod       = 0.0f;
+            ok = vkd.CreateSampler(dev, &si, nullptr, &snapshotSampler) == VK_SUCCESS;
+        }
+        if (ok)
+        {
+            snapshotTexture = ImGui_ImplVulkan_AddTexture(snapshotSampler, snapshotView,
+                                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            ok = snapshotTexture != VK_NULL_HANDLE;
+        }
+        if (!ok)
+        {
+            releaseSnapshotResources(false);
+            return false;
+        }
+        snapshotWidth = width;
+        snapshotHeight = height;
+        snapshotReady = true;
+        return true;
+    }
+
+    void ImGuiOverlay::releaseSnapshotResources(bool)
+    {
+        if (!logicalDevice)
+            return;
+        auto& vkd = logicalDevice->vkd;
+        const VkDevice dev = logicalDevice->device;
+        if (snapshotTexture != VK_NULL_HANDLE && backendInitialized)
+            ImGui_ImplVulkan_RemoveTexture(snapshotTexture);
+        if (snapshotFramebuffer != VK_NULL_HANDLE) vkd.DestroyFramebuffer(dev, snapshotFramebuffer, nullptr);
+        if (snapshotView != VK_NULL_HANDLE)        vkd.DestroyImageView(dev, snapshotView, nullptr);
+        if (snapshotSampler != VK_NULL_HANDLE)     vkd.DestroySampler(dev, snapshotSampler, nullptr);
+        if (snapshotImage != VK_NULL_HANDLE)       vkd.DestroyImage(dev, snapshotImage, nullptr);
+        if (snapshotMemory != VK_NULL_HANDLE)      vkd.FreeMemory(dev, snapshotMemory, nullptr);
+        if (snapshotRenderPass != VK_NULL_HANDLE)  vkd.DestroyRenderPass(dev, snapshotRenderPass, nullptr);
+        snapshotTexture = VK_NULL_HANDLE;
+        snapshotFramebuffer = VK_NULL_HANDLE;
+        snapshotView = VK_NULL_HANDLE;
+        snapshotSampler = VK_NULL_HANDLE;
+        snapshotImage = VK_NULL_HANDLE;
+        snapshotMemory = VK_NULL_HANDLE;
+        snapshotRenderPass = VK_NULL_HANDLE;
+        snapshotWidth = 0;
+        snapshotHeight = 0;
+        snapshotReady = false;
+        snapshotValid = false;
+    }
+
     void ImGuiOverlay::recordOverlayDrawData(VkCommandBuffer cmd, uint32_t imageIndex,
                                              VkImageView imageView, uint32_t width, uint32_t height)
     {
@@ -2145,28 +2323,41 @@ namespace VKIntox
         }
 
         sampleDiagnostics();
-        // Shell appear/disappear. The clock lives on steady_clock so it runs even
-        // on frames where ImGui hasn't ticked yet. Same curve and rise as the
-        // dialogs, reversed on hide, so the overlay opens and closes like a popup.
+        // Shell appear/disappear. The live panel is captured once, then the
+        // snapshot scales in place while this steady clock advances.
         const double shellNow = std::chrono::duration<double>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
         if (shellAnimTarget != visible)
         {
             shellAnimTarget = visible;
             shellAnimStart = shellNow;
+            snapshotValid = false;
         }
+        const float shellDuration = visible ? kShellOpenSeconds : kShellCloseSeconds;
         const float shellClock = std::clamp(
-            static_cast<float>((shellNow - shellAnimStart) / kShellAnimSeconds), 0.0f, 1.0f);
-        const float shellEase = UI::CubicBezierEase(shellClock, kShellBezX1, kShellBezY1, kShellBezX2, kShellBezY2);
-        // The bezier overshoots past 1 (kShellBezY2 > 1); clamp the alpha or the
-        // raw 8-bit pack in the title bar wraps and the marks blink out.
-        shellAlpha = std::clamp(visible ? shellEase : 1.0f - shellEase, 0.0f, 1.0f);
-        const bool  shellActive = visible || shellAlpha > 0.001f;
-        const bool  shellAnimating = shellClock < 1.0f;
-        // appears by rising from below, disappears by sinking back down: the
-        // reverse of the dialog's entrance.
-        const float shellDrop = kShellAnimDropDp * ImGuiM3GetMetrics().density;
-        const float shellOffsetY = shellDrop * (visible ? (1.0f - shellEase) : shellEase);
+            static_cast<float>((shellNow - shellAnimStart) / shellDuration), 0.0f, 1.0f);
+        const float shellScaleEase = visible
+            ? UI::CubicBezierEase(shellClock, kShellOpenX1, kShellOpenY1, kShellOpenX2, kShellOpenY2)
+            : UI::CubicBezierEase(shellClock, kShellCloseX1, kShellCloseY1, kShellCloseX2, kShellCloseY2);
+        const float shellFadeEase = visible
+            ? UI::CubicBezierEase(shellClock, kShellFadeInX1, kShellFadeInY1, kShellFadeInX2, kShellFadeInY2)
+            : UI::CubicBezierEase(shellClock, kShellFadeOutX1, kShellFadeOutY1, kShellFadeOutX2, kShellFadeOutY2);
+        shellAlpha = visible ? ImLerp(0.85f, 1.0f, shellFadeEase)
+                             : 0.95f * (1.0f - shellFadeEase);
+        shellScale = visible ? ImLerp(kShellOpenScale, 1.0f, shellScaleEase)
+                             : ImLerp(1.0f, kShellCloseScale, shellScaleEase);
+        const bool reducedMotion = ImGuiM3GetMetrics().reduced_motion;
+        if (reducedMotion)
+        {
+            shellAlpha = visible ? 1.0f : 0.0f;
+            shellScale = visible ? 1.0f : 0.0f;
+        }
+        const bool shellActive = visible || shellAlpha > 0.001f;
+        const bool shellAnimating = !reducedMotion && shellClock < 1.0f;
+        const bool captureFrame = shellAnimating && !snapshotValid;
+        const float transitionAlpha = shellAlpha;
+        if (captureFrame)
+            shellAlpha = 1.0f;
 
         // Render even when the main overlay is hidden if there are pending
         // toast notifications — fatal errors must stay visible to the user. The
@@ -2191,7 +2382,7 @@ namespace VKIntox
         // grabs held through the disappear animation ping-pong the handoff and
         // re-open the shell via a phantom key press.
         frameInputRects.clear();
-        setInputBlocked(visible && settingsManager.getOverlayBlockInput());
+        setInputBlocked(visible && !shellAnimating && settingsManager.getOverlayBlockInput());
 
         // Store current resolution for VRAM estimates in settings
         currentWidth = width;
@@ -2204,13 +2395,16 @@ namespace VKIntox
         ImGuiM3BlurSettings&    blurSettings     = ImGuiM3GetBlurSettings();
         ImGuiM3BackgroundObject& backgroundObject = ImGuiM3GetBackgroundObject();
         const float backgroundOpacity = std::clamp(blurSettings.background_opacity, 0.0f, 1.0f);
-        const bool  blurRequested = blurSettings.blur && backgroundObject.BackgroundBlur && backgroundOpacity <= 0.99f;
+        const bool  blurRequested = blurSettings.blur && backgroundObject.BackgroundBlur
+            && backgroundOpacity <= 0.99f && (!shellAnimating || captureFrame);
         bool        blurActive    = false;
         if (shellActive && blurRequested)
         {
             ensureBlurResources(width, height);
             blurActive = blurReady && imageIndex < blurResources.size();
         }
+        if (captureFrame)
+            ensureSnapshotResources(width, height);
 
         // Wait for previous use of this command buffer to complete.
         // Adaptive timeout: 4x the measured frame time (generous margin for GPU
@@ -2359,10 +2553,74 @@ namespace VKIntox
                 io.AddKeyEvent(key, event.down);
         }
 
+        const bool snapshotCaptureReady = captureFrame && snapshotReady;
+        if (captureFrame && !snapshotCaptureReady)
+        {
+            Logger::warn("overlay snapshot unavailable; falling back to the live shell");
+            shellAlpha = 1.0f;
+            shellScale = 1.0f;
+            snapshotValid = true;
+        }
+
+        auto renderTransition = [&]()
+        {
+            frameInputRects.clear();
+            setInputRects(nullptr, 0);
+            setInputBlocked(false);
+            setInputInteractive(false);
+            setOverlayWantsKeyboard(false);
+            setWaylandInputSurfaceRects(nullptr, 0);
+
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2((float)width, (float)height), ImGuiCond_Always);
+            ImGui::Begin("##vkintox_transition", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground);
+            const float scale = ImMax(shellScale, 0.0f);
+            const ImVec2 size(snapshotRect.z * scale, snapshotRect.w * scale);
+            const ImVec2 center(snapshotRect.x + snapshotRect.z * 0.5f,
+                                snapshotRect.y + snapshotRect.w * 0.5f);
+            const ImVec2 pos = center - size * 0.5f;
+            if (size.x > 0.01f && size.y > 0.01f)
+            {
+                const ImVec2 uv0(snapshotRect.x / (float)width, snapshotRect.y / (float)height);
+                const ImVec2 uv1((snapshotRect.x + snapshotRect.z) / (float)width,
+                                 (snapshotRect.y + snapshotRect.w) / (float)height);
+                const ImU32 tint = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f,
+                                                              ImClamp(shellAlpha, 0.0f, 1.0f)));
+                ImGui::GetWindowDrawList()->AddImage(
+                    ImTextureRef(reinterpret_cast<ImTextureID>(snapshotTexture)),
+                    pos, pos + size, uv0, uv1, tint);
+            }
+            ImGui::End();
+
+            // these stay live while only the shell snapshot animates
+            renderToasts();
+            renderFpsCounter();
+            ImGui::Render();
+            overlayDrawDataValid = ImGui::GetDrawData() != nullptr;
+
+            VkRenderPassBeginInfo rpBegin{};
+            rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rpBegin.renderPass = renderPass;
+            rpBegin.framebuffer = framebuffer;
+            rpBegin.renderArea.extent = {width, height};
+            logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+            logicalDevice->vkd.CmdEndRenderPass(cmd);
+        };
 
         // ImGui frame
         ImGui_ImplVulkan_NewFrame();
         ImGui::NewFrame();
+
+        if (shellAnimating && snapshotValid && snapshotReady && !captureFrame)
+        {
+            renderTransition();
+            if (logicalDevice->vkd.EndCommandBuffer(cmd) != VK_SUCCESS)
+                return VK_NULL_HANDLE;
+            return cmd;
+        }
 
         // When the overlay is hidden but toasts are showing, skip the main
         // window — toasts are standalone floating windows. During the disappear
@@ -2470,7 +2728,7 @@ namespace VKIntox
             const float keep = ImMin(avail.x, avail.y) * 0.05f;
             shellBaseX = ImClamp(shellBaseX, screenMin.x, ImMax(screenMin.x, screenMax.x - keep));
             shellBaseY = ImClamp(shellBaseY, screenMin.y, ImMax(screenMin.y, screenMax.y - keep));
-            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY + shellOffsetY), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY), ImGuiCond_Always);
         }
         else
         {
@@ -3093,9 +3351,13 @@ namespace VKIntox
         if (closeRequested)
             toggle();
 
-        // toasts last, so they draw above the overlay
-        renderToasts();
-        renderFpsCounter();
+        // the snapshot contains only the shell; persistent widgets are rendered
+        // separately on the display frame
+        if (!snapshotCaptureReady)
+        {
+            renderToasts();
+            renderFpsCounter();
+        }
 
         // Global auto-apply check (runs regardless of which tab is active)
         if (settingsManager.getAutoApply() && paramsDirty)
@@ -3175,17 +3437,48 @@ namespace VKIntox
         if (blurActive)
             recordBlur(cmd, imageIndex, image, width, height);
 
-        // Begin render pass
+        // The first transition frame renders the complete live shell into an
+        // offscreen snapshot. Later frames scale that texture, so ImGui never
+        // reflows or resizes the panel during the animation.
         VkRenderPassBeginInfo rpBegin = {};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpBegin.renderPass = renderPass;
-        rpBegin.framebuffer = framebuffer;
+        rpBegin.renderPass = snapshotCaptureReady ? snapshotRenderPass : renderPass;
+        rpBegin.framebuffer = snapshotCaptureReady ? snapshotFramebuffer : framebuffer;
         rpBegin.renderArea.extent.width = width;
         rpBegin.renderArea.extent.height = height;
+        VkClearValue clearValue{};
+        if (snapshotCaptureReady)
+        {
+            clearValue.color.float32[0] = 0.0f;
+            clearValue.color.float32[1] = 0.0f;
+            clearValue.color.float32[2] = 0.0f;
+            clearValue.color.float32[3] = 0.0f;
+            rpBegin.pClearValues = &clearValue;
+            rpBegin.clearValueCount = 1;
+        }
 
         logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
         logicalDevice->vkd.CmdEndRenderPass(cmd);
+        if (snapshotCaptureReady)
+        {
+            const ImGuiM3Metrics& metrics = ImGuiM3GetMetrics();
+            constexpr int elevation = 3;
+            const float reach = ImMax(metrics.ambient_shadow_blur[elevation] * 2.0f + metrics.ambient_shadow_spread[elevation],
+                                      ImMax(metrics.key_shadow_blur[elevation] * 2.0f, 4.0f));
+            const float drop = ImMax(metrics.ambient_shadow_y[elevation], metrics.key_shadow_y[elevation]);
+            const float pad = ImCeil((reach + drop) * metrics.density) + 1.0f;
+            snapshotRect = ImVec4(windowPos.x - pad, windowPos.y - pad,
+                                  windowSize.x + pad * 2.0f, windowSize.y + pad * 2.0f);
+            snapshotValid = true;
+            shellAlpha = transitionAlpha;
+
+            // display the freshly baked shell and the persistent widgets in the
+            // same frame, so the capture itself cannot flash an empty screen
+            ImGui_ImplVulkan_NewFrame();
+            ImGui::NewFrame();
+            renderTransition();
+        }
 
         vr = logicalDevice->vkd.EndCommandBuffer(cmd);
         if (vr != VK_SUCCESS)
