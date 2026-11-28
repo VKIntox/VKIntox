@@ -9,8 +9,8 @@
 <p align="center">
   <a href="https://git.buwryy.net/VKIntox/VKIntox/src/branch/main/VERSION">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/version-v0.3.0_Preview_1.svg?variant=secondary&size=sm&mode=dark&logo=git">
-      <img alt="Version" src="https://shieldcn.dev/badge/version-v0.3.0_Preview_1.svg?variant=secondary&size=sm&mode=light&logo=git">
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/version-v0.3.0_Preview_2.svg?variant=secondary&size=sm&mode=dark&logo=git">
+      <img alt="Version" src="https://shieldcn.dev/badge/version-v0.3.0_Preview_2.svg?variant=secondary&size=sm&mode=light&logo=git">
     </picture>
   </a>
   <a href="https://git.buwryy.net/VKIntox/VKIntox/releases">
