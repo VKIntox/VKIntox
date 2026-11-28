@@ -5,9 +5,46 @@
 
 #include "input/wayland/keyboard_input_wayland.hh"
 #include "input/x11/keyboard_input_x11.hh"
+#include "input/common/input_blocker.hh"
+
+#include <mutex>
+#include <unordered_set>
 
 namespace VKIntox
 {
+    namespace
+    {
+        std::mutex keyboardEventMutex;
+        std::vector<KeyboardEvent> keyboardEvents;
+        std::unordered_set<uint32_t> queuedKeys;
+    }
+
+    void queueKeyboardEvent(uint32_t keysym, bool down, bool repeat)
+    {
+        if (!keysym)
+            return;
+        std::lock_guard<std::mutex> lock(keyboardEventMutex);
+        if (down)
+        {
+            if (!isOverlayHoldingKeyboard())
+                return;
+            queuedKeys.insert(keysym);
+        }
+        else if (!queuedKeys.erase(keysym) && !isOverlayHoldingKeyboard())
+        {
+            return;
+        }
+        keyboardEvents.push_back({keysym, down, repeat});
+    }
+
+    std::vector<KeyboardEvent> drainKeyboardEvents()
+    {
+        std::lock_guard<std::mutex> lock(keyboardEventMutex);
+        std::vector<KeyboardEvent> events;
+        events.swap(keyboardEvents);
+        return events;
+    }
+
     static void warnUnsupportedKeyboardOnce(const char* message)
     {
         static bool warned = false;
@@ -48,12 +85,14 @@ namespace VKIntox
 
     KeyboardState getKeyboardState()
     {
+        KeyboardState state;
         if (isWayland())
-            return getKeyboardStateWayland();
-        if (isX11())
-            return getKeyboardStateX11();
-
-        warnUnsupportedKeyboardOnce("unsupported Vulkan surface: keyboard polling disabled; returning default state");
-        return KeyboardState();
+            state = getKeyboardStateWayland();
+        else if (isX11())
+            state = getKeyboardStateX11();
+        else
+            warnUnsupportedKeyboardOnce("unsupported Vulkan surface: keyboard polling disabled; returning default state");
+        state.events = drainKeyboardEvents();
+        return state;
     }
 } // namespace VKIntox

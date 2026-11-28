@@ -10,6 +10,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace VKIntox
 {
@@ -26,14 +27,21 @@ namespace VKIntox
     static uint64_t lastQueriedKeymapFrame = std::numeric_limits<uint64_t>::max();
     static char cachedKeymap[32] = {};
     static std::unordered_map<uint32_t, KeyCode> keysymToKeycodeCache;
+    static std::unordered_set<KeyCode> heldKeycodes;
 
-    static void processKeycode(KeyCode keycode, unsigned int state)
+    static void processKeycode(KeyCode keycode, unsigned int state, bool pressed)
     {
         Display* display = x11Display();
         if (!display)
             return;
 
         const KeySym keysym = XkbKeycodeToKeysym(display, keycode, 0, 0);
+        const bool repeat = pressed && !heldKeycodes.insert(keycode).second;
+        if (!pressed)
+            heldKeycodes.erase(keycode);
+        queueKeyboardEvent((uint32_t)keysym, pressed, repeat);
+        if (!pressed)
+            return;
 
         // capture the key name for the keybind editor, skipping modifiers.
         if (keysym != XK_Shift_L && keysym != XK_Shift_R &&
@@ -72,8 +80,7 @@ namespace VKIntox
 
     static void onRawKey(uint32_t keycode, bool pressed)
     {
-        if (pressed)
-            processKeycode((KeyCode)keycode, 0);
+        processKeycode((KeyCode)keycode, 0, pressed);
     }
 
     static void ensureRegistered()

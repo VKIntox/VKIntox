@@ -35,6 +35,8 @@
 #include <filesystem>
 #include <memory>
 
+#include <X11/keysym.h>
+
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/imgui_internal.h"
 #include "vendor/imgui/imgui_m3.h"
@@ -58,6 +60,48 @@ namespace VKIntox
         void overlayTitleHeightConstraint(ImGuiSizeCallbackData* data)
         {
             data->DesiredSize.y = std::max(data->DesiredSize.y, OverlayTitleBarHeight() + 1.0f);
+        }
+
+        ImGuiKey ImGuiKeyFromKeysym(uint32_t keysym)
+        {
+            switch (keysym)
+            {
+            case XK_BackSpace: return ImGuiKey_Backspace;
+            case XK_Delete: return ImGuiKey_Delete;
+            case XK_Return:
+            case XK_KP_Enter: return ImGuiKey_Enter;
+            case XK_Escape: return ImGuiKey_Escape;
+            case XK_Tab:
+            case XK_ISO_Left_Tab: return ImGuiKey_Tab;
+            case XK_Left:
+            case XK_KP_Left: return ImGuiKey_LeftArrow;
+            case XK_Right:
+            case XK_KP_Right: return ImGuiKey_RightArrow;
+            case XK_Up:
+            case XK_KP_Up: return ImGuiKey_UpArrow;
+            case XK_Down:
+            case XK_KP_Down: return ImGuiKey_DownArrow;
+            case XK_Page_Up:
+            case XK_KP_Page_Up: return ImGuiKey_PageUp;
+            case XK_Page_Down:
+            case XK_KP_Page_Down: return ImGuiKey_PageDown;
+            case XK_Home:
+            case XK_KP_Home: return ImGuiKey_Home;
+            case XK_End:
+            case XK_KP_End: return ImGuiKey_End;
+            case XK_Insert:
+            case XK_KP_Insert: return ImGuiKey_Insert;
+            case XK_space: return ImGuiKey_Space;
+            case XK_Shift_L: return ImGuiKey_LeftShift;
+            case XK_Shift_R: return ImGuiKey_RightShift;
+            case XK_Control_L: return ImGuiKey_LeftCtrl;
+            case XK_Control_R: return ImGuiKey_RightCtrl;
+            case XK_Alt_L: return ImGuiKey_LeftAlt;
+            case XK_Alt_R: return ImGuiKey_RightAlt;
+            case XK_Super_L: return ImGuiKey_LeftSuper;
+            case XK_Super_R: return ImGuiKey_RightSuper;
+            default: return ImGuiKey_None;
+            }
         }
 
         // Backdrop blur tuning. Capture at half resolution, then run a separable
@@ -196,6 +240,7 @@ namespace VKIntox
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.ConfigWindowsMoveFromTitleBarOnly = true;
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
         std::string iniPath = ConfigSerializer::getBaseConfigDir() + "/imgui.ini";
         std::ifstream iniFile(iniPath);
@@ -2093,7 +2138,10 @@ namespace VKIntox
         // a frame dump must not bake the UI into the file; the request arms a
         // hold long enough for the overlay to be gone for the whole capture
         if (DepthDump::overlaySuppressed())
+        {
+            (void)getKeyboardState();
             return VK_NULL_HANDLE;
+        }
 
         sampleDiagnostics();
         // Shell appear/disappear. The clock lives on steady_clock so it runs even
@@ -2126,6 +2174,7 @@ namespace VKIntox
         const bool showFps = settingsManager.getShowFps();
         if (!backendInitialized || (!shellActive && !hasToasts && !showFps))
         {
+            (void)getKeyboardState();
             // drop last frame's hitboxes, or they keep swallowing input.
             frameInputRects.clear();
             setInputRects(nullptr, 0);
@@ -2295,23 +2344,20 @@ namespace VKIntox
             // window-manager grab and drops the game's cursor capture.
             const bool interactive = shellActive && blocking;
             setInputInteractive(interactive);
-            setOverlayWantsKeyboard(interactive
-                && (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup)));
+            setOverlayWantsKeyboard(interactive);
             updatePointerPosition(static_cast<float>(mouse.x), static_cast<float>(mouse.y));
         };
 
-        // Keyboard input for text fields
-        // Keys are one-shot events, so we send press and release in same frame
         KeyboardState keyboard = getKeyboardState();
         for (char c : keyboard.typedChars)
             io.AddInputCharacter(c);
-        if (keyboard.backspace) { io.AddKeyEvent(ImGuiKey_Backspace, true); io.AddKeyEvent(ImGuiKey_Backspace, false); }
-        if (keyboard.del) { io.AddKeyEvent(ImGuiKey_Delete, true); io.AddKeyEvent(ImGuiKey_Delete, false); }
-        if (keyboard.enter) { io.AddKeyEvent(ImGuiKey_Enter, true); io.AddKeyEvent(ImGuiKey_Enter, false); }
-        if (keyboard.left) { io.AddKeyEvent(ImGuiKey_LeftArrow, true); io.AddKeyEvent(ImGuiKey_LeftArrow, false); }
-        if (keyboard.right) { io.AddKeyEvent(ImGuiKey_RightArrow, true); io.AddKeyEvent(ImGuiKey_RightArrow, false); }
-        if (keyboard.home) { io.AddKeyEvent(ImGuiKey_Home, true); io.AddKeyEvent(ImGuiKey_Home, false); }
-        if (keyboard.end) { io.AddKeyEvent(ImGuiKey_End, true); io.AddKeyEvent(ImGuiKey_End, false); }
+        for (const KeyboardEvent& event : keyboard.events)
+        {
+            const ImGuiKey key = ImGuiKeyFromKeysym(event.keysym);
+            if (key != ImGuiKey_None)
+                io.AddKeyEvent(key, event.down);
+        }
+
 
         // ImGui frame
         ImGui_ImplVulkan_NewFrame();
