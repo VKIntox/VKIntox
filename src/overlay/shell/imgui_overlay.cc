@@ -1,3 +1,6 @@
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#define IMGUI_DEFINE_MATH_OPERATORS
+#endif
 #include "overlay/shell/imgui_overlay.hh"
 #include "depth/depth_dump.hh"
 
@@ -38,6 +41,7 @@
 #include "overlay/theme/ui_theme.hh"
 #include "overlay/theme/ui_icons.hh"
 #include "overlay/shell/ui_dialog.hh"
+#include "overlay/shell/ui_menu.hh"
 #include "overlay/shell/fps_metrics.hh"
 #include "vendor/imgui/backends/imgui_impl_vulkan.h"
 
@@ -293,9 +297,12 @@ namespace VKIntox
             ImFont* regular   = addFace(bodyPath, 400.0f, false, 14.0f);
             ImFont* medium    = addFace(bodyPath, 500.0f, false, 14.0f);
             ImFont* bodyBold  = addFace(bodyPath, 700.0f, false, 14.0f);
+            ImFont* docRegular = addFace(docPath, 400.0f, true, 18.0f);
+            ImFont* docMedium  = addFace(docPath, 500.0f, true, 18.0f);
             ImFont* bold      = addFace(docPath,  650.0f, true,  18.0f);
             ImFont* extraBold = addFace(docPath,  700.0f, true,  32.0f);
             ImGuiM3SetTextFonts(regular, medium, bold, extraBold);
+            ImGuiM3SetDocumentFonts(docRegular, docMedium);
             ImGuiM3SetBodyBoldFont(bodyBold);
             Logger::info("ImGui: body=Roboto Flex, document=Google Sans Flex (variable) from " + bodyPath);
         }
@@ -381,6 +388,7 @@ namespace VKIntox
         // here is by construction rather than by luck.
         if (backendInitialized)
             ImGui_ImplVulkan_Shutdown();
+        ImGuiM3Shutdown();
         ImGui::DestroyContext();
 
         // Deferred, like every other owner. The QueueWaitIdle above already makes
@@ -564,26 +572,23 @@ namespace VKIntox
         const auto now = std::chrono::steady_clock::now();
 
         const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-        const float margin = 28.0f;
-        const float gap = 10.0f;
-        const float padX = 22.0f;
-        const float padY = 16.0f;
-        const float rounding = 16.0f;
+        const ImGuiM3Metrics& tm = ImGuiM3GetMetrics();
+        const float margin = 28.0f * tm.density;
+        const float gap = 10.0f * tm.density;
+        const float padX = 20.0f * tm.density;
+        const float padY = 12.0f * tm.density;
+        const float rounding = ImGuiM3Radius(ImGuiM3Shape_Large);
         // the host window has to be big enough for the shadow: a fixed 14px pad was
         // under a level-2 reach, so the falloff was sliced square at the window edge
-        const ImGuiM3Metrics& tm = ImGuiM3GetMetrics();
         const int toastElevation = 2;
         const float shadowReach = ImMax(tm.ambient_shadow_blur[toastElevation] * 2.0f + tm.ambient_shadow_spread[toastElevation],
                                         ImMax(tm.key_shadow_blur[toastElevation] * 2.0f, 4.0f));
         const float shadowDrop = ImMax(tm.ambient_shadow_y[toastElevation], tm.key_shadow_y[toastElevation]);
         const float shadowPad = ImCeil((shadowReach + shadowDrop) * tm.density) + 1.0f;
         // never let a collapsed game window produce a negative card width
-        const float maxCardWidth = ImMax(160.0f, ImMin(560.0f, displaySize.x - margin * 2.0f));
+        const float maxCardWidth = ImMax(160.0f, ImMin(720.0f, displaySize.x - margin * 2.0f));
 
-        std::vector<size_t> expired;
-        for (size_t i = 0; i < snapshot.size(); ++i)
-            if (std::chrono::duration<float>(now - snapshot[i].createdAt).count() >= kLifetimeSeconds)
-                expired.push_back(i);
+        std::vector<bool> hoveredToasts(snapshot.size(), false);
 
         // the newest toast sits nearest the bottom edge, older ones stack upward
         float cursorY = displaySize.y - margin;
@@ -598,10 +603,17 @@ namespace VKIntox
                 : 1.0f;
 
             const std::string& message = snapshot[i].message;
-            const float wrapWidth = maxCardWidth - padX * 2.0f;
-            const ImVec2 textSize = ImGui::CalcTextSize(message.c_str(), nullptr, false, wrapWidth);
-            const float cardWidth = ImMin(maxCardWidth, ImMax(textSize.x, 1.0f) + padX * 2.0f);
-            const float cardHeight = textSize.y + padY * 2.0f;
+            const float maxTextWidth = ImMax(80.0f, maxCardWidth - padX * 2.0f);
+            ImFont* textFont = ImGuiM3FontBold();
+            const float textPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * tm.density;
+            ImGui::PushFont(textFont, textPx);
+            const char* shownMessage = UI::TruncateLabel(message.c_str(), maxTextWidth);
+            const ImVec2 textSize = ImGui::CalcTextSize(shownMessage);
+            ImGui::PopFont();
+            const float cardWidth = ImMin(maxCardWidth, textSize.x + padX * 2.0f);
+            const float minHeight = (textSize.y > textPx * 1.5f
+                                  ? tm.snackbar_height_2 : tm.snackbar_height_1) * tm.density;
+            const float cardHeight = ImMax(minHeight, textSize.y + padY * 2.0f);
             const float windowWidth = cardWidth + shadowPad * 2.0f;
             const float windowHeight = cardHeight + shadowPad * 2.0f;
 
@@ -610,12 +622,10 @@ namespace VKIntox
             ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(windowWidth, windowHeight), ImGuiCond_Always);
 
-            // NoInputs: the toast is informational, so clicks pass through to the
-            // game instead of being withheld by the input blocker.
+            // Toasts accept hover so their lifetime pauses while the user reads.
             const ImGuiWindowFlags flags =
                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
-                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
-                ImGuiWindowFlags_NoInputs;
+                ImGuiWindowFlags_NoFocusOnAppearing;
 
             // transparent host window: the card and its shadow are drawn inside,
             // which keeps the whole thing on the top-most window layer.
@@ -628,6 +638,8 @@ namespace VKIntox
             char label[40];
             snprintf(label, sizeof(label), "##vkintoxToast%zu", i);
             const bool open = ImGui::Begin(label, nullptr, flags);
+            hoveredToasts[i] = open && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup |
+                                                              ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
             ImGui::PopStyleVar(3);
             ImGui::PopStyleColor(2);
@@ -646,29 +658,39 @@ namespace VKIntox
                 ImGuiM3DrawElevation(drawList, ImRect(cardMin, cardMax),
                                      ImGuiM3ShapeRounding{ rounding, rounding, rounding, rounding },
                                      toastElevation, fade);
-                const int cardAlpha = static_cast<int>(255.0f * fade);
-                drawList->AddRectFilled(cardMin, cardMax, IM_COL32(255, 255, 255, cardAlpha), rounding);
+                auto faded = [fade](ImU32 color) {
+                    return (color & 0x00FFFFFFu) | ((ImU32)((float)((color >> 24) & 0xFFu) * fade) << 24);
+                };
+                const ImU32 cardColor = faded(ImGuiM3ColorU32(ImGuiM3Role_InverseSurface));
+                drawList->AddRectFilled(cardMin, cardMax, cardColor, rounding);
+                frameInputRects.push_back(InputRect{cardMin.x, cardMin.y, cardWidth, cardHeight});
 
-                ImGui::SetCursorScreenPos(ImVec2(cardMin.x + padX, cardMin.y + padY));
-                ImGui::PushTextWrapPos(cardMin.x + cardWidth - padX);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, fade));
-                ImGui::TextUnformatted(message.c_str());
-                ImGui::PopStyleColor();
-                ImGui::PopTextWrapPos();
+                const ImU32 inverseContent = faded(ImGuiM3ColorU32(ImGuiM3Role_InverseOnSurface));
+                const ImVec2 textMin(cardMin.x + padX,
+                                     cardMin.y + (cardHeight - textSize.y) * 0.5f);
+                drawList->AddText(textFont, textPx, textMin, inverseContent, shownMessage);
             }
             ImGui::End();
 
             cursorY -= gap;
         }
 
-        if (!expired.empty())
         {
             std::lock_guard<std::mutex> lock(toastsMutex);
-            // Erase in reverse so indices stay valid.
-            for (auto it = expired.rbegin(); it != expired.rend(); ++it)
+            for (size_t i = 0; i < snapshot.size(); ++i)
             {
-                if (*it < toasts.size())
-                    toasts.erase(toasts.begin() + *it);
+                if (i >= toasts.size())
+                    break;
+                if (hoveredToasts[i])
+                    toasts[i].createdAt = now;
+            }
+            for (auto it = toasts.begin(); it != toasts.end();)
+            {
+                const float age = std::chrono::duration<float>(now - it->createdAt).count();
+                if (age >= kLifetimeSeconds)
+                    it = toasts.erase(it);
+                else
+                    ++it;
             }
         }
     }
@@ -2353,8 +2375,8 @@ namespace VKIntox
         // theme's density: below this the cards, nav and preview rows start
         // cutting each other off. Still clamped by the window, so a game smaller
         // than the floor can keep its own size.
-        const float min_overlay_w = 640.0f * shell_metrics.density;
-        const float min_overlay_h = 830.0f * shell_metrics.density;
+        const float min_overlay_w = 520.0f * shell_metrics.density;
+        const float min_overlay_h = 560.0f * shell_metrics.density;
         const ImVec2 minSize(ImMin(ImMax(legible_w, min_overlay_w), avail.x),
                              ImMin(ImMax(legible_h, min_overlay_h), avail.y));
         const ImVec2 maxSize = avail;
@@ -2691,16 +2713,16 @@ namespace VKIntox
                                    iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize),
                                    ImVec2(0, 0), ImVec2(1, 1), fadeU32(IM_COL32_WHITE));
             }
-            ImFont* bold = ImGuiM3FontBold();
-            const float titleSize = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge).size * ImGuiM3GetMetrics().density;
-            if (bold)
-                ImGui::PushFont(bold, titleSize);
+            ImFont* titleFont = ImGuiM3FontBold();
+            const float titleSize = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleMedium).size * ImGuiM3GetMetrics().density;
+            if (titleFont)
+                ImGui::PushFont(titleFont, titleSize);
             const char* brand = "VKIntox";
             const ImVec2 textSize = ImGui::CalcTextSize(brand);
             drawList->AddText(ImVec2(windowPos.x + (windowSize.x - textSize.x) * 0.5f,
                                      windowPos.y + (titleBarHeight - textSize.y) * 0.5f),
                               fadeU32(ImGuiM3ColorU32(ImGuiM3Role_OnSurface)), brand);
-            if (bold)
+            if (titleFont)
                 ImGui::PopFont();
         }
 
@@ -2766,7 +2788,6 @@ namespace VKIntox
         // Bottom navigation dock: a pill bar under the content. The active
         // destination shows its label; the rest show only their icon. Its height
         // comes off the content region below.
-        static int activeView = 0;
         static const char* const kViewLabels[] = {"Effects", "Shaders", "FG", "Settings", "About"};
         static const ImWchar kViewIcons[] = {Icon::WandShine, Icon::Function, Icon::MaskedTransitions, Icon::Settings, Icon::Info};
         constexpr int kViewCount = (int)(sizeof(kViewLabels) / sizeof(kViewLabels[0]));
@@ -2861,7 +2882,12 @@ namespace VKIntox
         }
 
         float viewEase = 1.0f;
-        if (viewTransitioning)
+        if (viewTransitioning && ImGuiM3GetMetrics().reduced_motion)
+        {
+            viewTransitioning = false;
+            viewSettledIndex = viewTargetIndex;
+        }
+        else if (viewTransitioning)
         {
             const float clock = static_cast<float>((ImGui::GetTime() - viewSlideStart) / kViewSlideSeconds);
             if (clock >= 1.0f)
@@ -2901,7 +2927,7 @@ namespace VKIntox
 
         // Slidefade: a spatial travel of a fifth of the width, with the incoming
         // view fading in and the outgoing view fading out on the same clock.
-        const float travel    = 0.0f;
+        const float travel    = ImGuiM3GetMetrics().reduced_motion ? 0.0f : 24.0f * ImGuiM3GetMetrics().density;
         const float offsetIn  = showingFrom ? (1.0f - viewEase) * travel : 0.0f;
         const float offsetOut = showingFrom ? -viewEase * travel : 0.0f;
         const float alphaIn   = showingFrom ? ImClamp(viewEase, 0.0f, 1.0f) : 1.0f;
