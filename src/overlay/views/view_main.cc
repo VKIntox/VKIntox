@@ -235,27 +235,22 @@ namespace VKIntox
 
         // Normal mode - show profile and effect controls
 
-        // Profile row: the active shader preset, with its actions flush right.
-        // The label is drawn rather than emitted so it can be centred against the
-        // field it names, at the document face's weight.
+        // The preset field owns the row; secondary actions live in one overflow
+        // menu so long names keep their room at normal panel widths.
         if (!activeGameName.empty())
         {
             const ImGuiM3Metrics& profileMetrics = ImGuiM3GetMetrics();
             const float profileD = profileMetrics.density;
             const bool hasShaderProfile = !activeShaderProfileName.empty();
-
-            const float profileIconWidth = profileMetrics.icon_button_size * profileD;
-            const int profileActionCount = hasShaderProfile ? 4 : 2;
-            const float profileActionsWidth =
-                profileIconWidth * (float)profileActionCount +
-                ImGui::GetStyle().ItemSpacing.x * (float)(profileActionCount - 1);
-            const float actionsX = ImGui::GetWindowWidth() - profileActionsWidth -
-                                   ImGui::GetCurrentWindowRead()->WindowPadding.x;
-
-            const float rowH = ImGui::GetFrameHeight();
+            const float actionH = 36.0f * profileD;
+            const float iconW = profileMetrics.icon_button_size * profileD;
+            const float actionsXLocal = ImGui::GetWindowWidth() - iconW -
+                                        ImGui::GetCurrentWindowRead()->WindowPadding.x;
+            const float actionsX = ImGui::GetCurrentWindowRead()->Pos.x + actionsXLocal;
+            const float rowH = ImMax(ImGui::GetFrameHeight(), actionH);
             const ImVec2 rowPos = ImGui::GetCursorScreenPos();
 
-            const std::string profileLabelText = std::string(Icon::BrushUtf8) + "  Profile:";
+            const std::string profileLabelText = std::string(Icon::BrushUtf8) + "  Preset:";
             ImFont* profileLabelFont = ImGuiM3FontBold();
             const float profileLabelPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * profileD;
             ImGui::PushFont(profileLabelFont, profileLabelPx);
@@ -266,18 +261,11 @@ namespace VKIntox
                 ImVec2(rowPos.x + 2.0f * profileD, rowPos.y + (rowH - profileLabelSize.y) * 0.5f),
                 ImGuiM3ColorU32(ImGuiM3Role_OnSurface), profileLabelText.c_str());
 
-            // the field starts after the label and stops before the actions
-            const float fieldX = rowPos.x + profileLabelSize.x + 20.0f * profileD;
-            // fixed at its widest unless the panel is too narrow: it used to grow
-            // with the window, so dragging the shell looked like resizing the field.
-            // fieldX is screen-space but actionsX is window-local; compare in
-            // window-local coords or the room tracks the window's screen position
+            const float fieldX = rowPos.x + profileLabelSize.x + 16.0f * profileD;
             const float fieldXLocal = fieldX - ImGui::GetCurrentWindowRead()->Pos.x;
-            const float fieldRoom = actionsX - fieldXLocal - 16.0f * profileD;
-            const float fieldW = ImClamp(280.0f * profileD, 90.0f * profileD, ImMax(fieldRoom, 90.0f * profileD));
+            const float fieldRoom = actionsXLocal - fieldXLocal - 12.0f * profileD;
+            const float fieldW = ImMax(1.0f, ImMin(280.0f * profileD, fieldRoom));
             ImGui::SetCursorScreenPos(ImVec2(fieldX, rowPos.y));
-            // the pill the elevated buttons use: a small radius here put a tight
-            // ring at the field's corners and read as a cut-off shadow
             const float fieldR = ImMin(rowH * 0.5f, ImGuiM3Radius(ImGuiM3Shape_Full));
             ImGuiM3ShapeRounding fieldRound{ fieldR, fieldR, fieldR, fieldR };
             ImGuiM3DrawElevation(ImGui::GetWindowDrawList(),
@@ -287,13 +275,8 @@ namespace VKIntox
             ImGui::SetNextItemWidth(fieldW);
             const char* shaderLabel = activeShaderProfileName.empty() ? "None" : activeShaderProfileName.c_str();
             const float previewBudget = ImMax(24.0f, fieldW - ImGui::GetFrameHeight() - 8.0f);
-            // The field and its menu carry an opaque container so a bright game frame
-            // behind the blurred backdrop can't wash them out.
-            const ImVec4 fieldBg = ImGuiM3Color(ImGuiM3Role_SurfaceContainerHighest);
-            const ImVec4 menuBg = ImGuiM3Color(ImGuiM3Role_SurfaceContainerHigh);
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, fieldBg);
-            ImGui::PushStyleColor(ImGuiCol_PopupBg, menuBg);
-            // the frame carries the same radius as its shadow
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHighest));
+            ImGui::PushStyleColor(ImGuiCol_PopupBg, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHigh));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, fieldR);
             if (UI::BeginM3Combo("##shaderprofile", UI::TruncateLabel(shaderLabel, previewBudget)))
             {
@@ -310,151 +293,209 @@ namespace VKIntox
             }
             ImGui::PopStyleVar();
             ImGui::PopStyleColor(2);
-            ImGui::SameLine(actionsX);
-            if (ImGui::M3IconButton(Icon::AddUtf8, "Create shader INI profile", ImGuiM3Button_Tonal))
-                ImGui::OpenPopup("NewShaderProfilePopup");
             static std::string deleteProfileTarget;
             static std::string renameProfileTarget;
             static char renameShaderProfileName[64] = "";
-            if (!activeShaderProfileName.empty())
+            static bool exportDialogPending = false;
+
+            if (exportDialogPending)
             {
-                ImGui::SameLine();
-                if (ImGui::M3IconButton(Icon::EditUtf8, "Rename shader INI profile", ImGuiM3Button_Tonal))
+                FileDialogResult result = FileDialogResult::Cancelled;
+                std::string path;
+                if (pollFileDialog(FileDialogKind::SaveFile, result, path))
+                {
+                    exportDialogPending = false;
+                    if (result == FileDialogResult::Success && !path.empty())
+                    {
+                        std::error_code ec;
+                        std::filesystem::copy_file(activeShaderProfilePath, path,
+                                                   std::filesystem::copy_options::overwrite_existing, ec);
+                        if (ec)
+                            pushToast(LogLevel::Error, "Could not export preset: " + ec.message());
+                        else
+                            pushToast(LogLevel::Info, "Preset exported to " + path);
+                    }
+                    else if (result == FileDialogResult::Unavailable)
+                        pushToast(LogLevel::Warn, "Preset export needs the desktop file portal.");
+                }
+            }
+
+            ImGui::SetCursorScreenPos(ImVec2(actionsX, rowPos.y + (rowH - iconW) * 0.5f));
+            ImGui::BeginDisabled(fileDialogPending() || presetBrowser.IsOpened());
+            if (ImGui::M3IconButton(Icon::MoreVertUtf8, "Preset actions", ImGuiM3Button_Tonal))
+                ImGui::OpenPopup("##shader_profile_menu");
+            ImGui::EndDisabled();
+            int profileMenuAction = -1;
+            if (UI::BeginM3Menu("##shader_profile_menu"))
+            {
+                if (UI::M3MenuItem("New preset..."))
+                {
+                    profileMenuAction = 0;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (UI::M3MenuItem("Import preset..."))
+                {
+                    profileMenuAction = 3;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::BeginDisabled(!hasShaderProfile);
+                if (UI::M3MenuItem("Export preset..."))
+                {
+                    profileMenuAction = 4;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (UI::M3MenuItem("Rename..."))
+                {
+                    profileMenuAction = 1;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (UI::M3MenuItem("Delete..."))
+                {
+                    profileMenuAction = 2;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+                UI::EndM3Menu();
+            }
+            if (profileMenuAction >= 0)
+            {
+                if (profileMenuAction == 3)
+                {
+                    if (!settingsManager.getUsePortalIntegration()
+                        || !startOpenFileDialog("Import ReShade preset", {"*.ini"}))
+                        openPresetBrowser();
+                }
+                else if (profileMenuAction == 4)
+                {
+                    if (!autoSaveProfile(true))
+                        pushToast(LogLevel::Error, "Could not save the active preset before export.");
+                    else if (!settingsManager.getUsePortalIntegration()
+                             || !startSaveFileDialog("Export ReShade preset", {"*.ini"},
+                                                     activeShaderProfileName + ".ini"))
+                        pushToast(LogLevel::Warn, "Preset export needs the desktop file portal.");
+                    else
+                        exportDialogPending = true;
+                }
+                else if (profileMenuAction == 0)
+                    ImGui::OpenPopup("NewShaderProfilePopup");
+                else if (profileMenuAction == 1)
                 {
                     renameProfileTarget = activeShaderProfileName;
                     std::snprintf(renameShaderProfileName, sizeof(renameShaderProfileName), "%s",
                                   activeShaderProfileName.c_str());
                     ImGui::OpenPopup("##rename_shader_profile");
                 }
-
-                if (UI::BeginM3Dialog("##rename_shader_profile", "Rename shader preset"))
-                {
-                    ImGui::TextDisabled("Name");
-                    ImGui::SetNextItemWidth(240.0f);
-                    ImGui::InputText("##renameshaderprofilename", renameShaderProfileName,
-                                     sizeof(renameShaderProfileName));
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    const UI::M3DialogAction actions[] = {
-                        {"Cancel", ImGuiM3Button_Outlined, false},
-                        {"Rename", ImGuiM3Button_Filled, renameShaderProfileName[0] == '\0'},
-                    };
-                    const int action = UI::M3DialogActions(actions, 2);
-                    if (action == 1)
-                    {
-                        const std::string newName = renameShaderProfileName;
-                        const std::string oldName = renameProfileTarget;
-                        if (newName == oldName)
-                        {
-                            // name unchanged: nothing to rename
-                        }
-                        else if (!ConfigSerializer::isValidShaderProfileName(newName))
-                            pushToast(LogLevel::Error, "Preset names can't contain /, \\ or @.");
-                        else if (std::find(shaderProfiles.begin(), shaderProfiles.end(), newName) != shaderProfiles.end())
-                            pushToast(LogLevel::Error, "A shader preset named \"" + newName + "\" already exists.");
-                        else if (!autoSaveProfile(true))
-                            pushToast(LogLevel::Error, "Could not save the active shader profile.");
-                        else
-                        {
-                            // run the rename on the writer thread so a queued
-                            // save can't race the files, then update the UI's
-                            // name/path only after it has landed
-                            auto renamed = std::make_shared<std::atomic<bool>>(false);
-                            AsyncWriter::instance().submit([game = activeGameName, oldName, newName, renamed]() {
-                                renamed->store(ConfigSerializer::renameShaderProfile(game, oldName, newName),
-                                               std::memory_order_relaxed);
-                            });
-                            AsyncWriter::instance().waitForIdle();
-                            if (renamed->load(std::memory_order_relaxed))
-                            {
-                                if (activeShaderProfileName == oldName)
-                                    setActiveShaderProfile(newName);
-                                refreshShaderProfiles();
-                                pendingShaderProfilePath = activeShaderProfilePath;
-                                pendingShaderProfile = true;
-                                applyRequested = true;
-                                paramsDirty = false;
-                                profileDirty = false;
-                                pushToast(LogLevel::Info, "Renamed shader preset to \"" + newName + "\".");
-                            }
-                            else
-                                pushToast(LogLevel::Error, "Could not rename the shader profile.");
-                        }
-                    }
-                    if (action >= 0)
-                        ImGui::CloseCurrentPopup();
-                    UI::EndM3Dialog();
-                }
-
-                ImGui::SameLine();
-                if (ImGui::M3IconButton(Icon::DeleteUtf8, "Delete shader INI profile", ImGuiM3Button_Tonal))
+                else if (profileMenuAction == 2)
                 {
                     deleteProfileTarget = activeShaderProfileName;
                     ImGui::OpenPopup("##delete_shader_profile");
                 }
+            }
 
-                if (UI::BeginM3Dialog("##delete_shader_profile", "Delete this shader preset?"))
-                {
-                    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 380.0f * ImGuiM3GetMetrics().density);
-                    ImGui::TextUnformatted(("This preset, \"" + deleteProfileTarget + "\", will be deleted. This can't be undone.").c_str());
-                    ImGui::PopTextWrapPos();
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                    const UI::M3DialogAction actions[] = {
-                        {"No, keep", ImGuiM3Button_Outlined},
-                        {"Yes, I'm sure", ImGuiM3Button_Destructive},
-                    };
-                    const int action = UI::M3DialogActions(actions, 2);
-                    if (action == 1)
-                    {
-                        if (!ConfigSerializer::deleteShaderProfile(activeGameName, deleteProfileTarget))
-                            pushToast(LogLevel::Error, "Could not delete the shader profile.");
-                        else
-                        {
-                            if (deleteProfileTarget == activeShaderProfileName)
-                            {
-                                profileDirty = false;
-                                paramsDirty = false;
-                                activeShaderProfileName.clear();
-                            }
-                            refreshShaderProfiles();
-                            if (!shaderProfiles.empty())
-                            {
-                                pendingShaderProfilePath = activeShaderProfilePath;
-                                pendingShaderProfile = true;
-                                applyRequested = true;
-                            }
-                            else
-                            {
-                                activeShaderProfileName.clear();
-                                activeShaderProfilePath.clear();
-                                pendingShaderProfilePath.clear();
-                                pendingShaderProfile = true;
-                                applyRequested = true;
-                            }
-                        }
-                    }
-                    if (action >= 0)
-                        ImGui::CloseCurrentPopup();
-                    UI::EndM3Dialog();
-                }
-            }
-            ImGui::SameLine();
-            ImGui::BeginDisabled(fileDialogPending() || presetBrowser.IsOpened());
-            if (ImGui::M3IconButton(Icon::UploadUtf8, "Import a ReShade .ini preset", ImGuiM3Button_Tonal))
+            if (UI::BeginM3Dialog("##rename_shader_profile", "Rename shader preset"))
             {
-                if (!settingsManager.getUsePortalIntegration()
-                    || !startOpenFileDialog("Import ReShade preset", {"*.ini"}))
-                    openPresetBrowser();
+                UI::TextSupport("Use a distinct name so this preset is easy to find.");
+                ImGui::TextDisabled("Name");
+                ImGui::SetNextItemWidth(240.0f * profileD);
+                ImGui::InputText("##renameshaderprofilename", renameShaderProfileName,
+                                 sizeof(renameShaderProfileName));
+                ImGui::Spacing();
+                const UI::M3DialogAction actions[] = {
+                    {"Cancel", ImGuiM3Button_Outlined, false},
+                    {"Rename", ImGuiM3Button_Filled, renameShaderProfileName[0] == '\0'},
+                };
+                const int action = UI::M3DialogActions(actions, 2);
+                if (action == 1)
+                {
+                    const std::string newName = renameShaderProfileName;
+                    const std::string oldName = renameProfileTarget;
+                    if (newName == oldName)
+                    {
+                        // unchanged
+                    }
+                    else if (!ConfigSerializer::isValidShaderProfileName(newName))
+                        pushToast(LogLevel::Error, "Preset names can't contain /, \\ or @.");
+                    else if (std::find(shaderProfiles.begin(), shaderProfiles.end(), newName) != shaderProfiles.end())
+                        pushToast(LogLevel::Error, "A shader preset named \"" + newName + "\" already exists.");
+                    else if (!autoSaveProfile(true))
+                        pushToast(LogLevel::Error, "Could not save the active shader profile.");
+                    else
+                    {
+                        auto renamed = std::make_shared<std::atomic<bool>>(false);
+                        AsyncWriter::instance().submit([game = activeGameName, oldName, newName, renamed]() {
+                            renamed->store(ConfigSerializer::renameShaderProfile(game, oldName, newName),
+                                           std::memory_order_relaxed);
+                        });
+                        AsyncWriter::instance().waitForIdle();
+                        if (renamed->load(std::memory_order_relaxed))
+                        {
+                            if (activeShaderProfileName == oldName)
+                                setActiveShaderProfile(newName);
+                            refreshShaderProfiles();
+                            pendingShaderProfilePath = activeShaderProfilePath;
+                            pendingShaderProfile = true;
+                            applyRequested = true;
+                            paramsDirty = false;
+                            profileDirty = false;
+                            pushToast(LogLevel::Info, "Renamed shader preset to \"" + newName + "\".");
+                        }
+                        else
+                            pushToast(LogLevel::Error, "Could not rename the shader profile.");
+                    }
+                }
+                if (action >= 0)
+                    ImGui::CloseCurrentPopup();
+                UI::EndM3Dialog();
             }
-            ImGui::EndDisabled();
-            if (UI::BeginM3Dialog("NewShaderProfilePopup", "New shader INI preset"))
+
+            if (UI::BeginM3Dialog("##delete_shader_profile", "Delete this shader preset?"))
+            {
+                ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 380.0f * profileD);
+                ImGui::TextUnformatted(("This preset, \"" + deleteProfileTarget + "\", will be deleted. This can't be undone.").c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::Spacing();
+                const UI::M3DialogAction actions[] = {
+                    {"No, keep", ImGuiM3Button_Outlined},
+                    {"Yes, I'm sure", ImGuiM3Button_Destructive},
+                };
+                const int action = UI::M3DialogActions(actions, 2);
+                if (action == 1)
+                {
+                    if (!ConfigSerializer::deleteShaderProfile(activeGameName, deleteProfileTarget))
+                        pushToast(LogLevel::Error, "Could not delete the shader profile.");
+                    else
+                    {
+                        if (deleteProfileTarget == activeShaderProfileName)
+                        {
+                            profileDirty = false;
+                            paramsDirty = false;
+                            activeShaderProfileName.clear();
+                        }
+                        refreshShaderProfiles();
+                        pendingShaderProfilePath = activeShaderProfilePath;
+                        pendingShaderProfile = true;
+                        applyRequested = true;
+                        if (shaderProfiles.empty())
+                        {
+                            activeShaderProfileName.clear();
+                            activeShaderProfilePath.clear();
+                            pendingShaderProfilePath.clear();
+                        }
+                        pushToast(LogLevel::Info, "Deleted shader preset \"" + deleteProfileTarget + "\".");
+                    }
+                }
+                if (action >= 0)
+                    ImGui::CloseCurrentPopup();
+                UI::EndM3Dialog();
+            }
+
+            if (UI::BeginM3Dialog("NewShaderProfilePopup", "New shader preset"))
             {
                 static char newShaderProfileName[64] = "";
+                UI::TextSupport("Start from the current preset, then tune this copy.");
                 ImGui::TextDisabled("Name");
-                ImGui::SetNextItemWidth(240.0f);
+                ImGui::SetNextItemWidth(240.0f * profileD);
                 ImGui::InputText("##newshaderprofilename", newShaderProfileName, sizeof(newShaderProfileName));
-                ImGui::Spacing();
                 ImGui::Spacing();
                 const UI::M3DialogAction actions[] = {
                     {"Cancel", ImGuiM3Button_Outlined, false},
@@ -463,7 +504,9 @@ namespace VKIntox
                 const int action = UI::M3DialogActions(actions, 2);
                 if (action == 1)
                 {
-                    if (!autoSaveProfile(true))
+                    if (!ConfigSerializer::isValidShaderProfileName(newShaderProfileName))
+                        pushToast(LogLevel::Error, "Preset names can't contain /, \\ or @.");
+                    else if (!autoSaveProfile(true))
                         pushToast(LogLevel::Error, "Could not save the active shader profile.");
                     else if (ConfigSerializer::createShaderProfile(activeGameName, newShaderProfileName,
                                                                    activeShaderProfileName))
@@ -471,6 +514,7 @@ namespace VKIntox
                         switchShaderProfile(newShaderProfileName);
                         refreshShaderProfiles();
                         newShaderProfileName[0] = '\0';
+                        pushToast(LogLevel::Info, "Created shader preset \"" + activeShaderProfileName + "\".");
                     }
                     else
                         pushToast(LogLevel::Error, "Could not create the shader profile.");
@@ -479,7 +523,8 @@ namespace VKIntox
                     ImGui::CloseCurrentPopup();
                 UI::EndM3Dialog();
             }
-
+            ImGui::SetCursorScreenPos(ImVec2(rowPos.x, rowPos.y + rowH));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
         else
         {
@@ -527,13 +572,11 @@ namespace VKIntox
 
         const ImGuiM3Metrics& listMetrics = ImGuiM3GetMetrics();
         const float cardSpacing = ImGui::GetStyle().ItemSpacing.y;
-        const float sheetHeaderH = ImGui::GetFrameHeight() + 24.0f * listMetrics.density;
-        const float resizeHandleH = 12.0f * listMetrics.density;
-        // the footer holds the floating Apply pill: the button plus an even inset
-        // all round it, so the pill has room to cast its shadow
-        // the footer box: a 36dp action button (the hero row's height) with an
-        // even 8dp inset, so the pill sits concentric in the box's corners
-        const float footerBtnH = 36.0f * listMetrics.density;
+        const float sheetHeaderH = ImGui::GetFrameHeight() + 12.0f * listMetrics.density;
+        const float resizeHandleH = 8.0f * listMetrics.density;
+        // the footer holds the apply action and its state, with an even inset
+        // around the 40dp pill so its shadow stays inside the floating surface
+        const float footerBtnH = listMetrics.button_height_default * listMetrics.density;
         const float applyPillInset = 8.0f * listMetrics.density;
         const float footerRowH = footerBtnH + applyPillInset * 2.0f;
         // extra air above the footer box: it belongs with the nav bar under it, so
