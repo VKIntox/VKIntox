@@ -26,6 +26,7 @@ namespace VKIntox::Icon
     constexpr ImWchar Tune           = 0xE429;  // Advanced
     constexpr ImWchar MonitorHeart   = 0xEAA2;  // Diagnostics
     constexpr ImWchar BugReport      = 0xE868;  // Debug
+    constexpr ImWchar Attribution    = 0xE6CE;  // Credits
     constexpr ImWchar WandShine      = 0xF31F;  // Effects (wand with sparkle)
     constexpr ImWchar Function       = 0xF866;  // Shaders (fx)
 
@@ -101,6 +102,7 @@ namespace VKIntox::Icon
     constexpr const char* TuneUtf8          = "\xEE\x90\xA9";
     constexpr const char* MonitorHeartUtf8  = "\xEE\xAA\xA2";
     constexpr const char* BugReportUtf8     = "\xEE\xA1\xA8";
+    constexpr const char* AttributionUtf8   = "\xEE\x9B\x8E";
     constexpr const char* WandShineUtf8     = "\xEF\x8C\x9F";
     constexpr const char* FunctionUtf8      = "\xEF\xA1\xA6";
     constexpr const char* AddUtf8           = "\xEE\x85\x85";
@@ -169,7 +171,7 @@ namespace VKIntox::Icon
     inline const ImWchar* GlyphRanges()
     {
         static const ImWchar ranges[] = {
-            AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport, WandShine, Function,
+            AutoAwesome, Palette, Settings, Tune, MonitorHeart, BugReport, Attribution, WandShine, Function,
             MaskedTransitions,
             Add, Edit, Close, Search, Delete, ExpandMore, ArrowDropDown, KeyboardArrowDown, ChevronRight, ChevronLeft, Refresh, Save,
             FolderOpen, Upload, Check, Minus, CheckCircle, Cancel, Warning, Error, Info,
