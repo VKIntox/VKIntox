@@ -1861,15 +1861,22 @@ namespace VKIntox
                                                    &memoryBarrier);
         }
 
-        VkDescriptorSet currentSamplerSet = inputDescriptorSets[imageIndex];
+        // texture-less effects (uniforms only) leave the image-sampler set
+        // empty; nothing to bind then, and set 1 of the pipeline layout goes
+        // unused
+        const bool bindSamplerSet = !inputDescriptorSets.empty();
+        VkDescriptorSet currentSamplerSet = bindSamplerSet ? inputDescriptorSets[imageIndex] : VK_NULL_HANDLE;
         bool backBufferNext = outputWrites % 2 == 0;
         for (size_t i = 0; i < passRuntimes.size(); i++)
         {
             auto& runtime = passRuntimes[i];
             if (runtime.isCompute)
             {
-                logicalDevice->vkd.CmdBindDescriptorSets(
-                    commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 1, 1, &currentSamplerSet, 0, nullptr);
+                if (bindSamplerSet)
+                {
+                    logicalDevice->vkd.CmdBindDescriptorSets(
+                        commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 1, 1, &currentSamplerSet, 0, nullptr);
+                }
                 if (bufferSize)
                 {
                     logicalDevice->vkd.CmdBindDescriptorSets(
@@ -1881,8 +1888,11 @@ namespace VKIntox
             }
             else
             {
-                logicalDevice->vkd.CmdBindDescriptorSets(
-                    commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &currentSamplerSet, 0, nullptr);
+                if (bindSamplerSet)
+                {
+                    logicalDevice->vkd.CmdBindDescriptorSets(
+                        commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &currentSamplerSet, 0, nullptr);
+                }
                 if (bufferSize)
                 {
                     logicalDevice->vkd.CmdBindDescriptorSets(
@@ -1906,9 +1916,10 @@ namespace VKIntox
                 {
                     if (backBufferNext)
                     {
-                        currentSamplerSet = backBufferDescriptorSets[imageIndex];
+                        if (imageIndex < backBufferDescriptorSets.size())
+                            currentSamplerSet = backBufferDescriptorSets[imageIndex];
                     }
-                    else if (outputWrites > 2)
+                    else if (outputWrites > 2 && imageIndex < outputDescriptorSets.size())
                     {
                         currentSamplerSet = outputDescriptorSets[imageIndex];
                     }
