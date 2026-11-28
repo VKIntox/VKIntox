@@ -9,8 +9,8 @@
 <p align="center">
   <a href="https://git.buwryy.net/VKIntox/VKIntox/src/branch/main/VERSION">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://badge.buwryy.net/vkintox/version.svg?mode=dark">
-      <img alt="Version" src="https://badge.buwryy.net/vkintox/version.svg?mode=light">
+      <source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/version-v0.3.0_Preview_2.svg?variant=secondary&size=sm&mode=dark&logo=git">
+      <img alt="Version" src="https://shieldcn.dev/badge/version-v0.3.0_Preview_2.svg?variant=secondary&size=sm&mode=light&logo=git">
     </picture>
   </a>
   <a href="https://git.buwryy.net/VKIntox/VKIntox/releases">
@@ -110,6 +110,7 @@ VKIntox builds on x86_64 and aarch64. On x86_64, `scripts/arm64-smoke.sh` runs a
 - NVIDIA and Intel iGPU support, AMD untested.....
 - A setup script with ease-of-use, for both local-compiled and remote installs
 - Advanced backend stability, including but not limited to, wrapping every C resource in RAII, atomic config writes, registry lookups, and everything mostly running in async to make room for less freezes.
+- Frame generation via MAKO
 
 ## Note:
 
@@ -126,7 +127,7 @@ VKIntox builds on x86_64 and aarch64. On x86_64, `scripts/arm64-smoke.sh` runs a
 
 ## Credits
 
-[vkShade](https://github.com/slobodaapl/vkShade) and [vkBasalt](https://github.com/DadSchoorse/vkBasalt) for the base of VKIntox, daaboulex for the Wayland overlay, crosire for the ReShade compilers, and Dear ImGui for making the in-game overlay possible.
+[vkShade](https://github.com/slobodaapl/vkShade) and [vkBasalt](https://github.com/DadSchoorse/vkBasalt) for the base of VKIntox, daaboulex for the Wayland overlay, crosire for the ReShade compilers, Dear ImGui for making the in-game overlay possible, and [MAKO](https://github.com/eugeniosegala/MAKO/) for the framegen foundation.
 
 ## License
 

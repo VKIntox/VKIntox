@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# fetch the MAKO frame generation host and its V1.24 model
+# usage: fetch-mako-fg [DEST] [REF]
+set -euo pipefail
+
+DEST="${1:-src/framegen/mako-fg}"
+REF="${2:-${VKINTOX_FG_REF:-framegen}}"
+REPO="${VKINTOX_REPO:-VKIntox/VKIntox}"
+BASE="https://raw.githubusercontent.com/${REPO}/${REF}/src/framegen/mako-fg"
+
+need() { command -v "$1" >/dev/null 2>&1 || { echo "missing $1" >&2; exit 1; }; }
+need curl
+
+if [[ -x "$DEST/mako-fg-host" && -s "$DEST/model/weights.bin" ]]; then
+    exit 0
+fi
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+for file in mako-fg-host version.json \
+            model/weights.bin model/ops.spv model/transport.spv model/mixture.spv; do
+    mkdir -p "$TMP/$(dirname "$file")"
+    echo "fetching $file"
+    curl -fL --retry 3 --retry-delay 1 -o "$TMP/$file" "$BASE/$file"
+done
+
+mkdir -p "$DEST/model"
+install -m 755 "$TMP/mako-fg-host" "$DEST/mako-fg-host"
+install -m 644 "$TMP/version.json" "$DEST/version.json"
+for file in weights.bin ops.spv transport.spv mixture.spv; do
+    install -m 644 "$TMP/model/$file" "$DEST/model/$file"
+done
+echo "MAKO frame generation package ready in $DEST"

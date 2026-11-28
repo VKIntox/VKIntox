@@ -11,7 +11,7 @@ namespace VKIntox
         // Shared M3 dialog frame: a padded surface with a bold title. The popup
         // must already have been opened with OpenPopup(id). Returns true while
         // the dialog is open; draw the body and footer, then call EndM3Dialog().
-        bool BeginM3Dialog(const char* id, const char* title);
+        bool BeginM3Dialog(const char* id, const char* title, float width_dp = 440.0f);
         void EndM3Dialog();
 
         // Dialog footer action: pill-shaped and a step stronger than M3Button,

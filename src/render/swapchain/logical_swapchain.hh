@@ -10,6 +10,8 @@
 
 #include "render/device/logical_device.hh"
 
+#include "framegen/present.hh"
+
 namespace VKIntox
 {
     class Config;
@@ -65,6 +67,9 @@ namespace VKIntox
     {
         LogicalDevice*                       logicalDevice;
         VkSwapchainCreateInfoKHR             swapchainCreateInfo;
+        // the real swapchain this wraps; the inner FG acquires present
+        // against it directly
+        VkSwapchainKHR                       handle = VK_NULL_HANDLE;
         VkExtent2D                           imageExtent;
         VkFormat                             format;
         uint32_t                             imageCount;
@@ -132,6 +137,31 @@ namespace VKIntox
         std::vector<bool>                     effectSubmitFenceUsed;
         bool                                  depthReallocPending = false;
         bool                                  rebuildEffectsOnNextPresent = false;
+
+        // FG frame generation; lives with the swapchain so a rebuild drops
+        // the engine objects with it
+        std::unique_ptr<FrameGen::FgSwapchain> fg;
+        // profile the live engine was created with
+        FrameGen::FgProfile fgProfile;
+        // profile the swapchain image pool was created for; a pool built for
+        // another multiplier cannot host the engine
+        FrameGen::FgProfile fgCreateProfile;
+        // settings changed after creation: keep the live engine untouched and
+        // wait for the next launch instead of tearing it down mid-frame
+        bool fgStale = false;
+        bool fgChangeLogged = false;
+        // engine init is expensive; a failed attempt is latched until the
+        // next swapchain instead of being retried every present
+        bool fgInitFailed = false;
+        // delay engine startup until the swapchain has settled; games often
+        // create a tiny window first and replace it with the real one
+        uint32_t fgPresentCount = 0;
+        // present mode the swapchain was really created with (after the FG
+        // create hook); generated frames only reach the screen under FIFO
+        VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        // FG wanted vsync but the swapchain predates it: asked the app once
+        // to recreate (SUBOPTIMAL) so the create hook can switch it to FIFO
+        bool fgRecreateRequested = false;
 
         bool destroy();
         void reloadEffects(Config* config);

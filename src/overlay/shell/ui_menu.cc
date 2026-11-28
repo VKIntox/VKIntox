@@ -13,14 +13,14 @@ namespace VKIntox
     {
         namespace
         {
-            // M3 menus: 112dp floor, 240dp ceiling, spacious rows whose width is
-            // locked to the surface, so every highlight spans the same span.
-            constexpr float kMenuMinWidthDp = 112.0f;
-            constexpr float kMenuMaxWidthDp = 280.0f;
-            constexpr float kMenuMaxHeightDp = 340.0f;
-            constexpr float kItemPadXDp = 12.0f;
-            constexpr float kItemPadYDp = 8.0f;
-            constexpr float kRowGapDp = 2.0f;
+            // compact rows and a strongly rounded surface, with every highlight
+            // locked to the same inner width
+            constexpr float kMenuMinWidthDp = 200.0f;
+            constexpr float kMenuMaxWidthDp = 320.0f;
+            constexpr float kMenuMaxHeightDp = 420.0f;
+            constexpr float kItemPadXDp = 16.0f;
+            constexpr float kMenuItemHeightDp = 20.0f;
+            constexpr float kRowGapDp = 0.0f;
 
             // Appear: a pure fade. Position and size are left to ImGui's own
             // popup placement — animating the window ourselves fought the
@@ -34,9 +34,12 @@ namespace VKIntox
                 double lastSeen = 0.0;
             };
             std::unordered_map<ImGuiID, MenuAppear> g_menuAppear;
+            ImVec4 g_menuBackground = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
 
             float AppearEase(const MenuAppear& s, double now)
             {
+                if (ImGuiM3GetMetrics().reduced_motion)
+                    return 1.0f;
                 if (now <= s.start)
                     return 0.0f;
                 const float clock = static_cast<float>((now - s.start) / kAppearSeconds);
@@ -76,16 +79,17 @@ namespace VKIntox
                 const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
                                     ImVec2(m.menu_padding_x * m.density, m.menu_padding_y * m.density));
-                ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, m.menu_radius * m.density);
+                const float radius = ImGuiM3Radius(ImGuiM3Shape_LargeIncreased);
+                ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, radius);
                 ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 0.0f);
-                // rows breathe: a 2dp seam keeps the rounded rows from welding shut
                 ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
                                     ImVec2(0.0f, kRowGapDp * m.density));
+                ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.0f * m.density);
             }
 
             void PopM3MenuStyle()
             {
-                ImGui::PopStyleVar(4);
+                ImGui::PopStyleVar(5);
             }
 
             void PushMenuWidthFloor()
@@ -112,24 +116,29 @@ namespace VKIntox
                 }
                 MenuAppear& s = it->second;
                 s.lastSeen = now;
-                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImClamp(AppearEase(s, now), 0.0f, 1.0f));
+                const float alpha = ImClamp(AppearEase(s, now), 0.0f, 1.0f);
+                const ImRect rect = ImGui::GetCurrentWindow()->Rect();
+                const float radius = ImGuiM3Radius(ImGuiM3Shape_LargeIncreased);
+                const ImGuiM3ShapeRounding rounding{ radius, radius, radius, radius };
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImGuiM3DrawElevation(dl, rect, rounding, 2, alpha);
+                ImVec4 bg = g_menuBackground;
+                bg.w *= alpha;
+                ImGuiM3PathRoundedRect(dl, rect, rounding, ImGui::ColorConvertFloat4ToU32(bg));
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
             }
 
-            void PushFadedPopupBg(ImGuiID popupId, double now)
+            void PushFadedPopupBg(ImGuiID, double)
             {
-                auto it = g_menuAppear.find(popupId);
-                const float bgAlpha = it != g_menuAppear.end()
-                    ? ImClamp(AppearEase(it->second, now), 0.0f, 1.0f) : 1.0f;
-                ImVec4 bg = ImGui::GetStyle().Colors[ImGuiCol_PopupBg];
-                bg.w *= bgAlpha;
-                ImGui::PushStyleColor(ImGuiCol_PopupBg, bg);
+                g_menuBackground = ImGui::GetStyle().Colors[ImGuiCol_PopupBg];
+                ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
             }
             // One row's highlight: nothing by default, a state layer on hover/press,
             // and the accent container when selected. Radii stay well under the
             // row's half-height so a row reads as a rounded rectangle, not a pill.
             void DrawRowHighlight(const ImRect& bb, bool selected, bool hovered, bool held)
             {
-                const float r = ImMin(ImGuiM3Radius(ImGuiM3Shape_Small), bb.GetHeight() * 0.5f);
+                const float r = ImMin(ImGuiM3Radius(ImGuiM3Shape_Medium), bb.GetHeight() * 0.5f);
                 const ImGuiM3ShapeRounding round{ r, r, r, r };
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 if (selected)
@@ -147,7 +156,7 @@ namespace VKIntox
                 return ImMax(avail, text_size.x + padX * 2.0f);
             }
 
-            float ItemFontSize() { return ImGuiM3GetTypeStyle(ImGuiM3Type_LabelLarge).size * ImGuiM3GetMetrics().density; }
+            float ItemFontSize() { return ImGuiM3GetTypeStyle(ImGuiM3Type_LabelMedium).size * ImGuiM3GetMetrics().density; }
         }
 
         const char* TruncateLabel(const char* label, float maxWidth)
@@ -172,6 +181,7 @@ namespace VKIntox
             PushFadedPopupBg(popupId, now);
             if (!ImGui::BeginPopup(id))
             {
+                ImGui::GetCurrentContext()->NextWindowData.ClearFlags();
                 ImGui::PopStyleColor();
                 PopM3MenuStyle();
                 return false;
@@ -190,6 +200,7 @@ namespace VKIntox
             PushFadedPopupBg(popupId, now);
             if (!ImGui::BeginPopupContextItem(id))
             {
+                ImGui::GetCurrentContext()->NextWindowData.ClearFlags();
                 ImGui::PopStyleColor();
                 PopM3MenuStyle();
                 return false;
@@ -207,19 +218,14 @@ namespace VKIntox
             if (brand)
                 ImGui::PushFont(brand, ItemFontSize());
             // the row hugs its text instead of a fixed height.
-            const float height = ImGui::GetTextLineHeight() + 2.0f * kItemPadYDp * m.density;
+            const float height = kMenuItemHeightDp * m.density;
             const float maxContent = kMenuMaxWidthDp * m.density - 2.0f * m.menu_padding_x * m.density;
             const ImVec2 full = ImGui::CalcTextSize(label ? label : "");
             const float rowWidth = LockedRowWidth(full, padX);
             const float textBudget = ImMax(16.0f, ImMin(rowWidth, maxContent) - padX * 2.0f);
             const char* shown = TruncateLabel(label, textBudget);
             ImGui::PushID(label);
-            ImGui::PushStyleColor(ImGuiCol_Header, 0);
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
-            ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
-            const bool pressed = ImGui::Selectable("##row", false, ImGuiSelectableFlags_NoPadWithHalfSpacing,
-                                                   ImVec2(rowWidth, height));
-            ImGui::PopStyleColor(3);
+            const bool pressed = ImGui::InvisibleButton("##row", ImVec2(rowWidth, height));
             const bool hovered = ImGui::IsItemHovered();
             const bool held = ImGui::IsItemActive();
             const ImVec2 mn = ImGui::GetItemRectMin();
@@ -244,7 +250,7 @@ namespace VKIntox
             ImFont* brand = ImGuiM3FontBold();
             if (brand)
                 ImGui::PushFont(brand, ItemFontSize());
-            const float height = ImGui::GetTextLineHeight() + 2.0f * kItemPadYDp * m.density;
+            const float height = kMenuItemHeightDp * m.density;
             const float bullet_r = ImMax(2.0f, ImGui::GetFontSize() * 0.19f);
             const float textX = padX + bullet_r * 2.0f + 10.0f * m.density;
             const float maxContent = kMenuMaxWidthDp * m.density - 2.0f * m.menu_padding_x * m.density;
@@ -252,12 +258,7 @@ namespace VKIntox
             const float rowWidth = LockedRowWidth(ImVec2(full.x + textX - padX, full.y), padX);
             const float textBudget = ImMax(16.0f, ImMin(rowWidth, maxContent) - textX - padX);
             ImGui::PushID(label);
-            ImGui::PushStyleColor(ImGuiCol_Header, 0);
-            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
-            ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
-            const bool pressed = ImGui::Selectable("##row", false, ImGuiSelectableFlags_NoPadWithHalfSpacing,
-                                                   ImVec2(rowWidth, height));
-            ImGui::PopStyleColor(3);
+            const bool pressed = ImGui::InvisibleButton("##row", ImVec2(rowWidth, height));
             const bool hovered = ImGui::IsItemHovered();
             const bool held = ImGui::IsItemActive();
             const ImVec2 mn = ImGui::GetItemRectMin();
@@ -291,50 +292,56 @@ namespace VKIntox
         {
             const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
             const double now = ImGui::GetTime();
-            char name[16];
-            ImFormatString(name, sizeof(name), "##Combo_%02d", ImGui::GetCurrentContext()->BeginComboDepth);
-            const ImGuiID popupId = ImGui::GetCurrentWindow()->GetID(name);
+            const ImGuiID comboId = ImGui::GetCurrentWindow()->GetID(label);
+            const ImGuiID popupId = ImHashStr("##ComboPopup", 0, comboId);
             ReapMenus(now);
+            PushM3MenuStyle();
             PushFadedPopupBg(popupId, now);
             // The popup's floor is the field width, so dragging the window would
             // re-flow an open menu under the cursor. Latch it at open time and the
             // menu holds its size for as long as it is up.
             static std::unordered_map<ImGuiID, float> s_comboWidthLatch;
-            float min_w = kMenuMinWidthDp * m.density;
+            const float fieldW = ImGui::CalcItemWidth();
+            const float minWidth = kMenuMinWidthDp * m.density;
+            const float maxWidth = kMenuMaxWidthDp * m.density;
             if (ImGui::IsPopupOpen(popupId, ImGuiPopupFlags_None))
             {
                 float& latched = s_comboWidthLatch[popupId];
                 if (latched <= 0.0f)
-                    latched = ImGui::CalcItemWidth();
-                min_w = ImMax(min_w, latched);
+                    latched = fieldW;
+                const float popupWidth = ImClamp(ImMax(minWidth, latched), minWidth, maxWidth);
+                const float max_h = kMenuMaxHeightDp * m.density;
+                ImGui::SetNextWindowSize(ImVec2(popupWidth, 0.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSizeConstraints(ImVec2(popupWidth, 0.0f),
+                                                    ImVec2(popupWidth, max_h));
+                const ImVec2 anchor = ImGui::GetCursorScreenPos();
+                ImGui::SetNextWindowPos(ImVec2(anchor.x + (fieldW - popupWidth) * 0.5f,
+                                               anchor.y + ImGui::GetFrameHeight()), ImGuiCond_Always);
             }
             else
             {
                 s_comboWidthLatch.erase(popupId);
             }
-            const float max_h = kMenuMaxHeightDp * m.density;
-            ImGui::SetNextWindowSizeConstraints(ImVec2(min_w, 0.0f),
-                                                ImVec2(kMenuMaxWidthDp * m.density, max_h));
             // the combo field is a rounded select, not the global pill.
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, ImGuiM3Radius(ImGuiM3Shape_Small));
             if (!ImGui::BeginCombo(label, preview))
             {
                 ImGui::PopStyleVar();
                 ImGui::PopStyleColor();
+                PopM3MenuStyle();
                 return false;
             }
             ApplyMenuAppear(popupId, now);
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, kRowGapDp * m.density));
             return true;
         }
 
         void EndM3Combo()
         {
-            ImGui::PopStyleVar();       // item spacing
             ImGui::PopStyleVar();       // appear alpha
             ImGui::EndCombo();
             ImGui::PopStyleColor();     // faded popup bg
             ImGui::PopStyleVar();       // combo frame rounding
+            PopM3MenuStyle();
         }
     } // namespace UI
 } // namespace VKIntox

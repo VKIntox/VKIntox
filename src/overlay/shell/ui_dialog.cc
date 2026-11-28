@@ -30,6 +30,8 @@ namespace VKIntox
 
             float AppearEase(const DialogAppear& s, double now)
             {
+                if (ImGuiM3GetMetrics().reduced_motion)
+                    return 1.0f;
                 const float clock = static_cast<float>((now - s.start) / kAppearSeconds);
                 if (clock >= 1.0f)
                     return 1.0f;
@@ -57,7 +59,7 @@ namespace VKIntox
             return bezier((lo + hi) * 0.5f, y1, y2);
         }
 
-        bool BeginM3Dialog(const char* id, const char* title)
+        bool BeginM3Dialog(const char* id, const char* title, float width_dp)
         {
             const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
             const float pad = 24.0f * m.density;
@@ -86,6 +88,10 @@ namespace VKIntox
             ImGui::PushStyleColor(ImGuiCol_PopupBg, popupBg);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, m.dialog_radius * m.density);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(m.dialog_min_width * m.density, 0.0f),
+                                                ImVec2(440.0f * m.density, 520.0f * m.density));
+            if (width_dp > 0.0f)
+                ImGui::SetNextWindowSize(ImVec2(width_dp * m.density, 0.0f), ImGuiCond_Always);
 
             if (!ImGui::BeginPopup(id))
             {
@@ -182,7 +188,7 @@ namespace VKIntox
         bool M3DialogButton(const char* label, ImGuiM3ButtonVariant variant, float width)
         {
             const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-            return ImGui::M3Button(label, variant, ImVec2(width, 32.0f * m.density), true);
+            return ImGui::M3Button(label, variant, ImVec2(width, m.button_height_default * m.density), true);
         }
 
         float M3DialogButtonWidth(const char* label)

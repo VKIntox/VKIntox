@@ -295,6 +295,24 @@ namespace VKIntox
                 settings.showFps = (value == "true" || value == "1");
             else if (key == "fpsExtended")
                 settings.fpsExtended = (value == "true" || value == "1");
+            else if (key == "fgEnabled")
+                settings.fgEnabled = (value == "true" || value == "1");
+            else if (key == "fgMultiplier")
+            {
+                try { settings.fgMultiplier = std::clamp(std::stoi(value), 2, 4); }
+                catch (...) { Logger::err("invalid fgMultiplier value: " + value); }
+            }
+            else if (key == "fgFlowScale")
+            {
+                try { settings.fgFlowScale = std::stof(value); }
+                catch (...) { Logger::err("invalid fgFlowScale value: " + value); }
+            }
+            else if (key == "fgPerformanceMode")
+                settings.fgPerformanceMode = (value == "true" || value == "1");
+            else if (key == "fgHalfPrecision")
+                settings.fgHalfPrecision = (value == "true" || value == "1");
+            else if (key == "fgModelPath")
+                settings.fgModelPath = value;
             else if (key == "fpsCorner")
             {
                 if (value == "top-left") settings.fpsCorner = 0;
@@ -402,10 +420,16 @@ namespace VKIntox
         file << "maxEffects = " << clampedMaxEffects << "\n";
         file << "autoApply = " << (settings.autoApply ? "true" : "false") << "\n";
         file << "autoApplyDelay = " << settings.autoApplyDelay << "\n";
-        file << "# showFps: floating FPS counter; fpsExtended: 1%/0.1% lows next to it;\n";
+        file << "# showFps: floating FPS counter; fpsExtended: 1%/0.1% lows, and real vs generated frames when FG is on;\n";
         file << "# fpsCorner: top-right (default), top-left, bottom-left, bottom-right\n";
         file << "showFps = " << (settings.showFps ? "true" : "false") << "\n";
         file << "fpsExtended = " << (settings.fpsExtended ? "true" : "false") << "\n";
+        file << "fgEnabled = " << (settings.fgEnabled ? "true" : "false") << "\n";
+        file << "fgMultiplier = " << settings.fgMultiplier << "\n";
+        file << "fgFlowScale = " << settings.fgFlowScale << "\n";
+        file << "fgPerformanceMode = " << (settings.fgPerformanceMode ? "true" : "false") << "\n";
+        file << "fgHalfPrecision = " << (settings.fgHalfPrecision ? "true" : "false") << "\n";
+        file << "fgModelPath = " << settings.fgModelPath << "\n";
         {
             static const char* const kCorners[] = {"top-left", "top-right", "bottom-left", "bottom-right"};
             file << "fpsCorner = " << kCorners[std::clamp(settings.fpsCorner, 0, 3)] << "\n";

@@ -64,6 +64,13 @@ namespace VKIntox
         int autoApplyDelay;  // ms delay before auto-applying changes
         bool showFps;        // floating FPS counter in a screen corner
         bool fpsExtended;    // 1% and 0.1% lows next to the FPS counter
+        // Lossless Scaling frame generation (the frame generation engine engine)
+        bool fgEnabled;
+        int fgMultiplier;      // 2 = every frame doubled, up to 4
+        float fgFlowScale;     // flow field resolution scale
+        bool fgPerformanceMode;
+        bool fgHalfPrecision;
+        std::string fgModelPath; // path to the Lossless Scaling the frame generation engine.dll
         int fpsCorner;       // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
         // Overlay window geometry in framebuffer pixels, kept across launches.
         // A width/height of 0 means "never placed": use the default layout.

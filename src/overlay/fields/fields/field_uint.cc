@@ -65,7 +65,7 @@ namespace VKIntox
             {
                 modalOpenRequested = false;
                 const ImGuiViewport* viewport = ImGui::GetMainViewport();
-                const ImVec2 popupSize = ImVec2(320.0f, 190.0f);
+                const ImVec2 popupSize = ImVec2(440.0f, 190.0f);
                 ImGui::SetNextWindowPos(customValuePopupPosition(
                     popupPosition, viewport->Pos, viewport->Size, popupSize), ImGuiCond_Appearing);
                 ImGui::SetNextWindowPos(customValuePopupPosition(
@@ -76,7 +76,7 @@ namespace VKIntox
 
             // === Render custom value popup ===
             if (activeModalParam == paramAddr &&
-                !popupOpenedThisFrame && UI::BeginM3Dialog(modalId, ("Custom value: " + p.label).c_str()))
+                !popupOpenedThisFrame && UI::BeginM3Dialog(modalId, ("Custom value: " + p.label).c_str(), 440.0f))
             {
                 ImGui::TextDisabled("Current range: [%u, %u]", p.minValue, p.maxValue);
                 ImGui::TextDisabled("(values outside range are allowed)");

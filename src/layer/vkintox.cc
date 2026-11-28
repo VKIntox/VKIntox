@@ -47,6 +47,7 @@
 #include "config/config.hh"
 #include "config/config_serializer.hh"
 #include "config/settings_manager.hh"
+#include "framegen/present.hh"
 #include "render/swapchain/fake_swapchain.hh"
 #include "render/resources/format.hh"
 #include "util/logger.hh"
@@ -1755,20 +1756,28 @@ namespace VKIntox
         logicalDevice->imguiOverlay->updateState(std::move(overlayState));
     }
 
-    // Submit overlay command buffer if visible, returns semaphore to wait on
+    // Submit the pre-overlay capture (if asked) and the overlay command buffer,
+    // in that order. returns semaphore to wait on
     VkResult submitOverlayFrame(LogicalDevice* logicalDevice, LogicalSwapchain* swapchain,
-                                uint32_t index, VkSemaphore& outSemaphore)
+                                uint32_t index, VkCommandBuffer preCommand, VkSemaphore& outSemaphore)
     {
-        outSemaphore = swapchain->semaphores[index];  // Default: wait on effects semaphore
+        // Nothing is drawn: the frame the caller gets back still waits on
+        // whatever produced the image it is about to present.
+        outSemaphore = swapchain->semaphores[index];
 
-        if (!logicalDevice->imguiOverlay)
-            return VK_SUCCESS;
+        VkCommandBuffer overlayCmd = VK_NULL_HANDLE;
+        if (logicalDevice->imguiOverlay)
+            overlayCmd = logicalDevice->imguiOverlay->recordFrame(
+                index, swapchain->images[index], swapchain->imageViews[index],
+                swapchain->imageExtent.width, swapchain->imageExtent.height);
 
-        VkCommandBuffer overlayCmd = logicalDevice->imguiOverlay->recordFrame(
-            index, swapchain->images[index], swapchain->imageViews[index],
-            swapchain->imageExtent.width, swapchain->imageExtent.height);
-
-        if (overlayCmd == VK_NULL_HANDLE)
+        VkCommandBuffer commandBuffers[2];
+        uint32_t commandCount = 0;
+        if (preCommand != VK_NULL_HANDLE)
+            commandBuffers[commandCount++] = preCommand;
+        if (overlayCmd != VK_NULL_HANDLE)
+            commandBuffers[commandCount++] = overlayCmd;
+        if (commandCount == 0)
             return VK_SUCCESS;
 
         // The wait must cover the capture blit's TRANSFER stage as well as the
@@ -1780,13 +1789,16 @@ namespace VKIntox
         overlaySubmit.waitSemaphoreCount = 1;
         overlaySubmit.pWaitSemaphores = &swapchain->semaphores[index];
         overlaySubmit.pWaitDstStageMask = &overlayWaitStage;
-        overlaySubmit.commandBufferCount = 1;
-        overlaySubmit.pCommandBuffers = &overlayCmd;
+        overlaySubmit.commandBufferCount = commandCount;
+        overlaySubmit.pCommandBuffers = commandBuffers;
         overlaySubmit.signalSemaphoreCount = 1;
         overlaySubmit.pSignalSemaphores = &swapchain->overlaySemaphores[index];
 
-        // Use fence to track command buffer completion (prevents reuse while in flight)
-        VkFence overlayFence = logicalDevice->imguiOverlay->getCommandBufferFence(index);
+        // Use fence to track the overlay command buffer's completion (prevents
+        // reuse while in flight); the capture buffer is recorded once and is
+        // safe to submit again as its previous use has completed by now.
+        VkFence overlayFence = overlayCmd != VK_NULL_HANDLE && logicalDevice->imguiOverlay
+            ? logicalDevice->imguiOverlay->getCommandBufferFence(index) : VK_NULL_HANDLE;
         recordSubmittedBatch(logicalDevice, "overlay", index,
                              swapchain->semaphores[index], swapchain->overlaySemaphores[index], overlayFence);
         VkResult vr = logicalDevice->vkd.QueueSubmit(logicalDevice->queue, 1, &overlaySubmit, overlayFence);
@@ -2035,6 +2047,15 @@ namespace VKIntox
                 Logger::warn("VKINTOX_GPU_CRASH_DIAGNOSTICS=1 but VK_EXT_device_fault is not supported by this device");
             }
         }
+        // FG frame generation moves frames across two Vulkan devices through
+        // exported fds. Extension names and the optional timeline feature are
+        // queried separately; Vulkan 1.2 does not imply that the KHR extension
+        // name is advertised.
+        const bool fgExternalMemoryOk = hasDeviceExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
+            && hasDeviceExtension(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+        const bool fgTimelineExtOk = hasDeviceExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        bool fgTimelineFeatureSupported = false;
+
         modifiedCreateInfo.ppEnabledExtensionNames = enabledExtensionNames.data();
         modifiedCreateInfo.enabledExtensionCount   = enabledExtensionNames.size();
 
@@ -2050,11 +2071,30 @@ namespace VKIntox
         VkPhysicalDeviceFeatures supportedFeatures = {};
         if (instanceDispatchMap[GetKey(physicalDevice)].GetPhysicalDeviceFeatures2)
         {
+            VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineQuery{};
+            timelineQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
             VkPhysicalDeviceFeatures2 features2 = {};
             features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            if (fgTimelineExtOk || deviceProps.apiVersion >= VK_API_VERSION_1_2)
+                features2.pNext = &timelineQuery;
             instanceDispatchMap[GetKey(physicalDevice)].GetPhysicalDeviceFeatures2(physicalDevice, &features2);
             supportedFeatures = features2.features;
+            fgTimelineFeatureSupported = timelineQuery.timelineSemaphore == VK_TRUE;
         }
+
+        if (fgExternalMemoryOk && fgTimelineFeatureSupported)
+        {
+            addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+            addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+            if (fgTimelineExtOk)
+                addUniqueCString(enabledExtensionNames, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        }
+        else if (settingsManager.getFgEnabled())
+        {
+            Logger::warn("FG is enabled but this device lacks supported external-memory or timeline-semaphore functionality");
+        }
+        modifiedCreateInfo.ppEnabledExtensionNames = enabledExtensionNames.data();
+        modifiedCreateInfo.enabledExtensionCount   = enabledExtensionNames.size();
 
         VkPhysicalDeviceFeatures deviceFeatures = {};
         if (modifiedCreateInfo.pEnabledFeatures)
@@ -2121,6 +2161,18 @@ namespace VKIntox
                 | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_ERROR_REPORTING_BIT_NV;
             diagnosticsConfigInfo.pNext = extendedDevicePNext;
             extendedDevicePNext = &diagnosticsConfigInfo;
+        }
+
+        // FG timeline semaphore feature for the engine's pacing signal
+        VkPhysicalDeviceTimelineSemaphoreFeaturesKHR fgTimelineFeature{};
+        if (fgExternalMemoryOk && fgTimelineFeatureSupported &&
+            !pNextChainContainsSType(extendedDevicePNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR)
+            && !pNextChainContainsSType(extendedDevicePNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES))
+        {
+            fgTimelineFeature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
+            fgTimelineFeature.timelineSemaphore = VK_TRUE;
+            fgTimelineFeature.pNext = extendedDevicePNext;
+            extendedDevicePNext = &fgTimelineFeature;
         }
 
         modifiedCreateInfo.pNext = extendedDevicePNext;
@@ -2409,6 +2461,7 @@ namespace VKIntox
             auto logicalSwapchain = std::make_shared<LogicalSwapchain>();
             logicalSwapchain->logicalDevice       = logicalDevice;
             logicalSwapchain->swapchainCreateInfo = forwardCreateInfo;
+            logicalSwapchain->handle              = *swapchain;
             logicalSwapchain->passthrough         = true;
             logicalSwapchain->format              = forwardCreateInfo.imageFormat;
             logicalSwapchain->imageCount          = 0;
@@ -2468,6 +2521,18 @@ namespace VKIntox
         // app's requested usage and is valid on both swapchain paths.
         modifiedCreateInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
+        // FG frame generation: grow the image pool so the inserted frames
+        // have somewhere to land, and allow blitting into the extra images.
+        FrameGen::FgProfile fgProfile;
+        fgProfile.enabled   = settingsManager.getFgEnabled();
+        fgProfile.forceVsync = true;
+        fgProfile.multiplier = static_cast<uint32_t>(settingsManager.getFgMultiplier());
+        fgProfile.flowScale = settingsManager.getFgFlowScale();
+        fgProfile.performanceMode = settingsManager.getFgPerformanceMode();
+        fgProfile.halfPrecision = settingsManager.getFgHalfPrecision();
+        fgProfile.dllPath   = settingsManager.getFgModelPath();
+        const bool fgCreateApplied = FrameGen::modifySwapchainCreateInfo(logicalDevice, modifiedCreateInfo, fgProfile);
+
         // Keep application-provided usage bits unchanged on the non-mutable path.
         // Some drivers/apps are sensitive to swapchain usage mutation.
 
@@ -2493,14 +2558,19 @@ namespace VKIntox
         auto logicalSwapchain = std::make_shared<LogicalSwapchain>();
         logicalSwapchain->logicalDevice      = logicalDevice;
         logicalSwapchain->swapchainCreateInfo = *pCreateInfo;
+        logicalSwapchain->handle             = VK_NULL_HANDLE;  // set once creation succeeds
         logicalSwapchain->imageExtent         = modifiedCreateInfo.imageExtent;
         logicalSwapchain->format              = modifiedCreateInfo.imageFormat;
         logicalSwapchain->imageCount          = 0;
         logicalSwapchain->useMutableFormat    = useMutableFormat;
+        logicalSwapchain->presentMode         = modifiedCreateInfo.presentMode;
+        if (fgCreateApplied)
+            logicalSwapchain->fgCreateProfile = fgProfile;
 
         VkResult result = logicalDevice->vkd.CreateSwapchainKHR(device, &modifiedCreateInfo, pAllocator, swapchain);
         if (result == VK_SUCCESS && swapchain != nullptr && *swapchain != VK_NULL_HANDLE)
         {
+            logicalSwapchain->handle = *swapchain;
             // NOW check if this handle already existed (recreation scenario)
             uint64_t handle = (uint64_t)(uintptr_t)*swapchain;
             auto oldIt = swapchainMap.find((VkSwapchainKHR)handle); // Cast back or use proper key type
@@ -4066,6 +4136,10 @@ namespace VKIntox
         presentSemaphores.reserve(pPresentInfo->swapchainCount);
         waitStages.assign(pPresentInfo->waitSemaphoreCount, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
 
+        VkImage fgSourceImage = VK_NULL_HANDLE;
+        VkImageLayout fgSourceLayout = VK_IMAGE_LAYOUT_GENERAL;
+        bool fgSourceReady = false;
+        bool fgReplayOverlay = false;
         for (unsigned int i = 0; i < pPresentInfo->swapchainCount; i++)
         {
             LogicalSwapchain* logicalSwapchain = presentSwapchains[i].get();
@@ -4190,10 +4264,31 @@ namespace VKIntox
 
             maybeDumpDepthResolveImage(logicalDevice, logicalSwapchain, index, logicalDevice->queue);
 
+            // The generator interpolates the app's frame as it looks before
+            // the VKIntox overlay: game HUD and effects stay in, the overlay
+            // stays out. It is replayed onto every generated frame below, so
+            // the game HUD never drops to half rate and the overlay never
+            // reaches the model.
+            fgSourceReady = false;
+            fgReplayOverlay = false;
+            VkCommandBuffer fgSourceCopy = VK_NULL_HANDLE;
+            if (logicalSwapchain->fg && settingsManager.getFgEnabled()
+                && !logicalSwapchain->fgStale && !logicalSwapchain->fgRecreateRequested)
+            {
+                fgSourceCopy = logicalSwapchain->fg->copySourceCommand(index);
+                if (pPresentInfo->swapchainCount == 1 && fgSourceCopy != VK_NULL_HANDLE)
+                {
+                    fgSourceImage = logicalSwapchain->fg->frameSourceImage(index);
+                    fgSourceLayout = VK_IMAGE_LAYOUT_GENERAL;
+                    fgSourceReady = true;
+                    fgReplayOverlay = true;
+                }
+            }
             VkSemaphore finalSemaphore;
             try
             {
-                vr = submitOverlayFrame(logicalDevice, logicalSwapchain, index, finalSemaphore);
+                vr = submitOverlayFrame(logicalDevice, logicalSwapchain, index,
+                                        fgSourceCopy, finalSemaphore);
             }
             catch (const std::exception& e)
             {
@@ -4226,6 +4321,126 @@ namespace VKIntox
             // because the app rendered into fake images, so force a recreate.
             Logger::err("present: layer command buffers unavailable; asking the app to recreate the swapchain");
             return VK_ERROR_OUT_OF_DATE_KHR;
+        }
+
+        bool fgNeedsRecreate = false;
+        // FG frame insertion: the composited frame just finished on
+        // presentSemaphores.back(); the engine generates the intermediate
+        // frames and presents them ahead of this one. Single swapchain only —
+        // inserted frames must own the compositor's FIFO ordering.
+        if (pPresentInfo->swapchainCount == 1 && !presentSemaphores.empty())
+        {
+            const auto logicalSwapchain = presentSwapchains[0];
+            if (logicalSwapchain && !logicalSwapchain->passthrough)
+            {
+                logicalSwapchain->fgPresentCount++;
+                FrameGen::FgProfile profile;
+                profile.enabled         = settingsManager.getFgEnabled();
+                profile.forceVsync      = true;
+                static thread_local VkSwapchainKHR fgLoggedSwapchain = VK_NULL_HANDLE;
+                if (pPresentInfo->pSwapchains[0] != fgLoggedSwapchain
+                    || (logicalSwapchain->fgPresentCount % 300) == 0)
+                {
+                    fgLoggedSwapchain = pPresentInfo->pSwapchains[0];
+                    Logger::debug("FG: present sc=" + convertToString(pPresentInfo->pSwapchains[0])
+                        + " images=" + std::to_string(logicalSwapchain->imageCount)
+                        + " extent=" + std::to_string(logicalSwapchain->imageExtent.width) + "x"
+                        + std::to_string(logicalSwapchain->imageExtent.height)
+                        + " fg=" + (logicalSwapchain->fg ? "1" : "0")
+                        + " presents=" + std::to_string(logicalSwapchain->fgPresentCount)
+                        + " enabled=" + (profile.enabled ? "1" : "0"));
+                }
+                profile.multiplier      = static_cast<uint32_t>(settingsManager.getFgMultiplier());
+                profile.flowScale       = settingsManager.getFgFlowScale();
+                profile.performanceMode = settingsManager.getFgPerformanceMode();
+                profile.halfPrecision   = settingsManager.getFgHalfPrecision();
+                profile.dllPath         = settingsManager.getFgModelPath();
+
+                const auto sameEngineProfile = [](const FrameGen::FgProfile& a, const FrameGen::FgProfile& b)
+                {
+                    return a.multiplier == b.multiplier
+                        && a.flowScale == b.flowScale
+                        && a.performanceMode == b.performanceMode
+                        && a.halfPrecision == b.halfPrecision
+                        && a.dllPath == b.dllPath;
+                };
+                const bool sameEngine = logicalSwapchain->fg
+                    && logicalSwapchain->fgProfile.enabled
+                    && sameEngineProfile(logicalSwapchain->fgProfile, profile);
+                const bool createEnabled = logicalSwapchain->fgCreateProfile.enabled;
+                const auto requestRecreate = [&] {
+                    logicalSwapchain->fgRecreateRequested = true;
+                    fgNeedsRecreate = true;
+                };
+
+                if (!profile.enabled)
+                {
+                    if (logicalSwapchain->fg)
+                        logicalSwapchain->fgStale = true;
+                    if (createEnabled)
+                        requestRecreate();
+                }
+                else if (logicalSwapchain->fg
+                         && (logicalSwapchain->fg->hostLost() || logicalSwapchain->fg->warmupFailed()))
+                {
+                    logicalSwapchain->fgStale = true;
+                    logicalSwapchain->fgInitFailed = true;
+                    if (!logicalSwapchain->fgChangeLogged)
+                    {
+                        logicalSwapchain->fgChangeLogged = true;
+                        Logger::err("FG: host lost or warmup failed; frame generation is disabled until settings change");
+                    }
+                    if (!sameEngine)
+                        requestRecreate();
+                }
+                else if (!FrameGen::FgSwapchain::active(logicalDevice, profile))
+                {
+                    logicalSwapchain->fgInitFailed = true;
+                }
+                else if (!createEnabled || (logicalSwapchain->fg && !sameEngine))
+                {
+                    // Configuration changes cross a swapchain boundary. The
+                    // application's recreation retires the old engine without
+                    // a present-thread QueueWaitIdle or mid-frame reset.
+                    if (logicalSwapchain->fg)
+                        logicalSwapchain->fgStale = true;
+                    requestRecreate();
+                }
+                else if (!logicalSwapchain->fg && !logicalSwapchain->fgInitFailed
+                         && (logicalSwapchain->fgPresentCount >= 30
+                             || (logicalSwapchain->imageExtent.width >= 640
+                                 && logicalSwapchain->imageExtent.height >= 360)))
+                {
+                    try
+                    {
+                        logicalSwapchain->fg = std::make_unique<FrameGen::FgSwapchain>(
+                            logicalDevice, logicalSwapchain.get(), profile);
+                        logicalSwapchain->fgProfile = profile;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        Logger::err("FG: init failed, frame generation stays off until the next settings change: "
+                                    + std::string(e.what()));
+                        logicalSwapchain->fgInitFailed = true;
+                    }
+                }
+
+                if (logicalSwapchain->fg && profile.enabled
+                    && !logicalSwapchain->fgStale && !logicalSwapchain->fgRecreateRequested)
+                {
+                    const bool fifo = FrameGen::presentModeQueuesEveryFrame(logicalSwapchain->presentMode);
+                    // DXVK and others switch present modes per present through
+                    // swapchain_maintenance1; keep them on FIFO while generating.
+                    if (fifo && profile.forceVsync)
+                        FrameGen::forceFifoInPresentChain(pPresentInfo);
+                    return logicalSwapchain->fg->present(
+                        logicalDevice, logicalSwapchain.get(),
+                        pPresentInfo->pImageIndices[0],
+                        queue, presentSemaphores.back(), fgSourceImage, fgSourceLayout, fgSourceReady,
+                        fgReplayOverlay, pPresentInfo);
+                }
+                fgNeedsRecreate = logicalSwapchain->fgRecreateRequested;
+            }
         }
 
         VkPresentInfoKHR presentInfo   = *pPresentInfo;
@@ -4267,6 +4482,11 @@ namespace VKIntox
             return presentResult;
         }
         
+        if (fgNeedsRecreate && presentResult == VK_SUCCESS)
+        {
+            Logger::info("FG: requesting swapchain recreation to apply frame-generation settings");
+            return VK_SUBOPTIMAL_KHR;
+        }
         return presentResult;
     }
 

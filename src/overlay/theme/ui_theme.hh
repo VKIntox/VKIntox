@@ -35,10 +35,16 @@ namespace VKIntox::UI
     // Text on a role's own container.
     inline ImVec4 On(ImGuiM3Role role) { return ImGuiM3OnColor(role); }
 
-    // Status colours.
+    // Content colours for text and icons, plus matching containers for status.
     inline ImVec4 Success()   { return Tertiary(); }
-    inline ImVec4 Warning()   { return ImGuiM3Color(ImGuiM3Role_Primary); }
-    inline ImVec4 Attention() { return Secondary(); }
+    inline ImVec4 Warning()   { return Secondary(); }
+    inline ImVec4 Attention() { return Primary(); }
+    inline ImVec4 SuccessContainer() { return ImGuiM3Color(ImGuiM3Role_TertiaryContainer); }
+    inline ImVec4 WarningContainer() { return ImGuiM3Color(ImGuiM3Role_SecondaryContainer); }
+    inline ImVec4 AttentionContainer() { return ImGuiM3Color(ImGuiM3Role_PrimaryContainer); }
+    inline ImVec4 OnSuccess() { return ImGuiM3Color(ImGuiM3Role_OnTertiaryContainer); }
+    inline ImVec4 OnWarning() { return ImGuiM3Color(ImGuiM3Role_OnSecondaryContainer); }
+    inline ImVec4 OnAttention() { return ImGuiM3Color(ImGuiM3Role_OnPrimaryContainer); }
 
     // The one place log levels map to colours, so toasts, the log filter and the
     // shader-test summary can no longer drift apart.
@@ -47,30 +53,28 @@ namespace VKIntox::UI
         switch (level)
         {
         case LogLevel::Error: return Error();
-        case LogLevel::Warn:  return Warning();
+        case LogLevel::Warn:  return Secondary();
+        case LogLevel::Debug: return Muted();
         default:              return Primary();
         }
     }
 
-    // M3 supporting text: the M3 body-small step (12sp) on-surface-variant, in
-    // the body family's bold so secondary lines read as emphasis rather than as
-    // washed-out grey. Gives the overlay a real hierarchy instead of one flat
-    // 14px everywhere.
+    // Supporting copy stays readable: regular body-small in the variant content
+    // role, without stacking bold weight and disabled alpha.
     inline void PushSupport()
     {
         ImGuiM3PushTextStyle(ImGuiM3Type_BodySmall);
-        ImGui::PushFont(ImGuiM3FontBodyBold(),
-                        ImGuiM3GetTypeStyle(ImGuiM3Type_BodySmall).size * ImGuiM3GetMetrics().density);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
     }
     inline void PopSupport()
     {
-        ImGui::PopFont();
+        ImGui::PopStyleColor();
         ImGuiM3PopTextStyle();
     }
     inline void TextSupport(const char* text)
     {
         PushSupport();
-        ImGui::TextDisabled("%s", text);
+        ImGui::TextUnformatted(text);
         PopSupport();
     }
 
@@ -115,7 +119,10 @@ namespace VKIntox::UI
         const ImGuiM3ShapeRounding round{ rr, rr, rr, rr };
         ImGuiM3PathRoundedRect(dl, rowRect, round, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainer));
         if (hovered)
-            ImGuiM3DrawStateLayer(dl, rowRect, round, ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
+            ImGuiM3DrawStateLayer(dl, rowRect, round, ImGuiM3Role_OnSurface,
+                                  ImGui::IsItemActive() ? ImGuiM3State_Pressed : ImGuiM3State_Hovered);
+        if (GImGui->NavId == ImGui::GetItemID())
+            ImGuiM3DrawFocusIndicator(dl, rowRect, round);
 
         ImFont* brand = ImGuiM3FontBold();
         const float labelPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * d;
@@ -219,7 +226,7 @@ namespace VKIntox::UI
             ImDrawList* dl = ImGui::GetWindowDrawList();
             ImGuiM3ShapeRounding rounding = ImGuiM3ConnectedSegmentRounding(bb.GetSize(), i, count);
             // every pill in the overlay rounds down while held, this row included
-            const float morph = ImGuiM3SpringStepEffectsDefault(ImGui::GetItemID() ^ 0x50414745, held ? 1.0f : 0.0f);
+            const float morph = ImGuiM3SpringStepSpatialFast(ImGui::GetItemID() ^ 0x50414745, held ? 1.0f : 0.0f);
             const float press_r = ImGuiM3Radius(ImGuiM3Shape_ExtraSmall);
             auto morph_corner = [&](float c) { return c + (ImMin(c, press_r) - c) * morph; };
             rounding.tl = morph_corner(rounding.tl);
@@ -230,6 +237,8 @@ namespace VKIntox::UI
             if (hovered || held)
                 ImGuiM3DrawStateLayer(dl, bb, rounding, ImGuiM3Role_OnSurface,
                                       held ? ImGuiM3State_Pressed : ImGuiM3State_Hovered);
+            if (GImGui->NavId == ImGui::GetItemID())
+                ImGuiM3DrawFocusIndicator(dl, bb, rounding);
 
             float textX = bb.Min.x + padX;
             if (glyphs && glyphs[i] && ImGuiM3IconFont())
@@ -269,11 +278,17 @@ namespace VKIntox::UI
         const ImRect rowRect(rowMin, ImVec2(rowMin.x + rowW, rowMin.y + rowH));
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        const float radius = ImGuiM3Radius(ImGuiM3Shape_Large);
+        const bool held = ImGui::IsItemActive();
+        const float pressT = ImGuiM3SpringStepSpatialFast(ImGui::GetItemID() ^ 0x535650, held ? 1.0f : 0.0f);
+        const float radius = ImLerp(ImGuiM3Radius(ImGuiM3Shape_Medium),
+                                    ImGuiM3Radius(ImGuiM3Shape_Large), pressT);
         const ImGuiM3ShapeRounding round{ radius, radius, radius, radius };
         ImGuiM3PathRoundedRect(dl, rowRect, round, ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainer));
         if (hovered)
-            ImGuiM3DrawStateLayer(dl, rowRect, round, ImGuiM3Role_OnSurface, ImGuiM3State_Hovered);
+            ImGuiM3DrawStateLayer(dl, rowRect, round, ImGuiM3Role_OnSurface,
+                                  held ? ImGuiM3State_Pressed : ImGuiM3State_Hovered);
+        if (GImGui->NavId == ImGui::GetItemID())
+            ImGuiM3DrawFocusIndicator(dl, rowRect, round);
 
         float textX = rowMin.x + 16.0f * d;
         if (glyph && ImGuiM3IconFont())

@@ -61,19 +61,20 @@ namespace VKIntox
 
         // Wayland keycodes are evdev codes, XKB expects evdev + 8
         uint32_t xkbKeycode = keycode + 8;
-
-        if (state == WL_KEYBOARD_KEY_STATE_RELEASED)
-        {
+        const xkb_keysym_t keysym = xkb_state_key_get_one_sym(xkbState, xkbKeycode);
+        const bool pressed = state != WL_KEYBOARD_KEY_STATE_RELEASED;
+        const bool repeat = pressed && !pressedKeys.insert(keycode).second;
+        if (!pressed)
             pressedKeys.erase(keycode);
+        queueKeyboardEvent((uint32_t)keysym, pressed, repeat);
+
+        if (!pressed)
+        {
             xkb_state_update_key(xkbState, xkbKeycode, XKB_KEY_UP);
             return;
         }
 
-        // Key press
-        pressedKeys.insert(keycode);
         xkb_state_update_key(xkbState, xkbKeycode, XKB_KEY_DOWN);
-
-        xkb_keysym_t keysym = xkb_state_key_get_one_sym(xkbState, xkbKeycode);
 
         // Track press event for edge detection (survives same-frame release)
         keyPressEvents.insert((uint32_t)keysym);

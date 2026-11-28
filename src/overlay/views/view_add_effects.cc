@@ -5,6 +5,7 @@
 #include "config/config_serializer.hh"
 #include "overlay/shell/ui_dialog.hh"
 #include "overlay/shell/ui_menu.hh"
+#include "util/util.hh"
 
 #include <algorithm>
 #include <cstdio>
@@ -138,13 +139,17 @@ namespace VKIntox
 
         const size_t maxEffectsLimit = static_cast<size_t>(settingsManager.getMaxEffects());
         const size_t currentCount = selectedEffects.size();
-        const size_t pendingCount = pendingAddEffects.size();
-        // removals free slots, so they count against the limit too
-        size_t removedPresent = 0;
-        for (const auto& removed : addEffectsRemoved)
-            if (std::find(selectedEffects.begin(), selectedEffects.end(), removed) != selectedEffects.end())
-                removedPresent++;
-        const bool atLimit = currentCount - removedPresent + pendingCount >= maxEffectsLimit;
+        auto removedPresentCount = [&]() {
+            size_t count = 0;
+            for (const auto& removed : addEffectsRemoved)
+                if (std::find(selectedEffects.begin(), selectedEffects.end(), removed) != selectedEffects.end())
+                    count++;
+            return count;
+        };
+        auto projectedCount = [&]() {
+            return currentCount - removedPresentCount() + pendingAddEffects.size();
+        };
+        const bool atLimit = projectedCount() >= maxEffectsLimit;
 
         auto isNameUsed = [&](const std::string& name) {
             if (std::find(selectedEffects.begin(), selectedEffects.end(), name) != selectedEffects.end())
@@ -154,22 +159,16 @@ namespace VKIntox
                     return true;
             return false;
         };
-        auto isPending = [&](const std::string& effectType) {
-            for (const auto& p : pendingAddEffects)
-                if (p.second == effectType)
-                    return true;
-            return false;
-        };
         auto getNextInstanceName = [&](const std::string& effectType) -> std::string {
             if (!isNameUsed(effectType))
                 return effectType;
-            for (int n = 2; n <= 99; n++)
+            for (int n = 2; n < static_cast<int>(maxEffectsLimit) + 2; n++)
             {
                 std::string candidate = effectType + "." + std::to_string(n);
                 if (!isNameUsed(candidate))
                     return candidate;
             }
-            return effectType + ".99";
+            return {};
         };
 
         // Session-scoped recents, so frequently used shaders are one click away.
@@ -182,39 +181,52 @@ namespace VKIntox
             if (recent.size() > 8)
                 recent.resize(8);
         };
-        auto queueEffect = [&](const std::string& effectType) {
-            if (atLimit || isPending(effectType))
-                return;
-            pendingAddEffects.push_back({getNextInstanceName(effectType), effectType});
-            addEffectsRemoved.erase(effectType);
-            pushRecent(effectType);
-        };
-
         auto alreadyInConfig = [&](const std::string& type) {
             return std::find(selectedEffects.begin(), selectedEffects.end(), type) != selectedEffects.end();
+        };
+        auto pendingCountFor = [&](const std::string& type) {
+            return static_cast<int>(std::count_if(pendingAddEffects.begin(), pendingAddEffects.end(),
+                [&](const auto& p) { return p.second == type; }));
+        };
+        auto extraCopiesFor = [&](const std::string& type) {
+            auto it = addEffectsDuplicateCount.find(type);
+            return (it == addEffectsDuplicateCount.end()) ? 0 : std::max(0, it->second);
+        };
+        // the displayed count includes the original active effect, or the one
+        // base copy queued for an effect that is not in the preset yet
+        auto copiesFor = [&](const std::string& type) {
+            return extraCopiesFor(type) + 1;
+        };
+        auto groupActive = [&](const std::string& type) {
+            return pendingCountFor(type) > 0 ||
+                   (alreadyInConfig(type) && addEffectsRemoved.count(type) == 0);
         };
         auto removeQueued = [&](const std::string& type) {
             pendingAddEffects.erase(std::remove_if(pendingAddEffects.begin(), pendingAddEffects.end(),
                                                    [&](const auto& p) { return p.second == type; }),
                                     pendingAddEffects.end());
         };
-        // the extras map starts empty, so an already-listed effect shows 0 copies
-        auto duplicateCountFor = [&](const std::string& type) {
-            auto it = addEffectsDuplicateCount.find(type);
-            return (it == addEffectsDuplicateCount.end()) ? 0 : std::max(0, it->second);
-        };
-        auto queueCopies = [&](const std::string& type, int copies) {
-            for (int i = 0; i < copies && selectedEffects.size() + pendingAddEffects.size() < maxEffectsLimit; i++)
-                pendingAddEffects.push_back({getNextInstanceName(type), type});
+        auto queueCopies = [&](const std::string& type, int totalCopies) {
+            removeQueued(type);
+            const int retained = alreadyInConfig(type) && addEffectsRemoved.count(type) == 0 ? 1 : 0;
+            const int needed = std::max(0, totalCopies - retained);
+            for (int i = 0; i < needed && projectedCount() < maxEffectsLimit; i++)
+            {
+                const std::string instance = getNextInstanceName(type);
+                if (instance.empty())
+                    break;
+                pendingAddEffects.push_back({instance, type});
+            }
+            const int actualCopies = retained + pendingCountFor(type);
+            addEffectsDuplicateCount[type] = std::max(0, actualCopies - 1);
             pushRecent(type);
         };
-        // the switch is the whole group: an already-listed effect keeps its
-        // original, a new one gets one copy, and the count adds extra copies
-        auto groupActive = [&](const std::string& type) {
-            return isPending(type) || (alreadyInConfig(type) && !addEffectsRemoved.count(type));
-        };
-        auto copiesFor = [&](const std::string& type) {
-            return duplicateCountFor(type) + (alreadyInConfig(type) ? 0 : 1);
+        auto queueEffect = [&](const std::string& effectType) {
+            if (projectedCount() >= maxEffectsLimit || groupActive(effectType))
+                return;
+            addEffectsRemoved.erase(effectType);
+            addEffectsDuplicateCount[effectType] = 0;
+            queueCopies(effectType, 1);
         };
         auto toggleQueued = [&](const std::string& type, bool on) {
             removeQueued(type);
@@ -343,7 +355,7 @@ namespace VKIntox
                 highlight = std::max(highlight - 1, 0);
         }
 
-        // ---- Crumb + hero ---------------------------------------------------
+        // ---- Crumb ----------------------------------------------------------
         if (UI::BreadcrumbBar("Effects", Icon::ChevronLeftUtf8))
         {
             pendingAddEffects.clear();
@@ -353,21 +365,11 @@ namespace VKIntox
             inSelectionMode = false;
             addEffectsSearch[0] = '\0';
         }
-        ImGui::Spacing();
-        {
-            std::string summary = std::to_string(pendingCount) + " / " + std::to_string(maxEffectsLimit) + " queued";
-            summary += "  \xC2\xB7  " + std::to_string(currentCount) +
-                       (currentCount == 1 ? " effect in preset" : " effects in preset");
-            if (!addEffectsRemoved.empty())
-                summary += "  \xC2\xB7  " + std::to_string(addEffectsRemoved.size()) + " to remove";
-            if (insertPosition >= 0)
-                summary += "  \xC2\xB7  inserting at position " + std::to_string(insertPosition);
-            ImGui::M3HeroHeader(Icon::AddUtf8, insertPosition >= 0 ? "Insert Effects" : "Add Effects",
-                                summary.c_str());
-            if (atLimit)
-                ImGui::TextColored(UI::Warning(), "%s  At the limit: remove an effect to queue another.",
-                                   Icon::WarningUtf8);
-        }
+        const bool portalPending = settingsManager.getUsePortalIntegration() && fileDialogPending();
+        if (portalPending)
+            UI::TextSupport("Finish the open picker in Effects to continue.");
+        else if (atLimit)
+            UI::TextSupport("Limit reached. Switch off or remove an effect to free a slot.");
 
         // ---- Search ---------------------------------------------------------
         // Focus the search box once the slide has settled. Focusing during the
@@ -378,20 +380,38 @@ namespace VKIntox
             addEffectsFocusSearch = false;
         }
         {
-            const ImVec2 prevPad = ImGui::GetStyle().FramePadding;
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(38.0f * d, prevPad.y));
+            const float searchH = 48.0f * d;
+            const float searchPadY = ImMax(0.0f, (searchH - ImGui::GetFontSize()) * 0.5f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(48.0f * d, searchPadY));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, ImGuiM3Radius(ImGuiM3Shape_Full));
             ImGui::SetNextItemWidth(-1);
-            ImGui::InputTextWithHint("##search", "Search effects (type to filter)...",
+            ImGui::InputTextWithHint("##search", "Search effects...",
                                      addEffectsSearch, sizeof(addEffectsSearch),
                                      ImGuiInputTextFlags_AutoSelectAll);
+            const ImVec2 afterSearch = ImGui::GetCursorScreenPos();
             const ImVec2 fmin = ImGui::GetItemRectMin();
             const ImVec2 fmax = ImGui::GetItemRectMax();
-            ImFont* iconFont = ImGuiM3IconFont();
-            if (iconFont)
+            if (ImGuiM3IconFont())
+            {
                 ImGuiM3DrawIcon(ImGui::GetWindowDrawList(), Icon::SearchUtf8,
-                                ImRect(ImVec2(fmin.x + 8.0f * d, fmin.y), ImVec2(fmin.x + 30.0f * d, fmax.y)),
-                                18.0f * d, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
-            ImGui::PopStyleVar();
+                                ImRect(ImVec2(fmin.x + 12.0f * d, fmin.y),
+                                       ImVec2(fmin.x + 40.0f * d, fmax.y)),
+                                22.0f * d, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
+            }
+            if (hasSearch)
+            {
+                const float clearSize = m.icon_button_size * d;
+                ImGui::SetCursorScreenPos(ImVec2(fmax.x - clearSize - 8.0f * d,
+                                                 fmin.y + (searchH - clearSize) * 0.5f));
+                ImGui::PushID("search_clear");
+                ImGui::SetNextItemAllowOverlap();
+                if (ImGui::M3IconButton(Icon::CloseUtf8, "Clear search", ImGuiM3Button_Text))
+                    addEffectsSearch[0] = '\0';
+                ImGui::PopID();
+            }
+            ImGui::SetCursorScreenPos(afterSearch);
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+            ImGui::PopStyleVar(2);
         }
 
         // Package tabs: All plus one per installed effect package, in a
@@ -399,9 +419,11 @@ namespace VKIntox
         {
             ImGui::BeginChild("##packagetabs", ImVec2(0, 46.0f * d), false, ImGuiWindowFlags_HorizontalScrollbar);
             auto tab = [&](const char* label, const std::string& package) {
-                const bool selected = (filterPackage == package);
-                if (ImGui::M3Button(label, selected ? ImGuiM3Button_Tonal : ImGuiM3Button_Text, ImVec2(0, 30.0f * d)))
-                    filterPackage = package;
+                bool selected = (filterPackage == package);
+                ImGui::PushID(label);
+                if (ImGui::M3Chip(label, &selected))
+                    filterPackage = selected ? package : std::string();
+                ImGui::PopID();
                 ImGui::SameLine();
             };
             tab("All", std::string());
@@ -454,8 +476,8 @@ namespace VKIntox
         // buttons, which are taller than the default frame, so measuring with
         // GetFrameHeightWithSpacing() left the bottom of the pills clipped.
         const float footerHeight = m.button_height_default * d + ImGui::GetStyle().ItemSpacing.y * 2.0f;
-        const float trayHeight = 62.0f * d;
-        const float rowH = 46.0f * d;
+        const float rowH = 72.0f * d;
+        const float trayChipH = m.chip_height * d;
         ImFont* iconFont = ImGuiM3IconFont();
         ImFont* medium = ImGuiM3FontMedium();
 
@@ -488,17 +510,74 @@ namespace VKIntox
 
         const ImVec2 resultsPos = ImGui::GetCursorScreenPos();
         const float resultsW = ImMax(ImGui::GetContentRegionAvail().x, 1.0f);
+        int trayLines = 1;
+        if (!pendingAddEffects.empty())
+        {
+            const float trayAvail = ImMax(1.0f, resultsW - 24.0f * d);
+            float x = 0.0f;
+            for (const auto& pending : pendingAddEffects)
+            {
+                const std::string label = pending.first + "  " + Icon::CloseUtf8;
+                const float chipW = ImGui::M3ButtonWidth(label.c_str());
+                if (x > 0.0f && x + chipW > trayAvail)
+                {
+                    trayLines++;
+                    x = 0.0f;
+                }
+                x += chipW + ImGui::GetStyle().ItemSpacing.x;
+            }
+        }
+        const float trayHeight = pendingAddEffects.empty() ? 48.0f * d
+            : ImMin(112.0f * d, 16.0f * d + trayLines * (trayChipH + 4.0f * d));
         const float resultsH = ImMax(ImGui::GetContentRegionAvail().y, 1.0f);
         const float resultsSlide = (1.0f - tabEase) * 26.0f * d;
         ImGui::SetCursorScreenPos(ImVec2(resultsPos.x + resultsSlide, resultsPos.y));
         ImGui::PushClipRect(resultsPos, ImVec2(resultsPos.x + resultsW, resultsPos.y + resultsH), true);
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, tabEase);
-        ImGui::BeginChild("##results", ImVec2(0, -footerHeight - trayHeight), true);
+        ImGui::BeginChild("##results", ImVec2(0, -footerHeight - trayHeight), true,
+                          ImGuiWindowFlags_NoScrollWithMouse);
+        if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0.0f)
+            ImGui::SetScrollY(ImGui::GetScrollY() - ImGui::GetIO().MouseWheel * 32.0f * d);
         if (rowCount == 0)
         {
+            const bool filtered = hasSearch || !filterPackage.empty();
+            const bool hasInstalledPackages = !addEffectsPackages.empty();
             ImGui::Spacing();
-            ImGui::TextDisabled("%s", Icon::SearchUtf8);
-            ImGui::TextDisabled(hasSearch ? "No effects match this filter." : "No effects available.");
+            const ImVec2 emptyPos = ImGui::GetCursorScreenPos();
+            const float emptyIcon = 40.0f * d;
+            ImGui::GetWindowDrawList()->AddCircleFilled(
+                ImVec2(emptyPos.x + emptyIcon * 0.5f, emptyPos.y + emptyIcon * 0.5f), emptyIcon * 0.5f,
+                ImGuiM3ColorU32(ImGuiM3Role_SurfaceContainerHighest), 40);
+            if (iconFont)
+            {
+                ImGuiM3DrawIcon(ImGui::GetWindowDrawList(), Icon::SearchUtf8,
+                                ImRect(emptyPos, ImVec2(emptyPos.x + emptyIcon, emptyPos.y + emptyIcon)),
+                                emptyIcon * 0.56f,
+                                ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
+            }
+            ImGui::SameLine(0.0f, 12.0f * d);
+            ImGui::BeginGroup();
+            ImGui::PushFont(ImGuiM3FontBold(),
+                            ImGuiM3GetTypeStyle(ImGuiM3Type_TitleMedium).size * d);
+            ImGui::TextUnformatted(filtered ? "No matching effects"
+                : hasInstalledPackages ? "No effects in this working set" : "No effects installed");
+            ImGui::PopFont();
+            UI::TextSupport(filtered
+                ? "Try another search or clear the package filter."
+                : hasInstalledPackages
+                    ? "The active and default configs do not list any effects yet."
+                    : "Add shader directories in Shaders, then rescan to find effects.");
+            ImGui::EndGroup();
+            if (filtered)
+            {
+                ImGui::Spacing();
+                if (ImGui::M3Button("Clear search and filters", ImGuiM3Button_Outlined))
+                {
+                    addEffectsSearch[0] = '\0';
+                    filterPackage.clear();
+                    highlight = 0;
+                }
+            }
         }
         else
         {
@@ -530,7 +609,7 @@ namespace VKIntox
                     const ImRect bb(pos, ImVec2(pos.x + width, pos.y + rowH));
                     // the queue pill sits on top of the row button
                     ImGui::SetNextItemAllowOverlap();
-                    ImGui::InvisibleButton("##row", ImVec2(width, rowH - 2.0f));
+                    ImGui::InvisibleButton("##row", ImVec2(width, rowH));
                     const ImVec2 cursorAfterRow = ImGui::GetCursorScreenPos();
                     const bool hovered = ImGui::IsItemHovered();
                     const bool held = ImGui::IsItemActive();
@@ -556,89 +635,95 @@ namespace VKIntox
                                         22.0f * d, ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer : ImGuiM3Role_Primary));
                     }
 
-                    // two-line block: the effect name over its shader path
-                    const float nameClip = 230.0f * d;
-                    const float textX = bb.Min.x + 54.0f * d;
-                    ImFont* brandFont = ImGuiM3FontBold();
-                    ImFont* pathFont = ImGuiM3FontBodyBold();
-                    const float namePx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * d;
-                    const float pathPx = 11.0f * d;
-                    const char* pathText = e.path.c_str();
-                    ImGui::PushFont(brandFont, namePx);
-                    const ImVec2 nameSize = ImGui::CalcTextSize(e.type.c_str());
-                    ImGui::PopFont();
-                    ImGui::PushFont(pathFont, pathPx);
-                    const ImVec2 pathSize = ImGui::CalcTextSize(pathText);
-                    ImGui::PopFont();
-                    const bool hasPath = pathText[0] != '\0';
-                    const float blockH = nameSize.y + (hasPath ? pathSize.y + 1.0f * d : 0.0f);
-                    const float textW = ImMax(24.0f, bb.Max.x - nameClip - textX);
-                    const float nameY = bb.Min.y + (rowH - blockH) * 0.5f;
-                    const ImU32 nameCol = ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer
-                                                                : ImGuiM3Role_OnSurface);
-                    const ImU32 pathCol = ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer
-                                                                : ImGuiM3Role_OnSurfaceVariant);
-                    dl->AddText(brandFont, namePx, ImVec2(textX, nameY), nameCol,
-                                UI::TruncateLabel(e.type.c_str(), textW));
-                    if (hasPath)
-                        dl->AddText(pathFont, pathPx, ImVec2(textX, nameY + nameSize.y + 1.0f * d), pathCol,
-                                    UI::TruncateLabel(pathText, textW));
-
-                    // right cluster: [-] count [+] over the group, then the switch;
-                    // the stepper only shows while the group is in the preset
+                    // right cluster: [-] total count [+], then the 56dp switch.
+                    // Measure it first so the name and path can never run under it.
                     const ImGuiM3Metrics& rowMetrics = ImGuiM3GetMetrics();
                     const float switchW = rowMetrics.switch_track_width * d;
                     const float switchH = rowMetrics.list_item_height_1 * d;
                     const float switchX = bb.Max.x - switchW - 14.0f * d;
                     const float gap = 10.0f * d;
+                    const float stepSize = 32.0f * d;
+                    const int copyCount = copiesFor(e.type);
+                    char countText[12];
+                    std::snprintf(countText, sizeof(countText), "%d", copyCount);
+                    const float countW = ImGui::CalcTextSize(countText).x;
+                    const float stepperW = stepSize * 2.0f + countW + gap * 2.0f;
+                    const float controlsW = switchW + 14.0f * d + (added ? gap + stepperW : 0.0f);
                     bool overControl = false;
+
+                    // two-line block: the effect name over its shader path
+                    const float textX = bb.Min.x + 54.0f * d;
+                    const float textW = ImMax(1.0f, bb.Max.x - controlsW - 8.0f * d - textX);
+                    ImFont* brandFont = ImGuiM3FontBold();
+                    ImFont* pathFont = ImGuiM3FontBodyBold();
+                    const float namePx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * d;
+                    const float pathPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodySmall).size * d;
+                    const char* pathText = e.path.c_str();
+                    const bool showText = textW > 12.0f * d;
+                    ImGui::PushFont(brandFont, namePx);
+                    const char* shownName = showText ? UI::TruncateLabel(e.type.c_str(), textW) : "";
+                    const ImVec2 nameSize = ImGui::CalcTextSize(shownName);
+                    ImGui::PopFont();
+                    ImGui::PushFont(pathFont, pathPx);
+                    const char* shownPath = showText ? UI::TruncateLabel(pathText, textW) : "";
+                    const ImVec2 pathSize = ImGui::CalcTextSize(shownPath);
+                    ImGui::PopFont();
+                    const bool hasPath = showText && pathText[0] != '\0';
+                    const float blockH = nameSize.y + (hasPath ? pathSize.y + 2.0f * d : 0.0f);
+                    const float nameY = bb.Min.y + (rowH - blockH) * 0.5f;
+                    const ImU32 nameCol = ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer
+                                                                : ImGuiM3Role_OnSurface);
+                    const ImU32 pathCol = ImGuiM3ColorU32(added ? ImGuiM3Role_OnSecondaryContainer
+                                                                : ImGuiM3Role_OnSurfaceVariant);
+                    dl->AddText(brandFont, namePx, ImVec2(textX, nameY), nameCol, shownName);
+                    if (hasPath)
+                        dl->AddText(pathFont, pathPx, ImVec2(textX, nameY + nameSize.y + 2.0f * d), pathCol,
+                                    shownPath);
 
                     if (added)
                     {
-                        const int dupCount = duplicateCountFor(e.type);
-                        char dupText[12];
-                        std::snprintf(dupText, sizeof(dupText), "%d", dupCount);
-                        // smaller than the row so the circles keep a vertical margin
-                        const float stepSize = 30.0f * d;
-                        const float dupW = ImGui::CalcTextSize(dupText).x;
+                        const int extraCount = extraCopiesFor(e.type);
                         const float plusX = switchX - gap - stepSize;
-                        const float countX = plusX - gap - dupW;
+                        const float countX = plusX - gap - countW;
                         const float minusX = countX - gap - stepSize;
                         const float controlY = bb.Min.y + (rowH - stepSize) * 0.5f;
 
                         ImGui::SetCursorScreenPos(ImVec2(minusX, controlY));
                         ImGui::PushID(3);
-                        ImGui::BeginDisabled(dupCount == 0);
+                        ImGui::SetNextItemAllowOverlap();
+                        ImGui::BeginDisabled(extraCount == 0);
                         if (ImGui::M3Button(Icon::MinusUtf8, ImGuiM3Button_Outlined, ImVec2(stepSize, stepSize)))
                         {
-                            addEffectsDuplicateCount[e.type] = std::max(0, dupCount - 1);
+                            addEffectsDuplicateCount[e.type] = std::max(0, extraCount - 1);
                             toggleQueued(e.type, true);
                         }
                         ImGui::EndDisabled();
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         {
-                            ImGui::SetTooltip("De-increment duplicate entry count");
+                            ImGui::SetTooltip("Remove one extra copy");
                             overControl = true;
                         }
                         ImGui::PopID();
 
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSurfaceVariant));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImGuiM3ColorU32(ImGuiM3Role_OnSecondaryContainer));
                         ImGui::SetCursorScreenPos(ImVec2(countX, bb.Min.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f));
-                        ImGui::TextUnformatted(dupText);
+                        ImGui::TextUnformatted(countText);
                         ImGui::PopStyleColor();
 
                         ImGui::SetCursorScreenPos(ImVec2(plusX, controlY));
                         ImGui::PushID(2);
+                        ImGui::SetNextItemAllowOverlap();
                         ImGui::BeginDisabled(atLimit);
                         if (ImGui::M3Button(Icon::AddUtf8, ImGuiM3Button_Filled, ImVec2(stepSize, stepSize)))
                         {
-                            addEffectsDuplicateCount[e.type] = std::min(99, dupCount + 1);
+                            addEffectsDuplicateCount[e.type] = std::min(static_cast<int>(maxEffectsLimit), extraCount + 1);
                             toggleQueued(e.type, true);
                         }
                         ImGui::EndDisabled();
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         {
-                            ImGui::SetTooltip("Increment duplicate entry count");
+                            ImGui::SetTooltip(atLimit ? "Remove an effect or pending copy to free a slot"
+                                                      : "Add one extra copy");
                             overControl = true;
                         }
                         ImGui::PopID();
@@ -647,13 +732,15 @@ namespace VKIntox
                     bool queued = added;
                     ImGui::SetCursorScreenPos(ImVec2(switchX, bb.Min.y + (rowH - switchH) * 0.5f));
                     ImGui::PushID(1);
+                    ImGui::SetNextItemAllowOverlap();
                     if (ImGui::M3SwitchWithID("", "##queue", &queued))
                         toggleQueued(e.type, queued);
                     if (ImGui::IsItemHovered())
                     {
                         overControl = true;
-                        ImGui::SetTooltip("The switch adds or removes this effect and its %d duplicate(s) together.",
-                                          duplicateCountFor(e.type));
+                        ImGui::SetTooltip(copyCount == 1
+                            ? "Add or remove this copy."
+                            : "Add or remove this effect and all %d copies together.", copyCount);
                     }
                     ImGui::PopID();
                     // restore the row's layout cursor; the Dummy consumes the
@@ -664,10 +751,10 @@ namespace VKIntox
                     if (hovered)
                     {
                         highlight = i;
-                        if (!e.path.empty())
+                        if (!overControl && !e.path.empty())
                             ImGui::SetTooltip("%s", e.path.c_str());
                     }
-                    if (clicked && !overControl)
+                    if (clicked && !overControl && !added)
                         queueEffect(e.type);
 
                     ImGui::PopID();
@@ -682,27 +769,38 @@ namespace VKIntox
         ImGui::SetCursorScreenPos(ImVec2(resultsPos.x, ImGui::GetCursorScreenPos().y));
 
         // ---- Queued tray ----------------------------------------------------
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * d, 8.0f * d));
         ImGui::BeginChild("##queued", ImVec2(0, trayHeight), true);
         if (pendingAddEffects.empty())
         {
-            UI::TextSupport("Queued effects appear here.");
+            UI::TextSupport("Queued effects appear here. Use a row switch or + to add copies.");
         }
         else
         {
-            const float avail = ImGui::GetContentRegionAvail().x;
+            const float avail = ImMax(1.0f, ImGui::GetContentRegionAvail().x);
             float x = 0.0f;
+            float y = 0.0f;
             for (size_t i = 0; i < pendingAddEffects.size(); i++)
             {
                 ImGui::PushID(static_cast<int>(i));
                 const std::string label = pendingAddEffects[i].first + "  " + Icon::CloseUtf8;
-                const float chipW = ImGui::CalcTextSize(label.c_str()).x + 24.0f * d;
+                const float chipW = ImMin(ImGui::M3ButtonWidth(label.c_str()), avail);
                 if (x > 0.0f && x + chipW > avail)
-                    x = 0.0f;
-                else if (x > 0.0f)
-                    ImGui::SameLine();
-                if (ImGui::M3Button(label.c_str(), ImGuiM3Button_Tonal, ImVec2(0.0f, 30.0f * d)))
                 {
+                    x = 0.0f;
+                    y += trayChipH + ImGui::GetStyle().ItemSpacing.y;
+                }
+                ImGui::SetCursorPos(ImVec2(x, y));
+                const float labelBudget = ImMax(1.0f, chipW - m.button_padding_x * 2.0f * d);
+                const char* shownLabel = UI::TruncateLabel(label.c_str(), labelBudget);
+                if (ImGui::M3Button(shownLabel, ImGuiM3Button_Tonal, ImVec2(chipW, trayChipH)))
+                {
+                    const std::string removedType = pendingAddEffects[i].second;
                     pendingAddEffects.erase(pendingAddEffects.begin() + i);
+                    const int retained = alreadyInConfig(removedType) &&
+                                         addEffectsRemoved.count(removedType) == 0 ? 1 : 0;
+                    addEffectsDuplicateCount[removedType] =
+                        std::max(0, retained + pendingCountFor(removedType) - 1);
                     ImGui::PopID();
                     break;
                 }
@@ -711,15 +809,17 @@ namespace VKIntox
             }
         }
         ImGui::EndChild();
+        ImGui::PopStyleVar();
 
         // ---- Footer ---------------------------------------------------------
         const std::string cancelLabel = std::string(Icon::CloseUtf8) + "  Cancel";
         const bool hasRemovals = !addEffectsRemoved.empty();
+        const size_t queuedNow = pendingAddEffects.size();
         std::string applyLabel = std::string(Icon::CheckUtf8) + "  ";
         if (hasRemovals)
             applyLabel += "Apply";
-        else if (pendingCount > 0)
-            applyLabel += "Add " + std::to_string(pendingCount) + (pendingCount == 1 ? " Effect" : " Effects");
+        else if (queuedNow > 0)
+            applyLabel += "Add " + std::to_string(queuedNow) + (queuedNow == 1 ? " effect" : " effects");
         else
             applyLabel += "Add";
 
@@ -779,11 +879,8 @@ namespace VKIntox
 
             if (removedAny || addedAny)
             {
-                if (removedAny)
-                {
-                    paramsDirty = true;
-                    lastChangeTime = std::chrono::steady_clock::now();
-                }
+                paramsDirty = false;
+                reloadNeeded = false;
                 applyRequested = true;
                 profileDirty = true;
             }

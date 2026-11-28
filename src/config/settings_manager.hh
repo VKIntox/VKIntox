@@ -103,6 +103,66 @@ namespace VKIntox
             std::lock_guard<std::mutex> lock(mutex);
             return settings.showFps;
         }
+        bool getFgEnabled() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.fgEnabled;
+        }
+        int getFgMultiplier() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return std::clamp(settings.fgMultiplier, 2, 4);
+        }
+        float getFgFlowScale() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.fgFlowScale;
+        }
+        bool getFgPerformanceMode() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.fgPerformanceMode;
+        }
+        bool getFgHalfPrecision() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.fgHalfPrecision;
+        }
+        std::string getFgModelPath() const
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            return settings.fgModelPath;
+        }
+        void setFgEnabled(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.fgEnabled = value;
+        }
+        void setFgMultiplier(int value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.fgMultiplier = std::clamp(value, 2, 4);
+        }
+        void setFgFlowScale(float value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.fgFlowScale = value;
+        }
+        void setFgPerformanceMode(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.fgPerformanceMode = value;
+        }
+        void setFgHalfPrecision(bool value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.fgHalfPrecision = value;
+        }
+        void setFgModelPath(const std::string& value)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            settings.fgModelPath = value;
+        }
         bool getFpsExtended() const
         {
             std::lock_guard<std::mutex> lock(mutex);

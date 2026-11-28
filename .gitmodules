@@ -7,3 +7,6 @@
 [submodule "assets/builtInShaders"]
 	path = assets/builtInShaders
 	url = https://git.buwryy.net/VKIntox/VKIntoxEffects.git
+[submodule "src/vendor/mako"]
+	path = src/vendor/mako
+	url = https://github.com/eugeniosegala/MAKO.git

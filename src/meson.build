@@ -41,6 +41,7 @@ overlay_src = [
     'overlay/views/view_configs.cc',
     'overlay/views/view_diagnostics.cc',
     'overlay/views/view_about.cc',
+    'overlay/views/view_fg.cc',
     'overlay/views/view_settings.cc',
     'overlay/shell/ui_dialog.cc',
     'overlay/shell/ui_menu.cc',
@@ -222,21 +223,125 @@ source_inc = include_directories('.')
 # The XDG desktop portal is reached over the session bus through GIO, which is
 # present on the desktop and inside Flatpak runtimes. Optional: without it the
 # shader manager falls back to the in-overlay file browser.
+
+libdl_dep = meson.get_compiler('cpp').find_library('dl', required : false)
+
+# Frame generation: the MAKO backend drives the open-weight MAKO FG model, which
+# runs in its own host program shipped beside the layer (src/framegen/mako-fg).
+# The backend sources are GPL-3.0-or-later; VKIntox is GPL-3.0.
+mako_dir = meson.project_source_root() / 'src/vendor/mako/engine'
+have_fg_engine = get_option('fg_engine') and fs.is_dir(mako_dir / 'mako-backend')
+threads_dep = dependency('threads')
+if have_fg_engine
+    mako_common_lib = static_library('mako_common',
+        files(
+            'vendor/mako/engine/mako-common/src/configuration/config.cpp',
+            'vendor/mako/engine/mako-common/src/configuration/detection.cpp',
+            'vendor/mako/engine/mako-common/src/configuration/launch.cpp',
+            'vendor/mako/engine/mako-common/src/configuration/power_source.cpp',
+            'vendor/mako/engine/mako-common/src/configuration/vkbasalt.cpp',
+            'vendor/mako/engine/mako-common/src/helpers/errors.cpp',
+            'vendor/mako/engine/mako-common/src/helpers/paths.cpp',
+            'vendor/mako/engine/mako-common/src/quality/image_quality.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/buffer.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/command_buffer.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/descriptor_pool.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/descriptor_set.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/device_memory_accounting.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/fence.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/image.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/image_memory_pool.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/sampler.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/semaphore.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/shader.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/timeline_semaphore.cpp',
+            'vendor/mako/engine/mako-common/src/vulkan/vulkan.cpp',
+        ),
+        include_directories: [include_directories('vendor/mako/engine/mako-common/include'),
+                              include_directories('vendor/mako/engine/mako-common/thirdparty/include', is_system: true)],
+        cpp_args: ['-DMAKO_RENDER=1'],
+        dependencies: [threads_dep],
+        gnu_symbol_visibility: 'hidden')
+
+    mako_backend_lib = static_library('mako_backend',
+        files(
+            'vendor/mako/engine/mako-backend/src/extraction/content_hash.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/dll_inspection.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/dll_reader.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/dxbc_translation.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/ls1_shader_set.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/spirv_image_format.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/spirv_output_split.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/spirv_fp16.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/lsfg_shader_set.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/model_resource_validation.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/model_resources.cpp',
+            'vendor/mako/engine/mako-backend/src/extraction/shader_registry.cpp',
+            'vendor/mako/engine/mako-backend/src/helpers/limits.cpp',
+            'vendor/mako/engine/mako-backend/src/helpers/managed_shader.cpp',
+            'vendor/mako/engine/mako-backend/src/helpers/utils.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/alpha0.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/alpha1.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/beta0.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/beta1.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/color_conversion.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/delta0.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/delta1.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/gamma0.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/gamma1.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/generate.cpp',
+            'vendor/mako/engine/mako-backend/src/shaderchains/mipmaps.cpp',
+            'vendor/mako/engine/mako-backend/src/mako.cpp',
+            'vendor/mako/engine/mako-backend/src/mako_fg.cpp',
+        ),
+        include_directories: [include_directories('vendor/mako/engine/mako-backend/include'),
+                              include_directories('vendor/mako/engine/mako-common/include')],
+        cpp_args: ['-DMAKO_FG=1', '-DMAKO_RENDER=1'],
+        link_with: [mako_common_lib],
+        dependencies: [threads_dep, libdl_dep],
+        gnu_symbol_visibility: 'hidden')
+endif
+
 gio_dep = dependency('gio-2.0', required: false)
 vkintox_deps = [x11_dep, xi_dep, xtst_dep, wayland_client_dep, xkbcommon_dep, reshade_dep]
 vkintox_cpp_args = ['-DIMGUI_IMPL_VULKAN_NO_PROTOTYPES']
+if have_fg_engine
+    vkintox_cpp_args += ['-DVKINTOX_HAVE_FG_ENGINE=1']
+endif
 if gio_dep.found()
     vkintox_deps += gio_dep
     vkintox_cpp_args += '-DVKINTOX_HAVE_GIO=1'
 endif
 
+framegen_src = files(
+    'framegen/engine.cc',
+    'framegen/present.cc',
+)
+
+# the MAKO FG host program and its model ship beside the layer: the backend
+# finds the host by walking up from the layer's own directory
+fg_pkg = meson.project_source_root() / 'src/framegen/mako-fg'
+# the prebuilt MAKO host is x86_64-only. other architectures still build the
+# backend but ship no package; the engine falls back to Lossless Scaling's DLL
+if have_fg_engine and fs.is_dir(fg_pkg) and host_machine.cpu_family() == 'x86_64'
+    install_subdir('framegen/mako-fg',
+                   install_dir: lib_dir / 'mako-fg',
+                   strip_directory: true,
+                   exclude_directories: ['doc'])
+endif
+
 vkintox_lib = shared_library('vkintox',
     VKIntox_src, overlay_src, imgui_src, shader_include,
+    framegen_src,
     link_with: [keyboard_input_x11_lib, mouse_input_lib, input_blocker_lib,
                 x11_display_lib, mouse_input_x11_lib,
                 wayland_input_common_lib, keyboard_input_wayland_lib, mouse_input_wayland_lib,
-                wayland_pointer_constraints_lib, wayland_interpose_lib],
-    include_directories : [VKIntox_include_path, source_inc, include_directories('vendor'), include_directories('vendor/reshade'), imgui_inc, stb_inc],
+                wayland_pointer_constraints_lib, wayland_interpose_lib] +
+                (have_fg_engine ? [mako_common_lib, mako_backend_lib] : []),
+    include_directories : [VKIntox_include_path, source_inc, include_directories('vendor'), include_directories('vendor/reshade'), imgui_inc, stb_inc] +
+                           (have_fg_engine ? [include_directories('vendor/mako/engine/mako-backend/include'),
+                                              include_directories('vendor/mako/engine/mako-backend/src'),
+                                              include_directories('vendor/mako/engine/mako-common/include')] : []),
     cpp_args : vkintox_cpp_args,
     dependencies : vkintox_deps,
     gnu_symbol_visibility: 'hidden',
@@ -282,6 +387,7 @@ m3_theme_tests = executable('vkintox-m3-theme-tests',
     'vendor/imgui/imgui_tables.cc',
     'vendor/imgui/imgui_widgets.cc',
     'vendor/imgui/imgui_m3.cc',
+    'overlay/shell/ui_dialog.cc',
     include_directories : [source_inc, imgui_inc])
 test('m3 theme', m3_theme_tests)
 
@@ -303,7 +409,6 @@ vk_handle_tests = executable('vkintox-vk-handle-tests',
     include_directories : [source_inc])
 test('vk handle ordering', vk_handle_tests)
 
-libdl_dep = meson.get_compiler('cpp').find_library('dl', required : false)
 signal_chain_tests = executable('vkintox-signal-chain-tests',
     'tests/signal_chain_test.cc',
     dependencies : [libdl_dep])

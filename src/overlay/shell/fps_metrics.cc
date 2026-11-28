@@ -14,7 +14,10 @@ namespace VKIntox::FpsMetrics
         std::chrono::steady_clock::time_point g_lastFrame = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point g_windowStart = g_lastFrame;
         int g_windowFrames = 0;
+        int g_windowGenerated = 0;
         float g_fps = 0.0f;
+        float g_realFps = 0.0f;
+        float g_generatedFps = 0.0f;
         float g_low1 = 0.0f;
         float g_low01 = 0.0f;
 
@@ -31,13 +34,28 @@ namespace VKIntox::FpsMetrics
         }
     }
 
+    void addGeneratedFrames(int count)
+    {
+        if (count > 0)
+            g_windowGenerated += count;
+    }
+
     void sample()
     {
         const auto now = std::chrono::steady_clock::now();
         const float frameTimeMs = std::chrono::duration<float, std::milli>(now - g_lastFrame).count();
         g_lastFrame = now;
+        // no samples while the overlay was hidden: drop the counts instead of
+        // showing a backlog on the first visible frame
+        if (frameTimeMs >= 500.0f)
+        {
+            g_windowStart = now;
+            g_windowFrames = 0;
+            g_windowGenerated = 0;
+            return;
+        }
         // stalls past half a second are the game loading, not frame pacing
-        if (frameTimeMs > 0.1f && frameTimeMs < 500.0f)
+        if (frameTimeMs > 0.1f)
         {
             g_ring[g_ringNext] = frameTimeMs;
             g_ringNext = (g_ringNext + 1) % ringCapacity;
@@ -49,7 +67,9 @@ namespace VKIntox::FpsMetrics
         const double windowSeconds = std::chrono::duration<double>(now - g_windowStart).count();
         if (windowSeconds >= 1.0)
         {
-            g_fps = static_cast<float>(g_windowFrames) / static_cast<float>(windowSeconds);
+            g_realFps = static_cast<float>(g_windowFrames) / static_cast<float>(windowSeconds);
+            g_generatedFps = static_cast<float>(g_windowGenerated) / static_cast<float>(windowSeconds);
+            g_fps = g_realFps + g_generatedFps;
             const float p99 = percentile(0.99f);
             const float p999 = percentile(0.999f);
             g_low1 = p99 > 0.0f ? 1000.0f / p99 : 0.0f;
@@ -57,10 +77,13 @@ namespace VKIntox::FpsMetrics
             // keep the leftover rather than snapping to exactly 1.0s, which under-counts
             g_windowStart += std::chrono::milliseconds(static_cast<int64_t>(windowSeconds * 1000.0));
             g_windowFrames = 0;
+            g_windowGenerated = 0;
         }
     }
 
     float fps() { return g_fps; }
+    float realFps() { return g_realFps; }
+    float generatedFps() { return g_generatedFps; }
     float low1Percent() { return g_low1; }
     float low01Percent() { return g_low01; }
 

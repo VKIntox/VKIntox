@@ -186,6 +186,12 @@ namespace VKIntox
 
         VkCommandBuffer recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height);
 
+        // Replays the frame's ImGui draw data into another swapchain image.
+        // Used for generated frames: the overlay is built once, then stamped
+        // onto every presented image so it never appears at half rate.
+        void recordOverlayDrawData(VkCommandBuffer cmd, uint32_t imageIndex,
+                                   VkImageView imageView, uint32_t width, uint32_t height);
+
         // Get fence for command buffer synchronization (used by vkintox.cpp submit)
         VkFence getCommandBufferFence(uint32_t imageIndex) const
         {
@@ -227,6 +233,7 @@ namespace VKIntox
         void renderFpsCounter();
         void renderAboutView();
         void renderAdvancedView();  // Depth buffer switching (Advanced tab)
+        void renderFgView();          // Frame generation (FG tab)
         // Sub-views: pages pushed inside a tab. They slide in over the dock (which
         // fades out to make room) and carry a breadcrumb back to their parent.
         void renderDepthBuffersView();   // Reported depth buffers (from Settings)
@@ -237,6 +244,7 @@ namespace VKIntox
         enum SubView
         {
             SubView_None = 0,
+            SubView_DepthSettings,
             SubView_DepthBuffers,
             SubView_Diagnostics,
             SubView_ThemeColors,
@@ -297,6 +305,37 @@ namespace VKIntox
         std::vector<VkFence> commandBufferFences;  // Fences to track command buffer completion
         std::vector<VkFramebuffer> framebuffers;    // Pre-created per swapchain image
         std::vector<VkImageView> framebufferImageViews;  // Track which image views framebuffers were created for
+        // Generate-frames overlay replay stamps the current draw data onto the
+        // extra acquired images, so it needs framebuffers for those image views
+        // too. Kept apart from the per-index cache above: that one belongs to
+        // recordFrame and must not be retargeted by a replay.
+        struct ReplayFramebuffer
+        {
+            VkImageView   view = VK_NULL_HANDLE;
+            VkFramebuffer framebuffer = VK_NULL_HANDLE;
+            uint32_t      width = 0;
+            uint32_t      height = 0;
+        };
+        std::vector<ReplayFramebuffer> replayFramebuffers;
+        void destroyReplayFramebuffers();
+
+        // One full-resolution overlay snapshot used only while the shell opens
+        // or closes. The live ImGui layout is never resized for the transition.
+        VkImage snapshotImage = VK_NULL_HANDLE;
+        VkDeviceMemory snapshotMemory = VK_NULL_HANDLE;
+        VkImageView snapshotView = VK_NULL_HANDLE;
+        VkFramebuffer snapshotFramebuffer = VK_NULL_HANDLE;
+        VkRenderPass snapshotRenderPass = VK_NULL_HANDLE;
+        VkSampler snapshotSampler = VK_NULL_HANDLE;
+        VkDescriptorSet snapshotTexture = VK_NULL_HANDLE;
+        uint32_t snapshotWidth = 0;
+        uint32_t snapshotHeight = 0;
+        ImVec4 snapshotRect = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        bool snapshotReady = false;
+        bool snapshotValid = false;
+        bool ensureSnapshotResources(uint32_t width, uint32_t height);
+        void releaseSnapshotResources(bool deferred = false);
+
         VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
         uint32_t imageCount = 0;
         uint32_t framebufferWidth = 0;   // Dimensions used to create framebuffers
@@ -313,6 +352,8 @@ namespace VKIntox
         // deferred until it is false: focusing mid-slide made ImGui scroll the
         // window to the focused item, which dragged the nav bar along.
         bool viewTransitionActive = false;
+        bool overlayDrawDataValid = false;
+        int activeView = 0;
 
         // Bumped when updateState sees different effect sources, so the
         // add-effects view can cache its entry list instead of rebuilding it
@@ -392,6 +433,7 @@ namespace VKIntox
         // Shell appear/disappear. Mirrors the dialog motion exactly: same
         // 0.28s clock, same rise, same bezier, run backwards on hide.
         float  shellAlpha = 1.0f;
+        float  shellScale = 1.0f;
         double shellAnimStart = -1000.0;
         bool   shellAnimTarget = false;
         bool   shellBaseValid = false;

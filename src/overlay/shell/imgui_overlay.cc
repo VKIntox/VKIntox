@@ -1,3 +1,6 @@
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#define IMGUI_DEFINE_MATH_OPERATORS
+#endif
 #include "overlay/shell/imgui_overlay.hh"
 #include "depth/depth_dump.hh"
 
@@ -32,12 +35,15 @@
 #include <filesystem>
 #include <memory>
 
+#include <X11/keysym.h>
+
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/imgui_internal.h"
 #include "vendor/imgui/imgui_m3.h"
 #include "overlay/theme/ui_theme.hh"
 #include "overlay/theme/ui_icons.hh"
 #include "overlay/shell/ui_dialog.hh"
+#include "overlay/shell/ui_menu.hh"
 #include "overlay/shell/fps_metrics.hh"
 #include "vendor/imgui/backends/imgui_impl_vulkan.h"
 
@@ -56,6 +62,48 @@ namespace VKIntox
             data->DesiredSize.y = std::max(data->DesiredSize.y, OverlayTitleBarHeight() + 1.0f);
         }
 
+        ImGuiKey ImGuiKeyFromKeysym(uint32_t keysym)
+        {
+            switch (keysym)
+            {
+            case XK_BackSpace: return ImGuiKey_Backspace;
+            case XK_Delete: return ImGuiKey_Delete;
+            case XK_Return:
+            case XK_KP_Enter: return ImGuiKey_Enter;
+            case XK_Escape: return ImGuiKey_Escape;
+            case XK_Tab:
+            case XK_ISO_Left_Tab: return ImGuiKey_Tab;
+            case XK_Left:
+            case XK_KP_Left: return ImGuiKey_LeftArrow;
+            case XK_Right:
+            case XK_KP_Right: return ImGuiKey_RightArrow;
+            case XK_Up:
+            case XK_KP_Up: return ImGuiKey_UpArrow;
+            case XK_Down:
+            case XK_KP_Down: return ImGuiKey_DownArrow;
+            case XK_Page_Up:
+            case XK_KP_Page_Up: return ImGuiKey_PageUp;
+            case XK_Page_Down:
+            case XK_KP_Page_Down: return ImGuiKey_PageDown;
+            case XK_Home:
+            case XK_KP_Home: return ImGuiKey_Home;
+            case XK_End:
+            case XK_KP_End: return ImGuiKey_End;
+            case XK_Insert:
+            case XK_KP_Insert: return ImGuiKey_Insert;
+            case XK_space: return ImGuiKey_Space;
+            case XK_Shift_L: return ImGuiKey_LeftShift;
+            case XK_Shift_R: return ImGuiKey_RightShift;
+            case XK_Control_L: return ImGuiKey_LeftCtrl;
+            case XK_Control_R: return ImGuiKey_RightCtrl;
+            case XK_Alt_L: return ImGuiKey_LeftAlt;
+            case XK_Alt_R: return ImGuiKey_RightAlt;
+            case XK_Super_L: return ImGuiKey_LeftSuper;
+            case XK_Super_R: return ImGuiKey_RightSuper;
+            default: return ImGuiKey_None;
+            }
+        }
+
         // Backdrop blur tuning. Capture at half resolution, then run a separable
         // Gaussian with a fixed 9-tap kernel. Each "pass" is a horizontal draw
         // followed by a vertical draw, so the ping-pong always lands back in
@@ -63,12 +111,19 @@ namespace VKIntox
         constexpr uint32_t kBlurDownsample = 2;
         constexpr float    kBlurSigma = 2.0f;
 
-        // Shell appear/disappear. Same clock, rise and bezier as the M3 dialogs
-        // so the overlay opens and closes the way every popup does.
-        constexpr float kShellAnimSeconds = 0.28f;
-        constexpr float kShellAnimDropDp  = 100.0f;
-        constexpr float kShellBezX1 = 0.05f, kShellBezY1 = 0.90f;
-        constexpr float kShellBezX2 = 0.10f, kShellBezY2 = 1.06f;
+        // Mango zoom/fade timings. scale and opacity use independent curves.
+        constexpr float kShellOpenSeconds = 0.32f;
+        constexpr float kShellCloseSeconds = 0.26f;
+        constexpr float kShellOpenScale = 0.85f;
+        constexpr float kShellCloseScale = 0.0f;
+        constexpr float kShellOpenX1 = 0.05f, kShellOpenY1 = 0.90f;
+        constexpr float kShellOpenX2 = 0.10f, kShellOpenY2 = 1.12f;
+        constexpr float kShellCloseX1 = 0.05f, kShellCloseY1 = 0.70f;
+        constexpr float kShellCloseX2 = 0.10f, kShellCloseY2 = 1.00f;
+        constexpr float kShellFadeInX1 = 0.05f, kShellFadeInY1 = 0.70f;
+        constexpr float kShellFadeInX2 = 0.10f, kShellFadeInY2 = 1.00f;
+        constexpr float kShellFadeOutX1 = 0.05f, kShellFadeOutY1 = 0.90f;
+        constexpr float kShellFadeOutX2 = 0.10f, kShellFadeOutY2 = 1.00f;
 
         // Matches the push_constant block in overlay_blur.frag.glsl exactly.
         struct BlurPushConstants
@@ -180,7 +235,8 @@ namespace VKIntox
     {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
-        // finer circles for switches, sliders and radio marks
+        // finer circles for switches, sliders and radio marks; the default
+        // tessellation is visibly polygonal at this density
         ImGui::GetStyle().CircleTessellationMaxError = 0.08f;
         // imconfig disables ImGui's default shell handler, so TextLinkOpenURL
         // would silently do nothing. route it through our xdg-open helper.
@@ -191,6 +247,7 @@ namespace VKIntox
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.ConfigWindowsMoveFromTitleBarOnly = true;
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
         std::string iniPath = ConfigSerializer::getBaseConfigDir() + "/imgui.ini";
         std::ifstream iniFile(iniPath);
@@ -292,9 +349,12 @@ namespace VKIntox
             ImFont* regular   = addFace(bodyPath, 400.0f, false, 14.0f);
             ImFont* medium    = addFace(bodyPath, 500.0f, false, 14.0f);
             ImFont* bodyBold  = addFace(bodyPath, 700.0f, false, 14.0f);
+            ImFont* docRegular = addFace(docPath, 400.0f, true, 18.0f);
+            ImFont* docMedium  = addFace(docPath, 500.0f, true, 18.0f);
             ImFont* bold      = addFace(docPath,  650.0f, true,  18.0f);
             ImFont* extraBold = addFace(docPath,  700.0f, true,  32.0f);
             ImGuiM3SetTextFonts(regular, medium, bold, extraBold);
+            ImGuiM3SetDocumentFonts(docRegular, docMedium);
             ImGuiM3SetBodyBoldFont(bodyBold);
             Logger::info("ImGui: body=Roboto Flex, document=Google Sans Flex (variable) from " + bodyPath);
         }
@@ -372,6 +432,7 @@ namespace VKIntox
         // Blur descriptors have to go back to ImGui's pool too before the backend
         // shuts down; the device handles go through the deferred queue below.
         releaseBlurResources(true);
+        releaseSnapshotResources(false);
 
         // The ImGui teardown stays inline and runs first, because it releases
         // ImGui's own references to the descriptor pool and the title icon
@@ -380,6 +441,7 @@ namespace VKIntox
         // here is by construction rather than by luck.
         if (backendInitialized)
             ImGui_ImplVulkan_Shutdown();
+        ImGuiM3Shutdown();
         ImGui::DestroyContext();
 
         // Deferred, like every other owner. The QueueWaitIdle above already makes
@@ -420,6 +482,13 @@ namespace VKIntox
             if (fb != VK_NULL_HANDLE)
                 queue.push(DestroyPhase::RenderPass, [vkd, device, fb] { vkd.DestroyFramebuffer(device, fb, nullptr); });
         }
+        for (auto& entry : replayFramebuffers)
+        {
+            VkFramebuffer fb = entry.framebuffer;
+            if (fb != VK_NULL_HANDLE)
+                queue.push(DestroyPhase::RenderPass, [vkd, device, fb] { vkd.DestroyFramebuffer(device, fb, nullptr); });
+        }
+        replayFramebuffers.clear();
         if (pass != VK_NULL_HANDLE)
             queue.push(DestroyPhase::RenderPass, [vkd, device, pass] { vkd.DestroyRenderPass(device, pass, nullptr); });
 
@@ -555,30 +624,27 @@ namespace VKIntox
         constexpr float kFadeSeconds = 0.6f;
         const auto now = std::chrono::steady_clock::now();
 
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        const float margin = 28.0f;
-        const float gap = 10.0f;
-        const float padX = 22.0f;
-        const float padY = 16.0f;
-        const float rounding = 16.0f;
+        const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+        const ImGuiM3Metrics& tm = ImGuiM3GetMetrics();
+        const float margin = 28.0f * tm.density;
+        const float gap = 10.0f * tm.density;
+        const float padX = 20.0f * tm.density;
+        const float padY = 12.0f * tm.density;
+        const float rounding = ImGuiM3Radius(ImGuiM3Shape_Large);
         // the host window has to be big enough for the shadow: a fixed 14px pad was
         // under a level-2 reach, so the falloff was sliced square at the window edge
-        const ImGuiM3Metrics& tm = ImGuiM3GetMetrics();
         const int toastElevation = 2;
         const float shadowReach = ImMax(tm.ambient_shadow_blur[toastElevation] * 2.0f + tm.ambient_shadow_spread[toastElevation],
                                         ImMax(tm.key_shadow_blur[toastElevation] * 2.0f, 4.0f));
         const float shadowDrop = ImMax(tm.ambient_shadow_y[toastElevation], tm.key_shadow_y[toastElevation]);
         const float shadowPad = ImCeil((shadowReach + shadowDrop) * tm.density) + 1.0f;
         // never let a collapsed game window produce a negative card width
-        const float maxCardWidth = ImMax(160.0f, ImMin(560.0f, viewport->WorkSize.x - margin * 2.0f));
+        const float maxCardWidth = ImMax(160.0f, ImMin(720.0f, displaySize.x - margin * 2.0f));
 
-        std::vector<size_t> expired;
-        for (size_t i = 0; i < snapshot.size(); ++i)
-            if (std::chrono::duration<float>(now - snapshot[i].createdAt).count() >= kLifetimeSeconds)
-                expired.push_back(i);
+        std::vector<bool> hoveredToasts(snapshot.size(), false);
 
         // the newest toast sits nearest the bottom edge, older ones stack upward
-        float cursorY = viewport->WorkPos.y + viewport->WorkSize.y - margin;
+        float cursorY = displaySize.y - margin;
         for (size_t i = 0; i < snapshot.size(); ++i)
         {
             const float age = std::chrono::duration<float>(now - snapshot[i].createdAt).count();
@@ -590,24 +656,29 @@ namespace VKIntox
                 : 1.0f;
 
             const std::string& message = snapshot[i].message;
-            const float wrapWidth = maxCardWidth - padX * 2.0f;
-            const ImVec2 textSize = ImGui::CalcTextSize(message.c_str(), nullptr, false, wrapWidth);
-            const float cardWidth = ImMin(maxCardWidth, ImMax(textSize.x, 1.0f) + padX * 2.0f);
-            const float cardHeight = textSize.y + padY * 2.0f;
+            const float maxTextWidth = ImMax(80.0f, maxCardWidth - padX * 2.0f);
+            ImFont* textFont = ImGuiM3FontBold();
+            const float textPx = ImGuiM3GetTypeStyle(ImGuiM3Type_BodyLarge).size * tm.density;
+            ImGui::PushFont(textFont, textPx);
+            const char* shownMessage = UI::TruncateLabel(message.c_str(), maxTextWidth);
+            const ImVec2 textSize = ImGui::CalcTextSize(shownMessage);
+            ImGui::PopFont();
+            const float cardWidth = ImMin(maxCardWidth, textSize.x + padX * 2.0f);
+            const float minHeight = (textSize.y > textPx * 1.5f
+                                  ? tm.snackbar_height_2 : tm.snackbar_height_1) * tm.density;
+            const float cardHeight = ImMax(minHeight, textSize.y + padY * 2.0f);
             const float windowWidth = cardWidth + shadowPad * 2.0f;
             const float windowHeight = cardHeight + shadowPad * 2.0f;
 
             cursorY -= windowHeight;
-            const ImVec2 windowPos(viewport->WorkPos.x + (viewport->WorkSize.x - windowWidth) * 0.5f, cursorY);
+            const ImVec2 windowPos((displaySize.x - windowWidth) * 0.5f, cursorY);
             ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(windowWidth, windowHeight), ImGuiCond_Always);
 
-            // NoInputs: the toast is informational, so clicks pass through to the
-            // game instead of being withheld by the input blocker.
+            // Toasts accept hover so their lifetime pauses while the user reads.
             const ImGuiWindowFlags flags =
                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
-                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
-                ImGuiWindowFlags_NoInputs;
+                ImGuiWindowFlags_NoFocusOnAppearing;
 
             // transparent host window: the card and its shadow are drawn inside,
             // which keeps the whole thing on the top-most window layer.
@@ -620,6 +691,8 @@ namespace VKIntox
             char label[40];
             snprintf(label, sizeof(label), "##vkintoxToast%zu", i);
             const bool open = ImGui::Begin(label, nullptr, flags);
+            hoveredToasts[i] = open && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup |
+                                                              ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
             ImGui::PopStyleVar(3);
             ImGui::PopStyleColor(2);
@@ -638,29 +711,39 @@ namespace VKIntox
                 ImGuiM3DrawElevation(drawList, ImRect(cardMin, cardMax),
                                      ImGuiM3ShapeRounding{ rounding, rounding, rounding, rounding },
                                      toastElevation, fade);
-                const int cardAlpha = static_cast<int>(255.0f * fade);
-                drawList->AddRectFilled(cardMin, cardMax, IM_COL32(255, 255, 255, cardAlpha), rounding);
+                auto faded = [fade](ImU32 color) {
+                    return (color & 0x00FFFFFFu) | ((ImU32)((float)((color >> 24) & 0xFFu) * fade) << 24);
+                };
+                const ImU32 cardColor = faded(ImGuiM3ColorU32(ImGuiM3Role_InverseSurface));
+                drawList->AddRectFilled(cardMin, cardMax, cardColor, rounding);
+                frameInputRects.push_back(InputRect{cardMin.x, cardMin.y, cardWidth, cardHeight});
 
-                ImGui::SetCursorScreenPos(ImVec2(cardMin.x + padX, cardMin.y + padY));
-                ImGui::PushTextWrapPos(cardMin.x + cardWidth - padX);
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, fade));
-                ImGui::TextUnformatted(message.c_str());
-                ImGui::PopStyleColor();
-                ImGui::PopTextWrapPos();
+                const ImU32 inverseContent = faded(ImGuiM3ColorU32(ImGuiM3Role_InverseOnSurface));
+                const ImVec2 textMin(cardMin.x + padX,
+                                     cardMin.y + (cardHeight - textSize.y) * 0.5f);
+                drawList->AddText(textFont, textPx, textMin, inverseContent, shownMessage);
             }
             ImGui::End();
 
             cursorY -= gap;
         }
 
-        if (!expired.empty())
         {
             std::lock_guard<std::mutex> lock(toastsMutex);
-            // Erase in reverse so indices stay valid.
-            for (auto it = expired.rbegin(); it != expired.rend(); ++it)
+            for (size_t i = 0; i < snapshot.size(); ++i)
             {
-                if (*it < toasts.size())
-                    toasts.erase(toasts.begin() + *it);
+                if (i >= toasts.size())
+                    break;
+                if (hoveredToasts[i])
+                    toasts[i].createdAt = now;
+            }
+            for (auto it = toasts.begin(); it != toasts.end();)
+            {
+                const float age = std::chrono::duration<float>(now - it->createdAt).count();
+                if (age >= kLifetimeSeconds)
+                    it = toasts.erase(it);
+                else
+                    ++it;
             }
         }
     }
@@ -671,7 +754,7 @@ namespace VKIntox
             return;
 
         const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 
         char text[32];
         const float fps = FpsMetrics::fps();
@@ -733,9 +816,21 @@ namespace VKIntox
         const float labelGap = 4.0f * m.density;
         const float segmentGap = 10.0f * m.density;
 
+        const bool showSplit = settingsManager.getFpsExtended() && settingsManager.getFgEnabled();
+        char splitText[48] = {};
+        if (showSplit)
+            snprintf(splitText, sizeof(splitText), "%.0f real + %.0f gen",
+                     FpsMetrics::realFps(), FpsMetrics::generatedFps());
+        if (bodyBold)
+            ImGui::PushFont(bodyBold, lowsPx);
+        const float splitW = showSplit ? ImGui::CalcTextSize(splitText).x : 0.0f;
+        if (bodyBold)
+            ImGui::PopFont();
+        const float splitGapX = showSplit ? 12.0f * m.density : 0.0f;
+
         const float lowsGapX = showLows ? 12.0f * m.density : 0.0f;
         const float lowsW = showLows ? label1W + labelGap + low1W + segmentGap + label01W + labelGap + low01W : 0.0f;
-        const float cardW = padX + textSize.x + lowsGapX + lowsW + padX;
+        const float cardW = padX + textSize.x + splitGapX + splitW + lowsGapX + lowsW + padX;
         const float cardH = textSize.y + padY * 2.0f;
         const float windowW = cardW + shadowPad * 2.0f;
         const float windowH = cardH + shadowPad * 2.0f;
@@ -743,10 +838,8 @@ namespace VKIntox
         const int corner = settingsManager.getFpsCorner();
         const bool right = (corner == 1 || corner == 3);
         const bool bottom = (corner == 2 || corner == 3);
-        const float cardX = right ? viewport->WorkPos.x + viewport->WorkSize.x - margin - cardW
-                                  : viewport->WorkPos.x + margin;
-        const float cardY = bottom ? viewport->WorkPos.y + viewport->WorkSize.y - margin - cardH
-                                   : viewport->WorkPos.y + margin;
+        const float cardX = right ? displaySize.x - margin - cardW : margin;
+        const float cardY = bottom ? displaySize.y - margin - cardH : margin;
         const ImVec2 windowPos(cardX - shadowPad, cardY - shadowPad);
 
         ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
@@ -781,9 +874,15 @@ namespace VKIntox
             const float labelY = card.Min.y + padY + (bandH - label1H) * 0.5f;
             const float valueY = card.Min.y + padY + (bandH - low1H) * 0.5f;
             dl->AddText(textFont, textPx, ImVec2(card.Min.x + padX, textY), valueCol, text);
+            float cursorX = card.Min.x + padX + textSize.x + splitGapX;
+            if (showSplit)
+            {
+                dl->AddText(lowsFont, lowsPx, ImVec2(cursorX, labelY), dimCol, splitText);
+                cursorX += splitW;
+            }
             if (showLows)
             {
-                const float lowsX = card.Min.x + padX + textSize.x + lowsGapX;
+                const float lowsX = cursorX + lowsGapX;
                 dl->AddText(lowsFont, lowsPx, ImVec2(lowsX, labelY), dimCol, "1%");
                 dl->AddText(lowsFont, lowsValuePx, ImVec2(lowsX + label1W + labelGap, valueY), dimCol, low1Text);
                 const float low01X = lowsX + label1W + labelGap + low1W + segmentGap;
@@ -1424,6 +1523,7 @@ namespace VKIntox
             }
             framebuffers.clear();
             framebufferImageViews.clear();
+            destroyReplayFramebuffers();
 
             if (commandPool != VK_NULL_HANDLE)
             {
@@ -1983,36 +2083,283 @@ namespace VKIntox
         }
     }
 
+    void ImGuiOverlay::destroyReplayFramebuffers()
+    {
+        if (!logicalDevice)
+            return;
+        for (auto& entry : replayFramebuffers)
+        {
+            if (entry.framebuffer != VK_NULL_HANDLE)
+                logicalDevice->vkd.DestroyFramebuffer(logicalDevice->device, entry.framebuffer, nullptr);
+        }
+        replayFramebuffers.clear();
+    }
+
+    bool ImGuiOverlay::ensureSnapshotResources(uint32_t width, uint32_t height)
+    {
+        if (!logicalDevice || !backendInitialized || width == 0 || height == 0)
+            return false;
+        if (snapshotReady && snapshotWidth == width && snapshotHeight == height)
+            return true;
+
+        for (VkFence fence : commandBufferFences)
+        {
+            if (fence != VK_NULL_HANDLE
+                && logicalDevice->vkd.WaitForFences(logicalDevice->device, 1, &fence, VK_TRUE, 1'000'000'000ull) != VK_SUCCESS)
+            {
+                Logger::warn("overlay snapshot: fence wait before resize failed");
+                return false;
+            }
+        }
+        releaseSnapshotResources(false);
+
+        auto& vkd = logicalDevice->vkd;
+        const VkDevice dev = logicalDevice->device;
+        bool ok = true;
+
+        VkAttachmentDescription attachment{};
+        attachment.format         = swapchainFormat;
+        attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+        attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachment.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments    = &colorRef;
+        VkSubpassDependency deps[2]{};
+        deps[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+        deps[0].dstSubpass    = 0;
+        deps[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        deps[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        deps[1].srcSubpass    = 0;
+        deps[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+        deps[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        deps[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        VkRenderPassCreateInfo rp{};
+        rp.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rp.attachmentCount = 1;
+        rp.pAttachments    = &attachment;
+        rp.subpassCount    = 1;
+        rp.pSubpasses      = &subpass;
+        rp.dependencyCount = 2;
+        rp.pDependencies   = deps;
+        ok = vkd.CreateRenderPass(dev, &rp, nullptr, &snapshotRenderPass) == VK_SUCCESS;
+
+        if (ok)
+        {
+            VkImageCreateInfo ci{};
+            ci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            ci.imageType     = VK_IMAGE_TYPE_2D;
+            ci.format        = swapchainFormat;
+            ci.extent        = {width, height, 1};
+            ci.mipLevels     = 1;
+            ci.arrayLayers   = 1;
+            ci.samples       = VK_SAMPLE_COUNT_1_BIT;
+            ci.tiling        = VK_IMAGE_TILING_OPTIMAL;
+            ci.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            ci.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+            ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            ok = vkd.CreateImage(dev, &ci, nullptr, &snapshotImage) == VK_SUCCESS;
+        }
+        if (ok)
+        {
+            VkMemoryRequirements req{};
+            vkd.GetImageMemoryRequirements(dev, snapshotImage, &req);
+            VkMemoryAllocateInfo ai{};
+            ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            ai.allocationSize  = req.size;
+            ai.memoryTypeIndex = findMemoryTypeIndex(logicalDevice, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            ok = vkd.AllocateMemory(dev, &ai, nullptr, &snapshotMemory) == VK_SUCCESS;
+        }
+        if (ok)
+            ok = vkd.BindImageMemory(dev, snapshotImage, snapshotMemory, 0) == VK_SUCCESS;
+        if (ok)
+        {
+            VkImageViewCreateInfo vi{};
+            vi.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            vi.image                           = snapshotImage;
+            vi.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+            vi.format                          = swapchainFormat;
+            vi.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+            vi.subresourceRange.baseMipLevel   = 0;
+            vi.subresourceRange.levelCount     = 1;
+            vi.subresourceRange.baseArrayLayer = 0;
+            vi.subresourceRange.layerCount     = 1;
+            ok = vkd.CreateImageView(dev, &vi, nullptr, &snapshotView) == VK_SUCCESS;
+        }
+        if (ok)
+        {
+            VkFramebufferCreateInfo fi{};
+            fi.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fi.renderPass      = snapshotRenderPass;
+            fi.attachmentCount = 1;
+            fi.pAttachments    = &snapshotView;
+            fi.width           = width;
+            fi.height          = height;
+            fi.layers          = 1;
+            ok = vkd.CreateFramebuffer(dev, &fi, nullptr, &snapshotFramebuffer) == VK_SUCCESS;
+        }
+        if (ok)
+        {
+            VkSamplerCreateInfo si{};
+            si.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            si.magFilter    = VK_FILTER_LINEAR;
+            si.minFilter    = VK_FILTER_LINEAR;
+            si.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.maxLod       = 0.0f;
+            ok = vkd.CreateSampler(dev, &si, nullptr, &snapshotSampler) == VK_SUCCESS;
+        }
+        if (ok)
+        {
+            snapshotTexture = ImGui_ImplVulkan_AddTexture(snapshotSampler, snapshotView,
+                                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            ok = snapshotTexture != VK_NULL_HANDLE;
+        }
+        if (!ok)
+        {
+            releaseSnapshotResources(false);
+            return false;
+        }
+        snapshotWidth = width;
+        snapshotHeight = height;
+        snapshotReady = true;
+        return true;
+    }
+
+    void ImGuiOverlay::releaseSnapshotResources(bool)
+    {
+        if (!logicalDevice)
+            return;
+        auto& vkd = logicalDevice->vkd;
+        const VkDevice dev = logicalDevice->device;
+        if (snapshotTexture != VK_NULL_HANDLE && backendInitialized)
+            ImGui_ImplVulkan_RemoveTexture(snapshotTexture);
+        if (snapshotFramebuffer != VK_NULL_HANDLE) vkd.DestroyFramebuffer(dev, snapshotFramebuffer, nullptr);
+        if (snapshotView != VK_NULL_HANDLE)        vkd.DestroyImageView(dev, snapshotView, nullptr);
+        if (snapshotSampler != VK_NULL_HANDLE)     vkd.DestroySampler(dev, snapshotSampler, nullptr);
+        if (snapshotImage != VK_NULL_HANDLE)       vkd.DestroyImage(dev, snapshotImage, nullptr);
+        if (snapshotMemory != VK_NULL_HANDLE)      vkd.FreeMemory(dev, snapshotMemory, nullptr);
+        if (snapshotRenderPass != VK_NULL_HANDLE)  vkd.DestroyRenderPass(dev, snapshotRenderPass, nullptr);
+        snapshotTexture = VK_NULL_HANDLE;
+        snapshotFramebuffer = VK_NULL_HANDLE;
+        snapshotView = VK_NULL_HANDLE;
+        snapshotSampler = VK_NULL_HANDLE;
+        snapshotImage = VK_NULL_HANDLE;
+        snapshotMemory = VK_NULL_HANDLE;
+        snapshotRenderPass = VK_NULL_HANDLE;
+        snapshotWidth = 0;
+        snapshotHeight = 0;
+        snapshotReady = false;
+        snapshotValid = false;
+    }
+
+    void ImGuiOverlay::recordOverlayDrawData(VkCommandBuffer cmd, uint32_t imageIndex,
+                                             VkImageView imageView, uint32_t width, uint32_t height)
+    {
+        (void) imageIndex;
+        if (!backendInitialized || cmd == VK_NULL_HANDLE || renderPass == VK_NULL_HANDLE)
+            return;
+        if (imageView == VK_NULL_HANDLE || width == 0 || height == 0 || !overlayDrawDataValid)
+            return;
+        ImDrawData* drawData = ImGui::GetDrawData();
+        if (!drawData)
+            return;
+
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
+        for (const auto& entry : replayFramebuffers)
+        {
+            if (entry.view == imageView && entry.width == width && entry.height == height)
+            {
+                framebuffer = entry.framebuffer;
+                break;
+            }
+        }
+        if (framebuffer == VK_NULL_HANDLE)
+        {
+            VkFramebufferCreateInfo fbInfo = {};
+            fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fbInfo.renderPass = renderPass;
+            fbInfo.attachmentCount = 1;
+            fbInfo.pAttachments = &imageView;
+            fbInfo.width = width;
+            fbInfo.height = height;
+            fbInfo.layers = 1;
+            if (logicalDevice->vkd.CreateFramebuffer(logicalDevice->device, &fbInfo, nullptr,
+                                                     &framebuffer) != VK_SUCCESS)
+                return;
+            replayFramebuffers.push_back({imageView, framebuffer, width, height});
+        }
+
+        VkRenderPassBeginInfo rpBegin = {};
+        rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rpBegin.renderPass = renderPass;
+        rpBegin.framebuffer = framebuffer;
+        rpBegin.renderArea.extent.width = width;
+        rpBegin.renderArea.extent.height = height;
+        logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+        ImGui_ImplVulkan_RenderDrawData(drawData, cmd);
+        logicalDevice->vkd.CmdEndRenderPass(cmd);
+    }
+
     VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height)
     {
+        overlayDrawDataValid = false;
         // a frame dump must not bake the UI into the file; the request arms a
         // hold long enough for the overlay to be gone for the whole capture
         if (DepthDump::overlaySuppressed())
+        {
+            (void)getKeyboardState();
             return VK_NULL_HANDLE;
+        }
 
         sampleDiagnostics();
-        // Shell appear/disappear. The clock lives on steady_clock so it runs even
-        // on frames where ImGui hasn't ticked yet. Same curve and rise as the
-        // dialogs, reversed on hide, so the overlay opens and closes like a popup.
+        // Shell appear/disappear. The live panel is captured once, then the
+        // snapshot scales in place while this steady clock advances.
         const double shellNow = std::chrono::duration<double>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
         if (shellAnimTarget != visible)
         {
             shellAnimTarget = visible;
             shellAnimStart = shellNow;
+            snapshotValid = false;
         }
+        const float shellDuration = visible ? kShellOpenSeconds : kShellCloseSeconds;
         const float shellClock = std::clamp(
-            static_cast<float>((shellNow - shellAnimStart) / kShellAnimSeconds), 0.0f, 1.0f);
-        const float shellEase = UI::CubicBezierEase(shellClock, kShellBezX1, kShellBezY1, kShellBezX2, kShellBezY2);
-        // The bezier overshoots past 1 (kShellBezY2 > 1); clamp the alpha or the
-        // raw 8-bit pack in the title bar wraps and the marks blink out.
-        shellAlpha = std::clamp(visible ? shellEase : 1.0f - shellEase, 0.0f, 1.0f);
-        const bool  shellActive = visible || shellAlpha > 0.001f;
-        const bool  shellAnimating = shellClock < 1.0f;
-        // appears by rising from below, disappears by sinking back down: the
-        // reverse of the dialog's entrance.
-        const float shellDrop = kShellAnimDropDp * ImGuiM3GetMetrics().density;
-        const float shellOffsetY = shellDrop * (visible ? (1.0f - shellEase) : shellEase);
+            static_cast<float>((shellNow - shellAnimStart) / shellDuration), 0.0f, 1.0f);
+        const float shellScaleEase = visible
+            ? UI::CubicBezierEase(shellClock, kShellOpenX1, kShellOpenY1, kShellOpenX2, kShellOpenY2)
+            : UI::CubicBezierEase(shellClock, kShellCloseX1, kShellCloseY1, kShellCloseX2, kShellCloseY2);
+        const float shellFadeEase = visible
+            ? UI::CubicBezierEase(shellClock, kShellFadeInX1, kShellFadeInY1, kShellFadeInX2, kShellFadeInY2)
+            : UI::CubicBezierEase(shellClock, kShellFadeOutX1, kShellFadeOutY1, kShellFadeOutX2, kShellFadeOutY2);
+        shellAlpha = visible ? ImLerp(0.85f, 1.0f, shellFadeEase)
+                             : 0.95f * (1.0f - shellFadeEase);
+        shellScale = visible ? ImLerp(kShellOpenScale, 1.0f, shellScaleEase)
+                             : ImLerp(1.0f, kShellCloseScale, shellScaleEase);
+        const bool reducedMotion = ImGuiM3GetMetrics().reduced_motion;
+        if (reducedMotion)
+        {
+            shellAlpha = visible ? 1.0f : 0.0f;
+            shellScale = visible ? 1.0f : 0.0f;
+        }
+        const bool shellActive = visible || shellAlpha > 0.001f;
+        const bool shellAnimating = !reducedMotion && shellClock < 1.0f;
+        const bool captureFrame = shellAnimating && !snapshotValid;
+        const float transitionAlpha = shellAlpha;
+        if (captureFrame)
+            shellAlpha = 1.0f;
 
         // Render even when the main overlay is hidden if there are pending
         // toast notifications — fatal errors must stay visible to the user. The
@@ -2021,6 +2368,7 @@ namespace VKIntox
         const bool showFps = settingsManager.getShowFps();
         if (!backendInitialized || (!shellActive && !hasToasts && !showFps))
         {
+            (void)getKeyboardState();
             // drop last frame's hitboxes, or they keep swallowing input.
             frameInputRects.clear();
             setInputRects(nullptr, 0);
@@ -2036,7 +2384,7 @@ namespace VKIntox
         // grabs held through the disappear animation ping-pong the handoff and
         // re-open the shell via a phantom key press.
         frameInputRects.clear();
-        setInputBlocked(visible && settingsManager.getOverlayBlockInput());
+        setInputBlocked(visible && !shellAnimating && settingsManager.getOverlayBlockInput());
 
         // Store current resolution for VRAM estimates in settings
         currentWidth = width;
@@ -2049,13 +2397,16 @@ namespace VKIntox
         ImGuiM3BlurSettings&    blurSettings     = ImGuiM3GetBlurSettings();
         ImGuiM3BackgroundObject& backgroundObject = ImGuiM3GetBackgroundObject();
         const float backgroundOpacity = std::clamp(blurSettings.background_opacity, 0.0f, 1.0f);
-        const bool  blurRequested = blurSettings.blur && backgroundObject.BackgroundBlur && backgroundOpacity <= 0.99f;
+        const bool  blurRequested = blurSettings.blur && backgroundObject.BackgroundBlur
+            && backgroundOpacity <= 0.99f && (!shellAnimating || captureFrame);
         bool        blurActive    = false;
         if (shellActive && blurRequested)
         {
             ensureBlurResources(width, height);
             blurActive = blurReady && imageIndex < blurResources.size();
         }
+        if (captureFrame)
+            ensureSnapshotResources(width, height);
 
         // Wait for previous use of this command buffer to complete.
         // Adaptive timeout: 4x the measured frame time (generous margin for GPU
@@ -2110,6 +2461,9 @@ namespace VKIntox
 
         if (needRecreate)
         {
+            // a new swapchain view (or extent) means the replay targets from
+            // the old swapchain are gone; their framebuffers must go too
+            destroyReplayFramebuffers();
             if (framebuffers[imageIndex] != VK_NULL_HANDLE)
                 logicalDevice->vkd.DestroyFramebuffer(logicalDevice->device, framebuffers[imageIndex], nullptr);
 
@@ -2187,27 +2541,88 @@ namespace VKIntox
             // window-manager grab and drops the game's cursor capture.
             const bool interactive = shellActive && blocking;
             setInputInteractive(interactive);
-            setOverlayWantsKeyboard(interactive
-                && (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup)));
+            setOverlayWantsKeyboard(interactive);
             updatePointerPosition(static_cast<float>(mouse.x), static_cast<float>(mouse.y));
         };
 
-        // Keyboard input for text fields
-        // Keys are one-shot events, so we send press and release in same frame
         KeyboardState keyboard = getKeyboardState();
         for (char c : keyboard.typedChars)
             io.AddInputCharacter(c);
-        if (keyboard.backspace) { io.AddKeyEvent(ImGuiKey_Backspace, true); io.AddKeyEvent(ImGuiKey_Backspace, false); }
-        if (keyboard.del) { io.AddKeyEvent(ImGuiKey_Delete, true); io.AddKeyEvent(ImGuiKey_Delete, false); }
-        if (keyboard.enter) { io.AddKeyEvent(ImGuiKey_Enter, true); io.AddKeyEvent(ImGuiKey_Enter, false); }
-        if (keyboard.left) { io.AddKeyEvent(ImGuiKey_LeftArrow, true); io.AddKeyEvent(ImGuiKey_LeftArrow, false); }
-        if (keyboard.right) { io.AddKeyEvent(ImGuiKey_RightArrow, true); io.AddKeyEvent(ImGuiKey_RightArrow, false); }
-        if (keyboard.home) { io.AddKeyEvent(ImGuiKey_Home, true); io.AddKeyEvent(ImGuiKey_Home, false); }
-        if (keyboard.end) { io.AddKeyEvent(ImGuiKey_End, true); io.AddKeyEvent(ImGuiKey_End, false); }
+        for (const KeyboardEvent& event : keyboard.events)
+        {
+            const ImGuiKey key = ImGuiKeyFromKeysym(event.keysym);
+            if (key != ImGuiKey_None)
+                io.AddKeyEvent(key, event.down);
+        }
+
+        const bool snapshotCaptureReady = captureFrame && snapshotReady;
+        if (captureFrame && !snapshotCaptureReady)
+        {
+            Logger::warn("overlay snapshot unavailable; falling back to the live shell");
+            shellAlpha = 1.0f;
+            shellScale = 1.0f;
+            snapshotValid = true;
+        }
+
+        auto renderTransition = [&]()
+        {
+            frameInputRects.clear();
+            setInputRects(nullptr, 0);
+            setInputBlocked(false);
+            setInputInteractive(false);
+            setOverlayWantsKeyboard(false);
+            setWaylandInputSurfaceRects(nullptr, 0);
+
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2((float)width, (float)height), ImGuiCond_Always);
+            ImGui::Begin("##vkintox_transition", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings |
+                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground);
+            const float scale = ImMax(shellScale, 0.0f);
+            const ImVec2 size(snapshotRect.z * scale, snapshotRect.w * scale);
+            const ImVec2 center(snapshotRect.x + snapshotRect.z * 0.5f,
+                                snapshotRect.y + snapshotRect.w * 0.5f);
+            const ImVec2 pos = center - size * 0.5f;
+            if (size.x > 0.01f && size.y > 0.01f)
+            {
+                const ImVec2 uv0(snapshotRect.x / (float)width, snapshotRect.y / (float)height);
+                const ImVec2 uv1((snapshotRect.x + snapshotRect.z) / (float)width,
+                                 (snapshotRect.y + snapshotRect.w) / (float)height);
+                const ImU32 tint = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f,
+                                                              ImClamp(shellAlpha, 0.0f, 1.0f)));
+                ImGui::GetWindowDrawList()->AddImage(
+                    ImTextureRef(reinterpret_cast<ImTextureID>(snapshotTexture)),
+                    pos, pos + size, uv0, uv1, tint);
+            }
+            ImGui::End();
+
+            // these stay live while only the shell snapshot animates
+            renderToasts();
+            renderFpsCounter();
+            ImGui::Render();
+            overlayDrawDataValid = ImGui::GetDrawData() != nullptr;
+
+            VkRenderPassBeginInfo rpBegin{};
+            rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rpBegin.renderPass = renderPass;
+            rpBegin.framebuffer = framebuffer;
+            rpBegin.renderArea.extent = {width, height};
+            logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+            logicalDevice->vkd.CmdEndRenderPass(cmd);
+        };
 
         // ImGui frame
         ImGui_ImplVulkan_NewFrame();
         ImGui::NewFrame();
+
+        if (shellAnimating && snapshotValid && snapshotReady && !captureFrame)
+        {
+            renderTransition();
+            if (logicalDevice->vkd.EndCommandBuffer(cmd) != VK_SUCCESS)
+                return VK_NULL_HANDLE;
+            return cmd;
+        }
 
         // When the overlay is hidden but toasts are showing, skip the main
         // window — toasts are standalone floating windows. During the disappear
@@ -2221,6 +2636,7 @@ namespace VKIntox
             setWaylandInputSurfaceRects(nullptr, 0);
             publishOverlayInput(settingsManager.getOverlayBlockInput());
             ImGui::Render();
+            overlayDrawDataValid = ImGui::GetDrawData() != nullptr;
 
             VkRenderPassBeginInfo rpBegin = {};
             rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -2267,8 +2683,8 @@ namespace VKIntox
         // theme's density: below this the cards, nav and preview rows start
         // cutting each other off. Still clamped by the window, so a game smaller
         // than the floor can keep its own size.
-        const float min_overlay_w = 640.0f * shell_metrics.density;
-        const float min_overlay_h = 830.0f * shell_metrics.density;
+        const float min_overlay_w = 520.0f * shell_metrics.density;
+        const float min_overlay_h = 560.0f * shell_metrics.density;
         const ImVec2 minSize(ImMin(ImMax(legible_w, min_overlay_w), avail.x),
                              ImMin(ImMax(legible_h, min_overlay_h), avail.y));
         const ImVec2 maxSize = avail;
@@ -2314,7 +2730,7 @@ namespace VKIntox
             const float keep = ImMin(avail.x, avail.y) * 0.05f;
             shellBaseX = ImClamp(shellBaseX, screenMin.x, ImMax(screenMin.x, screenMax.x - keep));
             shellBaseY = ImClamp(shellBaseY, screenMin.y, ImMax(screenMin.y, screenMax.y - keep));
-            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY + shellOffsetY), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(ImVec2(shellBaseX, shellBaseY), ImGuiCond_Always);
         }
         else
         {
@@ -2605,16 +3021,16 @@ namespace VKIntox
                                    iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize),
                                    ImVec2(0, 0), ImVec2(1, 1), fadeU32(IM_COL32_WHITE));
             }
-            ImFont* bold = ImGuiM3FontBold();
-            const float titleSize = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge).size * ImGuiM3GetMetrics().density;
-            if (bold)
-                ImGui::PushFont(bold, titleSize);
+            ImFont* titleFont = ImGuiM3FontBold();
+            const float titleSize = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleMedium).size * ImGuiM3GetMetrics().density;
+            if (titleFont)
+                ImGui::PushFont(titleFont, titleSize);
             const char* brand = "VKIntox";
             const ImVec2 textSize = ImGui::CalcTextSize(brand);
             drawList->AddText(ImVec2(windowPos.x + (windowSize.x - textSize.x) * 0.5f,
                                      windowPos.y + (titleBarHeight - textSize.y) * 0.5f),
                               fadeU32(ImGuiM3ColorU32(ImGuiM3Role_OnSurface)), brand);
-            if (bold)
+            if (titleFont)
                 ImGui::PopFont();
         }
 
@@ -2680,9 +3096,8 @@ namespace VKIntox
         // Bottom navigation dock: a pill bar under the content. The active
         // destination shows its label; the rest show only their icon. Its height
         // comes off the content region below.
-        static int activeView = 0;
-        static const char* const kViewLabels[] = {"Effects", "Shaders", "Settings", "About"};
-        static const ImWchar kViewIcons[] = {Icon::WandShine, Icon::Function, Icon::Settings, Icon::Info};
+        static const char* const kViewLabels[] = {"Effects", "Shaders", "FG", "Settings", "About"};
+        static const ImWchar kViewIcons[] = {Icon::WandShine, Icon::Function, Icon::MaskedTransitions, Icon::Settings, Icon::Info};
         constexpr int kViewCount = (int)(sizeof(kViewLabels) / sizeof(kViewLabels[0]));
         const float dockHeight = ImGuiM3GetMetrics().nav_bar_height * ImGuiM3GetMetrics().density;
 
@@ -2690,6 +3105,7 @@ namespace VKIntox
         // (config manage). The other top-level tabs map to fixed keys.
         auto contentIndex = [&]() -> int {
             // pushed pages come first: they belong to whichever tab opened them
+            if (openSubView == SubView_DepthSettings) return 5;
             if (openSubView == SubView_DepthBuffers) return 8;
             if (openSubView == SubView_Diagnostics)  return 6;
             if (openSubView == SubView_ThemeColors)  return 9;
@@ -2702,7 +3118,7 @@ namespace VKIntox
                 if (inConfigManageMode) return 2;
                 return 0;
             }
-            static const int kNamed[] = {0, 3, 4, 7};  // nav index -> content key
+            static const int kNamed[] = {0, 3, 13, 4, 7};  // nav index -> content key
             return kNamed[activeView];
         };
         auto renderView = [&](int key) {
@@ -2716,6 +3132,7 @@ namespace VKIntox
             case 5: renderAdvancedView(); break;
             case 6: renderDiagnosticsView(); break;
             case 7: renderAboutView(); break;
+            case 13: renderFgView(); break;
             case 8: renderDepthBuffersView(); break;
             case 9: renderThemeColorsView(); break;
             case 10: renderThemeBlurView(); break;
@@ -2755,7 +3172,14 @@ namespace VKIntox
                 viewFromIndex     = viewSettledIndex;
                 viewTargetIndex   = viewIndex;
                 viewTransitioning = (viewFromIndex != viewTargetIndex);
-                viewSlideDir      = (viewIndex > viewSettledIndex) ? 1 : -1;
+                const auto orderForKey = [](int key) {
+            if (key <= 2) return 0;
+            if (key == 3) return 1;
+            if (key == 13) return 2;
+            if (key == 7) return 4;
+            return 3;
+        };
+        viewSlideDir      = (orderForKey(viewIndex) > orderForKey(viewSettledIndex)) ? -1 : 1;
                 viewSlideStart    = ImGui::GetTime();
             }
             else
@@ -2767,7 +3191,12 @@ namespace VKIntox
         }
 
         float viewEase = 1.0f;
-        if (viewTransitioning)
+        if (viewTransitioning && ImGuiM3GetMetrics().reduced_motion)
+        {
+            viewTransitioning = false;
+            viewSettledIndex = viewTargetIndex;
+        }
+        else if (viewTransitioning)
         {
             const float clock = static_cast<float>((ImGui::GetTime() - viewSlideStart) / kViewSlideSeconds);
             if (clock >= 1.0f)
@@ -2791,7 +3220,7 @@ namespace VKIntox
         // rather than beside it - and the top bar cannot hang over the
         // breadcrumb of a page that is standing on it.
         const float dockGap = ImGui::GetStyle().ItemSpacing.y;
-        const bool overDock = (viewIndex == 1 || viewIndex == 2 || viewIndex == 6 ||
+        const bool overDock = (viewIndex == 1 || viewIndex == 2 || viewIndex == 5 || viewIndex == 6 ||
                                viewIndex == 8 || viewIndex == 9 || viewIndex == 10 || viewIndex == 11 ||
                                viewIndex == 12);
         const float dockFade = overDock
@@ -2807,7 +3236,7 @@ namespace VKIntox
 
         // Slidefade: a spatial travel of a fifth of the width, with the incoming
         // view fading in and the outgoing view fading out on the same clock.
-        const float travel    = 0.20f * viewSize.x * static_cast<float>(viewSlideDir);
+        const float travel    = ImGuiM3GetMetrics().reduced_motion ? 0.0f : 24.0f * ImGuiM3GetMetrics().density;
         const float offsetIn  = showingFrom ? (1.0f - viewEase) * travel : 0.0f;
         const float offsetOut = showingFrom ? -viewEase * travel : 0.0f;
         const float alphaIn   = showingFrom ? ImClamp(viewEase, 0.0f, 1.0f) : 1.0f;
@@ -2925,9 +3354,13 @@ namespace VKIntox
         if (closeRequested)
             toggle();
 
-        // toasts last, so they draw above the overlay
-        renderToasts();
-        renderFpsCounter();
+        // the snapshot contains only the shell; persistent widgets are rendered
+        // separately on the display frame
+        if (!snapshotCaptureReady)
+        {
+            renderToasts();
+            renderFpsCounter();
+        }
 
         // Global auto-apply check (runs regardless of which tab is active)
         if (settingsManager.getAutoApply() && paramsDirty)
@@ -2999,6 +3432,7 @@ namespace VKIntox
             cio.MouseDrawCursor = (getSurfaceKind() == SurfaceKind::Wayland) && visible && overOverlay;
         }
         ImGui::Render();
+        overlayDrawDataValid = ImGui::GetDrawData() != nullptr;
 
         // Record the backdrop capture + blur into this same command buffer,
         // before the overlay render pass samples the result. No work is recorded
@@ -3006,17 +3440,48 @@ namespace VKIntox
         if (blurActive)
             recordBlur(cmd, imageIndex, image, width, height);
 
-        // Begin render pass
+        // The first transition frame renders the complete live shell into an
+        // offscreen snapshot. Later frames scale that texture, so ImGui never
+        // reflows or resizes the panel during the animation.
         VkRenderPassBeginInfo rpBegin = {};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpBegin.renderPass = renderPass;
-        rpBegin.framebuffer = framebuffer;
+        rpBegin.renderPass = snapshotCaptureReady ? snapshotRenderPass : renderPass;
+        rpBegin.framebuffer = snapshotCaptureReady ? snapshotFramebuffer : framebuffer;
         rpBegin.renderArea.extent.width = width;
         rpBegin.renderArea.extent.height = height;
+        VkClearValue clearValue{};
+        if (snapshotCaptureReady)
+        {
+            clearValue.color.float32[0] = 0.0f;
+            clearValue.color.float32[1] = 0.0f;
+            clearValue.color.float32[2] = 0.0f;
+            clearValue.color.float32[3] = 0.0f;
+            rpBegin.pClearValues = &clearValue;
+            rpBegin.clearValueCount = 1;
+        }
 
         logicalDevice->vkd.CmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
         logicalDevice->vkd.CmdEndRenderPass(cmd);
+        if (snapshotCaptureReady)
+        {
+            const ImGuiM3Metrics& metrics = ImGuiM3GetMetrics();
+            constexpr int elevation = 3;
+            const float reach = ImMax(metrics.ambient_shadow_blur[elevation] * 2.0f + metrics.ambient_shadow_spread[elevation],
+                                      ImMax(metrics.key_shadow_blur[elevation] * 2.0f, 4.0f));
+            const float drop = ImMax(metrics.ambient_shadow_y[elevation], metrics.key_shadow_y[elevation]);
+            const float pad = ImCeil((reach + drop) * metrics.density) + 1.0f;
+            snapshotRect = ImVec4(windowPos.x - pad, windowPos.y - pad,
+                                  windowSize.x + pad * 2.0f, windowSize.y + pad * 2.0f);
+            snapshotValid = true;
+            shellAlpha = transitionAlpha;
+
+            // display the freshly baked shell and the persistent widgets in the
+            // same frame, so the capture itself cannot flash an empty screen
+            ImGui_ImplVulkan_NewFrame();
+            ImGui::NewFrame();
+            renderTransition();
+        }
 
         vr = logicalDevice->vkd.EndCommandBuffer(cmd);
         if (vr != VK_SUCCESS)
