@@ -2091,7 +2091,7 @@ namespace VKIntox
         (void) imageIndex;
         if (!backendInitialized || cmd == VK_NULL_HANDLE || renderPass == VK_NULL_HANDLE)
             return;
-        if (imageView == VK_NULL_HANDLE || width == 0 || height == 0)
+        if (imageView == VK_NULL_HANDLE || width == 0 || height == 0 || !overlayDrawDataValid)
             return;
         ImDrawData* drawData = ImGui::GetDrawData();
         if (!drawData)
@@ -2135,6 +2135,7 @@ namespace VKIntox
 
     VkCommandBuffer ImGuiOverlay::recordFrame(uint32_t imageIndex, VkImage image, VkImageView imageView, uint32_t width, uint32_t height)
     {
+        overlayDrawDataValid = false;
         // a frame dump must not bake the UI into the file; the request arms a
         // hold long enough for the overlay to be gone for the whole capture
         if (DepthDump::overlaySuppressed())
@@ -2375,6 +2376,7 @@ namespace VKIntox
             setWaylandInputSurfaceRects(nullptr, 0);
             publishOverlayInput(settingsManager.getOverlayBlockInput());
             ImGui::Render();
+            overlayDrawDataValid = ImGui::GetDrawData() != nullptr;
 
             VkRenderPassBeginInfo rpBegin = {};
             rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3165,6 +3167,7 @@ namespace VKIntox
             cio.MouseDrawCursor = (getSurfaceKind() == SurfaceKind::Wayland) && visible && overOverlay;
         }
         ImGui::Render();
+        overlayDrawDataValid = ImGui::GetDrawData() != nullptr;
 
         // Record the backdrop capture + blur into this same command buffer,
         // before the overlay render pass samples the result. No work is recorded

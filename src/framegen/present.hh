@@ -7,11 +7,13 @@
 // stays in the application's image. Pacing comes from FIFO (forced while FG is
 // on); a CPU sleep only stands in when the swapchain could not be made FIFO.
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <array>
+#include <thread>
 #include <vector>
 
 #include <vulkan/vulkan.h>
@@ -36,6 +38,8 @@ namespace VKIntox
             // force FIFO while generating: under MAILBOX/IMMEDIATE the real
             // frame replaces the generated one before it is ever scanned out
             bool forceVsync = true;
+            // Optional Lossless Scaling DLL used when no external MAKO model
+            // package is available.
             std::string dllPath;
         };
 
@@ -86,7 +90,7 @@ namespace VKIntox
             // after the effect pass and before the overlay draw.
             VkCommandBuffer copySourceCommand(uint32_t index) const
             {
-                return m_ready && index < m_frameCopyCmdbufs.size()
+                return m_ready.load() && index < m_frameCopyCmdbufs.size()
                     ? m_frameCopyCmdbufs[index] : VK_NULL_HANDLE;
             }
 
@@ -97,27 +101,37 @@ namespace VKIntox
                 return index < m_frameSourceImages.size() ? m_frameSourceImages[index] : VK_NULL_HANDLE;
             }
 
+            bool warmupFailed() const { return m_warmupFailed.load(); }
+            bool hostLost() const;
+
         private:
+            struct LossReleaseState
+            {
+                std::atomic<bool> lost{false};
+                VkDevice device = VK_NULL_HANDLE;
+                VkSemaphore semaphore = VK_NULL_HANDLE;
+                PFN_vkSignalSemaphoreKHR signal = nullptr;
+            };
+
             struct InnerSyncPass
             {
                 VkCommandBuffer copyCmdbuf = VK_NULL_HANDLE;
+                VkCommandBuffer releaseCmdbuf = VK_NULL_HANDLE;
                 VkSemaphore acquireSemaphore = VK_NULL_HANDLE;
                 VkSemaphore copySemaphore = VK_NULL_HANDLE;
+                VkSemaphore releaseSemaphore = VK_NULL_HANDLE;
             };
             struct SyncPass
             {
                 VkCommandBuffer uploadCmdbuf = VK_NULL_HANDLE;
-                // the last inner copy's semaphore; the real frame waits on it
+                // Signaled by the same upload that advances the timeline.
                 VkSemaphore presentSemaphore = VK_NULL_HANDLE;
-                // the real frame stays in the application's image and is
-                // presented after the generated ones; this empty submit turns
-                // the upload's timeline value into presentSemaphore
-                VkCommandBuffer realCopyCmdbuf = VK_NULL_HANDLE;
                 std::vector<InnerSyncPass> innerSyncPasses;
             };
 
-            void destroy();
+            void destroy() noexcept;
             bool createEngineObjects(LogicalDevice* logicalDevice, LogicalSwapchain* swapchain, const FgProfile& profile);
+            bool startWarmup(LogicalDevice* logicalDevice);
 
             LogicalDevice* m_logicalDevice = nullptr;
             uint32_t m_multiplier = 2;
@@ -134,7 +148,12 @@ namespace VKIntox
             // the first real frame fills both sources so the host's first
             // generated batch is not interpolated against the blank one
             bool m_firstSourceUpload = true;
-            bool m_ready = false;
+            std::atomic<bool> m_ready{false};
+            std::atomic<bool> m_warmupStarted{false};
+            std::atomic<bool> m_warmupFailed{false};
+            std::atomic<bool> m_stopWarmup{false};
+            uint32_t m_passThroughPresents = 0;
+            std::thread m_warmupThread;
             uint64_t m_syncValue = 0;
             // frames to pass through after an acquire failed, so the display
             // can hand images back before the next attempt
@@ -179,6 +198,7 @@ namespace VKIntox
             VkCommandPool m_commandPool = VK_NULL_HANDLE;
             std::vector<SyncPass> m_syncPasses;
 
+            std::shared_ptr<LossReleaseState> m_lossState;
             std::unique_ptr<EngineInstance> m_engineInstance;
             std::unique_ptr<EngineContext> m_engineContext;
         };

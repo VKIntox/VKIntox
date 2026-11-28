@@ -10,6 +10,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace VKIntox
 {
@@ -29,9 +31,30 @@ namespace VKIntox
         // File descriptors the caller exports and hands to openContext.
         struct FileDescriptors
         {
-            int sourceFd = -1;
-            int destinationFd = -1;
-            int syncFd = -1;
+            int sourceA = -1;
+            int sourceB = -1;
+            int sync = -1;
+            std::vector<int> destinations;
+        };
+
+        // Owns exported descriptors until openContext takes them. The backend
+        // consumes the complete set on entry, including construction failures.
+        class FileDescriptorScope
+        {
+        public:
+            ~FileDescriptorScope();
+            FileDescriptorScope() = default;
+            FileDescriptorScope(const FileDescriptorScope&) = delete;
+            FileDescriptorScope& operator=(const FileDescriptorScope&) = delete;
+
+            void setSourceA(int fd);
+            void setSourceB(int fd);
+            void setSync(int fd);
+            void addDestination(int fd);
+            FileDescriptors release() noexcept;
+
+        private:
+            FileDescriptors m_descriptors;
         };
 
         // Lazily created per device; the backend matches the game's GPU and
@@ -39,7 +62,9 @@ namespace VKIntox
         class EngineInstance
         {
         public:
-            explicit EngineInstance(LogicalDevice* logicalDevice);
+            explicit EngineInstance(LogicalDevice* logicalDevice,
+                                    bool halfPrecision = false,
+                                    const std::string& dllPath = {});
             ~EngineInstance();
             EngineInstance(const EngineInstance&) = delete;
             EngineInstance& operator=(const EngineInstance&) = delete;
@@ -57,9 +82,7 @@ namespace VKIntox
         {
         public:
             EngineContext(EngineInstance& instance,
-                          int sourceFdA, int sourceFdB,
-                          const std::vector<int>& destinationFds,
-                          int syncFd,
+                          FileDescriptorScope& descriptors,
                           uint32_t width, uint32_t height,
                           bool highPrecision,
                           uint32_t flowScale, bool performanceMode);
@@ -68,12 +91,18 @@ namespace VKIntox
             EngineContext& operator=(const EngineContext&) = delete;
 
             // Schedules the standard fixed schedule for the opened capacity.
-            void scheduleFrames();
+            // False means the host is lost or rejected the schedule.
+            bool scheduleFrames() noexcept;
 
-            // Blocks until the host finished the batch's GPU work. The host
-            // rejects a new schedule while its last batch is in flight.
-            // False means the host stayed busy past the bounded wait.
-            bool waitForIdle();
+            // Waits until the host finished the batch's GPU work. False means
+            // the host stayed busy past the bounded wait. Never throws.
+            bool waitForIdle(uint64_t timeoutNs = 0) noexcept;
+
+            // Host-side loss checks do not perform IPC and never throw.
+            bool contextLost() const noexcept;
+
+            // The callback runs on the backend watcher when the host dies.
+            bool setLossHandler(std::function<void()> handler) noexcept;
 
         private:
             struct ObjectDeleter { void operator()(void* p) const; };

@@ -230,7 +230,7 @@ libdl_dep = meson.get_compiler('cpp').find_library('dl', required : false)
 # runs in its own host program shipped beside the layer (src/framegen/mako-fg).
 # The backend sources are GPL-3.0-or-later; VKIntox is GPL-3.0.
 mako_dir = meson.project_source_root() / 'src/vendor/mako/engine'
-have_fg_engine = fs.is_dir(mako_dir / 'mako-backend')
+have_fg_engine = get_option('fg_engine') and fs.is_dir(mako_dir / 'mako-backend')
 threads_dep = dependency('threads')
 if have_fg_engine
     mako_common_lib = static_library('mako_common',
@@ -305,6 +305,9 @@ endif
 gio_dep = dependency('gio-2.0', required: false)
 vkintox_deps = [x11_dep, xi_dep, xtst_dep, wayland_client_dep, xkbcommon_dep, reshade_dep]
 vkintox_cpp_args = ['-DIMGUI_IMPL_VULKAN_NO_PROTOTYPES']
+if have_fg_engine
+    vkintox_cpp_args += ['-DVKINTOX_HAVE_FG_ENGINE=1']
+endif
 if gio_dep.found()
     vkintox_deps += gio_dep
     vkintox_cpp_args += '-DVKINTOX_HAVE_GIO=1'

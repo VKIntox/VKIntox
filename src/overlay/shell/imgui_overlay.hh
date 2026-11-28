@@ -333,6 +333,7 @@ namespace VKIntox
         // deferred until it is false: focusing mid-slide made ImGui scroll the
         // window to the focused item, which dragged the nav bar along.
         bool viewTransitionActive = false;
+        bool overlayDrawDataValid = false;
         int activeView = 0;
 
         // Bumped when updateState sees different effect sources, so the

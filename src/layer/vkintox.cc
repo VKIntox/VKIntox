@@ -2048,23 +2048,13 @@ namespace VKIntox
             }
         }
         // FG frame generation moves frames across two Vulkan devices through
-        // exported fds; the game's device needs the import side of those
-        // extensions, and timeline semaphores for the engine's pacing signal.
-        // Adding supported extensions is inert for apps that never use them.
+        // exported fds. Extension names and the optional timeline feature are
+        // queried separately; Vulkan 1.2 does not imply that the KHR extension
+        // name is advertised.
         const bool fgExternalMemoryOk = hasDeviceExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)
             && hasDeviceExtension(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
-        const bool fgTimelineExtOk = hasDeviceExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)
-            || deviceProps.apiVersion >= VK_API_VERSION_1_2;
-        if (fgExternalMemoryOk && fgTimelineExtOk)
-        {
-            addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
-            addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
-            addUniqueCString(enabledExtensionNames, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
-        }
-        else if (settingsManager.getFgEnabled())
-        {
-            Logger::warn("FG is enabled but this device lacks the external memory/semaphore fd extensions; frame generation is unavailable");
-        }
+        const bool fgTimelineExtOk = hasDeviceExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        bool fgTimelineFeatureSupported = false;
 
         modifiedCreateInfo.ppEnabledExtensionNames = enabledExtensionNames.data();
         modifiedCreateInfo.enabledExtensionCount   = enabledExtensionNames.size();
@@ -2081,11 +2071,30 @@ namespace VKIntox
         VkPhysicalDeviceFeatures supportedFeatures = {};
         if (instanceDispatchMap[GetKey(physicalDevice)].GetPhysicalDeviceFeatures2)
         {
+            VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineQuery{};
+            timelineQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
             VkPhysicalDeviceFeatures2 features2 = {};
             features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            if (fgTimelineExtOk || deviceProps.apiVersion >= VK_API_VERSION_1_2)
+                features2.pNext = &timelineQuery;
             instanceDispatchMap[GetKey(physicalDevice)].GetPhysicalDeviceFeatures2(physicalDevice, &features2);
             supportedFeatures = features2.features;
+            fgTimelineFeatureSupported = timelineQuery.timelineSemaphore == VK_TRUE;
         }
+
+        if (fgExternalMemoryOk && fgTimelineFeatureSupported)
+        {
+            addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+            addUniqueCString(enabledExtensionNames, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+            if (fgTimelineExtOk)
+                addUniqueCString(enabledExtensionNames, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        }
+        else if (settingsManager.getFgEnabled())
+        {
+            Logger::warn("FG is enabled but this device lacks supported external-memory or timeline-semaphore functionality");
+        }
+        modifiedCreateInfo.ppEnabledExtensionNames = enabledExtensionNames.data();
+        modifiedCreateInfo.enabledExtensionCount   = enabledExtensionNames.size();
 
         VkPhysicalDeviceFeatures deviceFeatures = {};
         if (modifiedCreateInfo.pEnabledFeatures)
@@ -2156,8 +2165,9 @@ namespace VKIntox
 
         // FG timeline semaphore feature for the engine's pacing signal
         VkPhysicalDeviceTimelineSemaphoreFeaturesKHR fgTimelineFeature{};
-        if (fgExternalMemoryOk && fgTimelineExtOk &&
-            !pNextChainContainsSType(extendedDevicePNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR))
+        if (fgExternalMemoryOk && fgTimelineFeatureSupported &&
+            !pNextChainContainsSType(extendedDevicePNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR)
+            && !pNextChainContainsSType(extendedDevicePNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES))
         {
             fgTimelineFeature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
             fgTimelineFeature.timelineSemaphore = VK_TRUE;
@@ -4262,7 +4272,8 @@ namespace VKIntox
             fgSourceReady = false;
             fgReplayOverlay = false;
             VkCommandBuffer fgSourceCopy = VK_NULL_HANDLE;
-            if (logicalSwapchain->fg && settingsManager.getFgEnabled())
+            if (logicalSwapchain->fg && settingsManager.getFgEnabled()
+                && !logicalSwapchain->fgStale && !logicalSwapchain->fgRecreateRequested)
             {
                 fgSourceCopy = logicalSwapchain->fg->copySourceCommand(index);
                 if (pPresentInfo->swapchainCount == 1 && fgSourceCopy != VK_NULL_HANDLE)
@@ -4312,16 +4323,16 @@ namespace VKIntox
             return VK_ERROR_OUT_OF_DATE_KHR;
         }
 
+        bool fgNeedsRecreate = false;
         // FG frame insertion: the composited frame just finished on
         // presentSemaphores.back(); the engine generates the intermediate
         // frames and presents them ahead of this one. Single swapchain only —
         // inserted frames must own the compositor's FIFO ordering.
         if (pPresentInfo->swapchainCount == 1 && !presentSemaphores.empty())
         {
-            auto swapIt = swapchainMap.find(pPresentInfo->pSwapchains[0]);
-            if (swapIt != swapchainMap.end() && swapIt->second && !swapIt->second->passthrough)
+            const auto logicalSwapchain = presentSwapchains[0];
+            if (logicalSwapchain && !logicalSwapchain->passthrough)
             {
-                LogicalSwapchain* logicalSwapchain = swapIt->second.get();
                 logicalSwapchain->fgPresentCount++;
                 FrameGen::FgProfile profile;
                 profile.enabled         = settingsManager.getFgEnabled();
@@ -4354,40 +4365,56 @@ namespace VKIntox
                         && a.dllPath == b.dllPath;
                 };
                 const bool sameEngine = logicalSwapchain->fg
-                    && logicalSwapchain->fgProfile.enabled == profile.enabled
+                    && logicalSwapchain->fgProfile.enabled
                     && sameEngineProfile(logicalSwapchain->fgProfile, profile);
-
-                if (logicalSwapchain->fg && !sameEngine)
-                {
-                    // settings changed between frames: retire the old generator
-                    // only after the queue has finished the frame it was given
-                    if (logicalDevice->vkd.QueueWaitIdle)
-                        logicalDevice->vkd.QueueWaitIdle(logicalDevice->queue);
-                    logicalSwapchain->fg.reset();
-                    fgSourceReady = false;
-                    fgSourceImage = VK_NULL_HANDLE;
-                    logicalSwapchain->fgProfile = {};
-                    logicalSwapchain->fgInitFailed = false;
-                    logicalSwapchain->fgStale = false;
-                    logicalSwapchain->fgChangeLogged = false;
-                    Logger::info("FG: rebuilding generator for new settings");
-                }
+                const bool createEnabled = logicalSwapchain->fgCreateProfile.enabled;
+                const auto requestRecreate = [&] {
+                    logicalSwapchain->fgRecreateRequested = true;
+                    fgNeedsRecreate = true;
+                };
 
                 if (!profile.enabled)
                 {
-                    logicalSwapchain->fgStale = false;
-                    logicalSwapchain->fgChangeLogged = false;
+                    if (logicalSwapchain->fg)
+                        logicalSwapchain->fgStale = true;
+                    if (createEnabled)
+                        requestRecreate();
+                }
+                else if (logicalSwapchain->fg
+                         && (logicalSwapchain->fg->hostLost() || logicalSwapchain->fg->warmupFailed()))
+                {
+                    logicalSwapchain->fgStale = true;
+                    logicalSwapchain->fgInitFailed = true;
+                    if (!logicalSwapchain->fgChangeLogged)
+                    {
+                        logicalSwapchain->fgChangeLogged = true;
+                        Logger::err("FG: host lost or warmup failed; frame generation is disabled until settings change");
+                    }
+                    if (!sameEngine)
+                        requestRecreate();
+                }
+                else if (!FrameGen::FgSwapchain::active(logicalDevice, profile))
+                {
+                    logicalSwapchain->fgInitFailed = true;
+                }
+                else if (!createEnabled || (logicalSwapchain->fg && !sameEngine))
+                {
+                    // Configuration changes cross a swapchain boundary. The
+                    // application's recreation retires the old engine without
+                    // a present-thread QueueWaitIdle or mid-frame reset.
+                    if (logicalSwapchain->fg)
+                        logicalSwapchain->fgStale = true;
+                    requestRecreate();
                 }
                 else if (!logicalSwapchain->fg && !logicalSwapchain->fgInitFailed
                          && (logicalSwapchain->fgPresentCount >= 30
                              || (logicalSwapchain->imageExtent.width >= 640
-                                 && logicalSwapchain->imageExtent.height >= 360))
-                         && FrameGen::FgSwapchain::active(logicalDevice, profile))
+                                 && logicalSwapchain->imageExtent.height >= 360)))
                 {
                     try
                     {
                         logicalSwapchain->fg = std::make_unique<FrameGen::FgSwapchain>(
-                            logicalDevice, logicalSwapchain, profile);
+                            logicalDevice, logicalSwapchain.get(), profile);
                         logicalSwapchain->fgProfile = profile;
                     }
                     catch (const std::exception& e)
@@ -4398,33 +4425,21 @@ namespace VKIntox
                     }
                 }
 
-                if (logicalSwapchain->fg && profile.enabled)
+                if (logicalSwapchain->fg && profile.enabled
+                    && !logicalSwapchain->fgStale && !logicalSwapchain->fgRecreateRequested)
                 {
-                    logicalSwapchain->fgStale = false;
-                    logicalSwapchain->fgChangeLogged = false;
                     const bool fifo = FrameGen::presentModeQueuesEveryFrame(logicalSwapchain->presentMode);
                     // DXVK and others switch present modes per present through
-                    // swapchain_maintenance1; keep them on FIFO while generating
+                    // swapchain_maintenance1; keep them on FIFO while generating.
                     if (fifo && profile.forceVsync)
                         FrameGen::forceFifoInPresentChain(pPresentInfo);
-                    VkSemaphore compositedWait = presentSemaphores.back();
-                    VkResult fgResult = logicalSwapchain->fg->present(
-                        logicalDevice, logicalSwapchain,
+                    return logicalSwapchain->fg->present(
+                        logicalDevice, logicalSwapchain.get(),
                         pPresentInfo->pImageIndices[0],
-                        queue, compositedWait, fgSourceImage, fgSourceLayout, fgSourceReady,
+                        queue, presentSemaphores.back(), fgSourceImage, fgSourceLayout, fgSourceReady,
                         fgReplayOverlay, pPresentInfo);
-                    // FG was switched on while the swapchain ran MAILBOX or
-                    // IMMEDIATE: ask once for a recreate so the create hook
-                    // can make it FIFO. Until then the CPU-paced path runs.
-                    if (!fifo && profile.forceVsync && !logicalSwapchain->fgRecreateRequested
-                        && fgResult == VK_SUCCESS)
-                    {
-                        logicalSwapchain->fgRecreateRequested = true;
-                        Logger::info("FG: swapchain is not FIFO; requesting a recreate to enable vsync pacing");
-                        return VK_SUBOPTIMAL_KHR;
-                    }
-                    return fgResult;
                 }
+                fgNeedsRecreate = logicalSwapchain->fgRecreateRequested;
             }
         }
 
@@ -4467,6 +4482,11 @@ namespace VKIntox
             return presentResult;
         }
         
+        if (fgNeedsRecreate && presentResult == VK_SUCCESS)
+        {
+            Logger::info("FG: requesting swapchain recreation to apply frame-generation settings");
+            return VK_SUBOPTIMAL_KHR;
+        }
         return presentResult;
     }
 
