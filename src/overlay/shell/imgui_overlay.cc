@@ -3103,6 +3103,7 @@ namespace VKIntox
         // (config manage). The other top-level tabs map to fixed keys.
         auto contentIndex = [&]() -> int {
             // pushed pages come first: they belong to whichever tab opened them
+            if (openSubView == SubView_DepthSettings) return 5;
             if (openSubView == SubView_DepthBuffers) return 8;
             if (openSubView == SubView_Diagnostics)  return 6;
             if (openSubView == SubView_ThemeColors)  return 9;
@@ -3217,7 +3218,7 @@ namespace VKIntox
         // rather than beside it - and the top bar cannot hang over the
         // breadcrumb of a page that is standing on it.
         const float dockGap = ImGui::GetStyle().ItemSpacing.y;
-        const bool overDock = (viewIndex == 1 || viewIndex == 2 || viewIndex == 6 ||
+        const bool overDock = (viewIndex == 1 || viewIndex == 2 || viewIndex == 5 || viewIndex == 6 ||
                                viewIndex == 8 || viewIndex == 9 || viewIndex == 10 || viewIndex == 11 ||
                                viewIndex == 12);
         const float dockFade = overDock

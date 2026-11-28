@@ -244,6 +244,7 @@ namespace VKIntox
         enum SubView
         {
             SubView_None = 0,
+            SubView_DepthSettings,
             SubView_DepthBuffers,
             SubView_Diagnostics,
             SubView_ThemeColors,
