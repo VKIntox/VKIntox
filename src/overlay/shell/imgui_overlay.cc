@@ -2040,13 +2040,14 @@ namespace VKIntox
 
         const ImGuiM3BlurSettings& settings = ImGuiM3GetBlurSettings();
         int passes = settings.passes;
-        if (passes < 1)  passes = 1;
-        if (passes > 10) passes = 10;
-        // Half the configured size as pixel spacing: a 5-wide kernel on each side
-        // of a 9-tap read, repeated, reads as a generous radius rather than a
-        // hard band.
-        const float radius = std::max(0.0f, settings.size) * 0.5f;
-        const float sigma  = kBlurSigma;
+        if (passes < 1) passes = 1;
+        if (passes > 8) passes = 8;
+        // size is the base tap spacing; every pass doubles the reach so the
+        // intensity and pass count compound like a multi-scale blur instead of
+        // repeating the same narrow kernel. size + 2 keeps a minimum radius at
+        // the first pass.
+        const float baseRadius = std::max(0.0f, settings.size) + 2.0f;
+        const float sigma      = kBlurSigma;
 
         auto recordPass = [&](VkFramebuffer framebuffer, VkDescriptorSet source, const BlurPushConstants& pc) {
             VkRenderPassBeginInfo rp{};
@@ -2068,6 +2069,7 @@ namespace VKIntox
         // ImGui texture registered above never has to be rebuilt.
         for (int p = 0; p < passes; ++p)
         {
+            const float radius = baseRadius * static_cast<float>(1u << p);
             BlurPushConstants pc{};
             pc.directionX = radius / static_cast<float>(blurWidth);
             pc.directionY = 0.0f;

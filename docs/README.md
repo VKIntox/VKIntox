@@ -10,6 +10,7 @@ proper reshade (with depth!) for linux games, on linux. utilizes vulkan layers. 
 [![license](https://img.shields.io/badge/license-zlib-2e8b57?style=flat-square)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-linux-555555?style=flat-square)](#)
 [![CI](https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml/badge.svg?branch=main&style=flat-square)](https://github.com/VKIntox/VKIntox/actions/workflows/ci.yml)
+[source](https://git.buwryy.net/VKIntox/VKIntox)
 [![discord server](https://img.shields.io/badge/discord-server-5865f2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/HrUrzXAxPV)
 
 </div>
@@ -40,13 +41,13 @@ proper reshade (with depth!) for linux games, on linux. utilizes vulkan layers. 
 supports flatpak and multiple distros (arch, fedora, debian, nix, openSUSE)
 
 ```bash
-curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
+curl -fsSL https://vkintox.buwryy.net/setup | bash
 ```
 
 uninstall (keeps config):
 
 ```bash
-curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
+curl -fsSL https://vkintox.buwryy.net/setup | bash -s -- uninstall
 ```
 
 the script lets you choose everything interactively, and lets you download preview versions.
@@ -54,7 +55,7 @@ the script lets you choose everything interactively, and lets you download previ
 from a checkout:
 
 ```bash
-git clone https://github.com/VKIntox/VKIntox.git
+git clone https://git.buwryy.net/VKIntox/VKIntox.git
 cd VKIntox
 ./setup sober          # or: ./setup flatpak com.app.id | ./setup system
 ```
@@ -102,7 +103,7 @@ enable per-session with `ENABLE_VKINTOX=1 your_game_command`.
 **setup**
 
 -   **one installer** for sober, flatpak and native targets, with an interactive version picker and an uninstall that leaves your config alone.
--   **assets:** seeds the full google sans + material symbols set and their licences, installs effect packages under `reshade/` grouped by package, and drops the built-in vkintox shaders beside them — those live in their own repo, [VKIntoxEffects](https://github.com/VKIntox/VKIntoxEffects), and install as one of the effect packages.
+-   **assets:** seeds the full google sans + material symbols set and their licences, installs effect packages under `reshade/` grouped by package, and drops the built-in vkintox shaders beside them — those live in their own repo, [VKIntoxEffects](https://git.buwryy.net/VKIntox/VKIntoxEffects), and install as one of the effect packages.
 
 **under the hood**
 
@@ -174,6 +175,6 @@ thanks to **slobodaapl** (vkshade), **dadschoorse** (vkbasalt), **daaboulex** (w
 
 <div align="center">
 
-made with ♡ by [buwryme](https://github.com/buwryme). join the [discord server!](https://discord.gg/HrUrzXAxPV)
+made with ♡ by [buwryy](https://git.buwryy.net/buwryy). join the [discord server!](https://discord.gg/HrUrzXAxPV)
 
 </div>

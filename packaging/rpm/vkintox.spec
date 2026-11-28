@@ -4,7 +4,7 @@ Release:        1%{?dist}
 Summary:        Vulkan post-processing layer with overlay UI
 
 License:        Zlib
-URL:            https://github.com/VKIntox/VKIntox
+URL:            https://git.buwryy.net/VKIntox/VKIntox
 Source0:        %{name}-%{version}.tar.xz
 
 BuildRequires:  meson

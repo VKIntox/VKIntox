@@ -29,8 +29,10 @@ namespace VKIntox
 
     void queueKeyboardEvent(uint32_t keysym, bool down, bool repeat);
     std::vector<KeyboardEvent> drainKeyboardEvents();
-    uint32_t convertToKeySym(std::string key);
-    void beginKeyboardInputFrame();
-    bool     isKeyPressed(uint32_t ks);
-    KeyboardState getKeyboardState();
+    // exported so the test harness can drive the routing functions directly
+    __attribute__((visibility("default"))) uint32_t convertToKeySym(std::string key);
+    __attribute__((visibility("default"))) void beginKeyboardInputFrame();
+    __attribute__((visibility("default"))) bool isKeyPressed(uint32_t ks);
+    __attribute__((visibility("default"))) bool isKeyHeld(uint32_t ks);
+    __attribute__((visibility("default"))) KeyboardState getKeyboardState();
 } // namespace VKIntox

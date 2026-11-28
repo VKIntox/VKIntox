@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: VKIntox
-Source: https://github.com/VKIntox/VKIntox
+Source: https://git.buwryy.net/VKIntox/VKIntox
 
 Files: *
 Copyright: 2019-2022 Georg Lehmann

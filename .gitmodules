@@ -1,12 +1,12 @@
 [submodule "src/vendor/imgui"]
 	path = src/vendor/imgui
-	url = https://github.com/VKIntox/imgui-material-3.git
+	url = https://git.buwryy.net/VKIntox/imgui-material-3.git
 [submodule "src/vendor/reshade"]
 	path = src/vendor/reshade
-	url = https://github.com/VKIntox/reshade-vkintox.git
+	url = https://git.buwryy.net/VKIntox/reshade-vkintox.git
 [submodule "assets/builtInShaders"]
 	path = assets/builtInShaders
-	url = https://github.com/VKIntox/VKIntoxEffects.git
+	url = https://git.buwryy.net/VKIntox/VKIntoxEffects.git
 [submodule "src/vendor/mako"]
 	path = src/vendor/mako
 	url = https://github.com/eugeniosegala/MAKO.git

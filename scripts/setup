@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # vkintox remote installer
-# usage: curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
+# usage: curl -fsSL https://vkintox.buwryy.net/setup | bash
 
 set -euo pipefail
 
 REPO="VKIntox/VKIntox"
 LAYER_ID="org.freedesktop.Platform.VulkanLayer.VKIntox"
-RELEASES_URL="${VKINTOX_RELEASES_URL:-https://api.github.com/repos/$REPO/releases?per_page=100}"
-EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://raw.githubusercontent.com/$REPO/refs/heads/main/assets/EffectPackages.ini}"
+RELEASES_URL="${VKINTOX_RELEASES_URL:-https://git.buwryy.net/api/v1/repos/$REPO/releases?limit=100}"
+EFFECT_PACKAGES_URL="${VKINTOX_EFFECT_PACKAGES_URL:-https://git.buwryy.net/$REPO/raw/branch/main/assets/EffectPackages.ini}"
 MARKER_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/VKIntox"
 MARKER=""
 
@@ -142,10 +142,10 @@ trap 'exit 143' TERM
 usage() {
     cat <<'EOF'
 usage:
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- --system --latest --yes
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- --flatpak --app org.vinegarhq.Sober --version v0.2.0 --yes
-  curl -fsSL https://buwryy.net/api/vkintox/setup-script | bash -s -- uninstall
+  curl -fsSL https://vkintox.buwryy.net/setup | bash
+  curl -fsSL https://vkintox.buwryy.net/setup | bash -s -- --system --latest --yes
+  curl -fsSL https://vkintox.buwryy.net/setup | bash -s -- --flatpak --app org.vinegarhq.Sober --version v0.2.0 --yes
+  curl -fsSL https://vkintox.buwryy.net/setup | bash -s -- uninstall
 
 options:
   uninstall             remove the layer, keeping the config
@@ -637,6 +637,71 @@ fx_over_ui_value() {
         done
     fi
     printf '%s\n' "$value"
+}
+
+seed_builtin_shaders() {
+    local dir="$SHADERS_DIR/VKIntox" base="" source file
+    if ((DRY_RUN)); then
+        say "dry run: would install the VKIntox built-in shaders"
+        return 0
+    fi
+    mkdir -p "$dir"
+    for source in "https://git.buwryy.net/VKIntox/VKIntoxEffects/raw/branch/main" \
+                  "https://raw.githubusercontent.com/VKIntox/VKIntoxEffects/main"; do
+        if curl -fsSL --retry 2 -o "$dir/IntoxCommon.fxh" "$source/IntoxCommon.fxh"; then
+            base="$source"
+            break
+        fi
+    done
+    [[ -n "$base" ]] || { warn "couldn't fetch the VKIntox built-in shaders"; return 0; }
+    for file in MSAA.fx ExponentialFog.fx IntoxMXAO.fx IntoxSSR.fx IntoxRimlight.fx IntoxDepthColorCorrection.fx; do
+        run_progress "fetching $file" curl -fsSL --retry 3 --retry-delay 1 -o "$dir/$file" "$base/$file"
+    done
+    ok "VKIntox built-in shaders installed"
+}
+
+ensure_mako_fg() {
+    [[ "$METHOD" == "flatpak" ]] && return 0
+    if [[ "$(uname -m)" != "x86_64" ]]; then
+        say "frame generation host is x86_64-only; skipping"
+        return 0
+    fi
+    local lib dir base="" tmp runner=() source file ref="${VKINTOX_FG_REF:-framegen}"
+    lib=$(ldconfig -p 2>/dev/null | awk '/libvkintox\.so/{print $NF; exit}')
+    if [[ -z "$lib" ]]; then
+        lib=$(find /usr/lib /usr/lib64 /usr/local/lib -name libvkintox.so 2>/dev/null | head -1)
+    fi
+    [[ -n "$lib" ]] || return 0
+    dir="$(dirname "$lib")/mako-fg"
+    if [[ -x "$dir/mako-fg-host" && -s "$dir/model/weights.bin" ]]; then
+        return 0
+    fi
+    if ((DRY_RUN)); then
+        say "dry run: would seed the MAKO frame generation package into $dir"
+        return 0
+    fi
+    section "frame generation"
+    tmp="$TMP_DIR/mako-fg"
+    mkdir -p "$tmp/model"
+    for source in "https://git.buwryy.net/$REPO/raw/branch/$ref/src/framegen/mako-fg" \
+                  "https://raw.githubusercontent.com/$REPO/$ref/src/framegen/mako-fg"; do
+        if curl -fsSL --retry 2 -o "$tmp/mako-fg-host" "$source/mako-fg-host"; then
+            base="$source"
+            break
+        fi
+    done
+    [[ -n "$base" ]] || die "could not download the MAKO frame generation package"
+    for file in version.json model/weights.bin model/ops.spv model/transport.spv model/mixture.spv; do
+        run_progress "fetching MAKO $file" curl -fsSL --retry 3 --retry-delay 1 -o "$tmp/$file" "$base/$file"
+    done
+    ((EUID != 0)) && runner=(sudo)
+    "${runner[@]}" install -d "$dir/model"
+    "${runner[@]}" install -m 755 "$tmp/mako-fg-host" "$dir/mako-fg-host"
+    "${runner[@]}" install -m 644 "$tmp/version.json" "$dir/version.json"
+    for file in weights.bin ops.spv transport.spv mixture.spv; do
+        "${runner[@]}" install -m 644 "$tmp/model/$file" "$dir/model/$file"
+    done
+    ok "MAKO frame generation package installed"
 }
 
 seed_fx_over_ui() {
@@ -1164,14 +1229,20 @@ build_versions
 choose_version
 
 SKIP_LAYER=0
-if ((FORCE == 0)); then
-    if marker_matches && { [[ "$METHOD" != "flatpak" ]] || flatpak_layer_installed; }; then
+if ((FORCE == 0)) && marker_matches; then
+    if [[ "$METHOD" == "flatpak" ]]; then
+        flatpak_layer_installed && SKIP_LAYER=1
+    else
+        # the marker alone is not proof: the package can vanish from the
+        # system while the marker file survives, so require the package to
+        # actually be installed before skipping the layer
+        [[ -n "$(installed_pkg_version || true)" ]] && SKIP_LAYER=1
+    fi
+fi
+if ((SKIP_LAYER == 0)) && ((FORCE == 0)) && [[ "$METHOD" == "system" ]]; then
+    installed_version=$(installed_pkg_version || true)
+    if [[ -n "$installed_version" && "${installed_version%%-*}" == "${SELECTED_TAG#v}" ]]; then
         SKIP_LAYER=1
-    elif [[ "$METHOD" == "system" ]]; then
-        installed_version=$(installed_pkg_version || true)
-        if [[ -n "$installed_version" && "${installed_version%%-*}" == "${SELECTED_TAG#v}" ]]; then
-            SKIP_LAYER=1
-        fi
     fi
 fi
 
@@ -1241,8 +1312,8 @@ else
                 INSTALL_CMD=(env DEBIAN_FRONTEND=noninteractive apt-get install -y "$ASSET_PATH")
                 ;;
             arch)
-                # builds before 0.3.0 fetched the MAKO package beside the layer
-                # outside pacman; the package owns those paths now
+                # framegen builds before 0.3.0 fetched the MAKO package beside
+                # the layer outside pacman; the package owns those paths now
                 INSTALL_CMD=(pacman -U --noconfirm --overwrite '/usr/lib/mako-fg/*' "$ASSET_PATH")
                 ;;
         esac
@@ -1300,7 +1371,7 @@ EFFECTS_MARKER="$RESHADE_DIR/.vkintox_effects_hash"
 
 section "config dirs"
 mkdir -p "$SHADERS_DIR" "$TEXTURES_DIR" "$APP_CONFIG/font"
-curl -fsSL "https://raw.githubusercontent.com/$REPO/main/VERSION" -o "$APP_CONFIG/version" 2>/dev/null || true
+curl -fsSL "https://git.buwryy.net/$REPO/raw/branch/main/VERSION" -o "$APP_CONFIG/version" 2>/dev/null || true
 seed_fonts
 ok "created config dirs"
 seed_fx_over_ui

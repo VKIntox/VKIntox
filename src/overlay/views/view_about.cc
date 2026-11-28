@@ -85,7 +85,12 @@ namespace VKIntox
         const ImGuiM3Metrics& m = ImGuiM3GetMetrics();
         const float d = m.density;
         const char* disclaimer = "This project uses a design heavily inspired by Google's Material 3 / Material You. Not affiliated with or endorsed by Google.";
+        const float wrapWidth = ImFloor(ImMax(200.0f, ImGui::GetContentRegionAvail().x) / 8.0f) * 8.0f;
+        const float disclaimerHeight = ImGui::CalcTextSize(disclaimer, nullptr, false, wrapWidth).y;
+        const float spacing = ImGui::GetStyle().ItemSpacing.y;
+        const float footerHeight = disclaimerHeight + ImGui::GetTextLineHeight() * 2.5f + spacing * 6.0f + 8.0f;
 
+        ImGui::BeginChild("about_content", ImVec2(0, -footerHeight));
         ImGui::M3CardBegin("about_identity");
         {
             const float logoSize = 56.0f * d;
@@ -139,10 +144,14 @@ namespace VKIntox
         };
         for (size_t i = 0; i < sizeof(credits) / sizeof(credits[0]); ++i)
             renderCreditRow(credits[i], static_cast<int>(i));
+        ImGui::M3CardEnd();
 
-        ImGui::Spacing();
+        ImGui::EndChild();
+
+        // Footer, pinned below the content by the reserved height.
+        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - footerHeight);
         UI::PushSupport();
-        ImGui::PushTextWrapPos(0.0f);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
         ImGui::TextDisabled("%s", disclaimer);
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
@@ -151,7 +160,6 @@ namespace VKIntox
         ImGui::TextLinkOpenURL("git.buwryy.net/VKIntox/VKIntox/issues",
                                "https://git.buwryy.net/VKIntox/VKIntox/issues");
         UI::PopSupport();
-        ImGui::M3CardEnd();
     }
 
 } // namespace VKIntox

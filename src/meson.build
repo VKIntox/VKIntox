@@ -429,6 +429,14 @@ x11_input_handoff_tests = executable('vkintox-x11-input-handoff-tests',
     include_directories : [source_inc])
 test('x11 input handoff', x11_input_handoff_tests, args: [vkintox_lib.full_path()])
 
+# Keyed uniforms: the held-key query against the layer's real keyboard state,
+# with keys injected through XTest. Opt in with VKINTOX_KEY_TEST=1.
+key_uniform_tests = executable('vkintox-key-uniform-tests',
+    'tests/key_uniform_test.cc',
+    dependencies : [x11_dep, xtst_dep, libdl_dep],
+    include_directories : [source_inc])
+test('key uniform', key_uniform_tests, args: [vkintox_lib.full_path()])
+
 # DepthCopyState serializes the CmdEndRenderPass* -> QueueSubmit handoff and the
 # copy ring against DestroyDevice. A missing lock only shows as an intermittent
 # device loss under load, so the state is hammered directly here.

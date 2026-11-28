@@ -393,6 +393,30 @@ namespace VKIntox
         return false;
     }
 
+    // Held-state query without the edge tracking: isKeyPressedWayland consumes
+    // accumulated press events, which would starve the hotkey poll, so this
+    // only reads what is currently down.
+    bool isKeyHeldWayland(uint32_t ks)
+    {
+        if (!initWaylandKeyboard())
+            return false;
+
+        dispatchWaylandInputEvents();
+
+        std::lock_guard<std::mutex> lock(keyboardMutex);
+        if (!xkbKeymap)
+            return false;
+
+        for (uint32_t keycode : pressedKeys)
+        {
+            uint32_t xkbKeycode = keycode + 8;
+            xkb_keysym_t sym = xkb_state_key_get_one_sym(xkbState, xkbKeycode);
+            if ((uint32_t)sym == ks)
+                return true;
+        }
+        return false;
+    }
+
     KeyboardState getKeyboardStateWayland()
     {
         KeyboardState state;

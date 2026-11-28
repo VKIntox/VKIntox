@@ -83,6 +83,19 @@ namespace VKIntox
         return false;
     }
 
+    // Non-destructive held-state query for keyed uniforms and anything else
+    // that must observe a key without consuming hotkey press events.
+    bool isKeyHeld(uint32_t ks)
+    {
+        if (isWayland())
+            return isKeyHeldWayland(ks);
+        if (isX11())
+            return isKeyHeldX11(ks);
+
+        warnUnsupportedKeyboardOnce("unsupported Vulkan surface: keyboard polling disabled; returning no input");
+        return false;
+    }
+
     KeyboardState getKeyboardState()
     {
         KeyboardState state;

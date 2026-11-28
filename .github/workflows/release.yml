@@ -640,3 +640,59 @@ jobs:
             --notes-file "$NOTES" \
             "${PRERELEASE[@]}" \
             dist/*
+
+      - name: Mirror the release to Forgejo
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          DISPLAY: ${{ needs.validate.outputs.display }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          NOTES: ${{ needs.validate.outputs.notes }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FORGEJO_TOKEN:-}" ]; then
+            echo "FORGEJO_TOKEN is not set; skipping the Forgejo mirror."
+            exit 0
+          fi
+          api="https://git.buwryy.net/api/v1/repos/VKIntox/VKIntox"
+          auth="Authorization: token $FORGEJO_TOKEN"
+          prerelease=false
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+            prerelease=true
+          fi
+          payload=$(jq -n \
+            --arg tag "$TAG" \
+            --arg target "$COMMIT" \
+            --arg name "VKIntox $DISPLAY" \
+            --rawfile body "$NOTES" \
+            --argjson prerelease "$prerelease" \
+            '{tag_name: $tag, target_commitish: $target, name: $name, body: $body, draft: false, prerelease: $prerelease}')
+          status=$(curl -sS -o /tmp/forgejo-release.json -w '%{http_code}' \
+            -X POST -H "$auth" -H 'Content-Type: application/json' \
+            -d "$payload" "$api/releases")
+          if [ "$status" = "201" ]; then
+            release_id=$(jq -r '.id' /tmp/forgejo-release.json)
+          elif [ "$status" = "409" ]; then
+            release_id=$(curl -sS -H "$auth" "$api/releases/tags/$TAG" | jq -r '.id')
+          else
+            cat /tmp/forgejo-release.json
+            exit 1
+          fi
+          for file in dist/*; do
+            [ -f "$file" ] || continue
+            name=$(basename "$file")
+            if curl -sS -H "$auth" "$api/releases/$release_id/assets" |
+              jq -e --arg name "$name" 'any(.[]; .name == $name)' >/dev/null; then
+              echo "already on Forgejo: $name"
+              continue
+            fi
+            status=$(curl -sS -o /tmp/forgejo-asset.json -w '%{http_code}' \
+              -X POST -H "$auth" -F "attachment=@$file" \
+              "$api/releases/$release_id/assets")
+            if [ "$status" != "201" ]; then
+              echo "failed to upload $name to Forgejo"
+              cat /tmp/forgejo-asset.json
+              exit 1
+            fi
+          done
