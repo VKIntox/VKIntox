@@ -387,6 +387,7 @@ m3_theme_tests = executable('vkintox-m3-theme-tests',
     'vendor/imgui/imgui_tables.cc',
     'vendor/imgui/imgui_widgets.cc',
     'vendor/imgui/imgui_m3.cc',
+    'overlay/shell/ui_dialog.cc',
     include_directories : [source_inc, imgui_inc])
 test('m3 theme', m3_theme_tests)
 

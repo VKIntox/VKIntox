@@ -13,6 +13,7 @@
 #include "vendor/imgui/imgui_m3_color.h"
 #include "vendor/imgui/imgui.h"
 #include "vendor/imgui/imgui_internal.h"
+#include "overlay/shell/ui_dialog.hh"
 
 #include <cstdio>
 #include <cstdlib>
@@ -221,6 +222,16 @@ static void testMetricsSection(const std::string& dir)
     expect(m.corner_xl == 40.0f, "shape token applies");
     expect(m.button_height_default == 48.0f, "component metric applies");
     expect(ImGuiM3Radius(ImGuiM3Shape_ExtraLarge) == 60.0f, "radii scale by density * shape_scale");
+
+    writeFile(path,
+              "mode = dark\nsource = #6750A4\n[expressive]\n"
+              "fab_size = 56\nfab_icon = 24\nmenu_radius = 24\n"
+              "nav_indicator_width = 64\nswitch_handle = 20\n");
+    ImGuiM3SetThemeFile(path.c_str());
+    const ImGuiM3Metrics& migrated = ImGuiM3GetMetrics();
+    expect(migrated.fab_size == 80.0f && migrated.fab_icon == 28.0f, "legacy FAB defaults migrate");
+    expect(migrated.menu_radius == 48.0f && migrated.nav_indicator_width == 56.0f, "legacy menu and navigation defaults migrate");
+    expect(migrated.switch_handle == 16.0f, "legacy switch handle migrates");
 }
 
 static void testExportedFileReloadsClean(const std::string& dir)
@@ -303,7 +314,7 @@ static void testStyleIsFullyPopulated()
         ImGuiCol_TableHeaderBg, ImGuiCol_TableBorderStrong, ImGuiCol_TableBorderLight,
         ImGuiCol_TableRowBg, ImGuiCol_TableRowBgAlt, ImGuiCol_TextLink, ImGuiCol_TextSelectedBg,
         ImGuiCol_TreeLines, ImGuiCol_DragDropTarget, ImGuiCol_DragDropTargetBg, ImGuiCol_UnsavedMarker,
-        ImGuiCol_NavCursor, ImGuiCol_NavWindowingHighlight, ImGuiCol_NavWindowingDimBg, ImGuiCol_ModalWindowDimBg,
+        ImGuiCol_NavWindowingHighlight, ImGuiCol_NavWindowingDimBg, ImGuiCol_ModalWindowDimBg,
     };
     for (ImGuiCol c : must_be_opaque)
         expect(style.Colors[c].w > 0.0f, "style slot has non-zero alpha");
@@ -318,6 +329,7 @@ static void testStyleIsFullyPopulated()
     // Disabled content uses the 38% state layer opacity, not a style alpha hack.
     expect(style.DisabledAlpha == 1.0f, "disabled alpha is handled per-role, not globally");
     expect(style.Colors[ImGuiCol_TextDisabled].w == 0.38f, "disabled text uses the M3 38% content opacity");
+    expect(style.Colors[ImGuiCol_NavCursor].w == 0.0f, "the default navigation cursor does not paint a second focus outline");
 
     ImGui::DestroyContext();
 }
@@ -345,6 +357,10 @@ static void testStateLayers()
     expect(m.focus_indicator_thickness == 3.0f && m.focus_indicator_outer_offset == 2.0f,
            "focus indicator is 3dp at a 2dp offset");
     expect(m.elevation_dips[5] == 12.0f, "elevation level 5 is 12dp");
+    expect(m.switch_handle == 16.0f && m.switch_handle_with_icon == 24.0f && m.switch_pressed_handle == 28.0f,
+           "switch handles follow the current 16/24/28dp contract");
+    expect(m.fab_size == 80.0f && m.fab_icon == 28.0f, "medium FAB uses the current 80dp container and 28dp icon");
+    expect(m.nav_bar_height == 80.0f && m.nav_indicator_width == 56.0f, "navigation uses the tall bar and current indicator metrics");
 }
 
 // --- 6. Variant handling ----------------------------------------------------
@@ -429,6 +445,20 @@ static void testMotionAndSegments()
     const float fresh = ImGuiM3SpringStepSpatialDefault(0x5678, 1.0f);
     expect(fresh == 1.0f, "a spring first seen at its target is adopted without animating");
 
+    const ImGuiID highRate = 0x53505231u;
+    const ImGuiID lowRate = 0x53505232u;
+    io.DeltaTime = 1.0f / 240.0f;
+    ImGuiM3SpringStepSpatialDefault(highRate, 0.0f);
+    ImGuiM3SpringStepSpatialDefault(lowRate, 0.0f);
+    float highValue = 0.0f;
+    for (int i = 0; i < 24; ++i)
+        highValue = ImGuiM3SpringStepSpatialDefault(highRate, 1.0f);
+    io.DeltaTime = 1.0f / 30.0f;
+    float lowValue = 0.0f;
+    for (int i = 0; i < 3; ++i)
+        lowValue = ImGuiM3SpringStepSpatialDefault(lowRate, 1.0f);
+    expect(std::fabs(highValue - lowValue) < 0.02f, "spring motion is frame-rate independent");
+
     ImGui::DestroyContext();
 }
 
@@ -510,6 +540,169 @@ static void testTypeScale()
            "spacing tokens sit on the 4dp grid");
 }
 
+static void testEmphasizedRolesAndReducedMotion()
+{
+    const ImGuiM3TypeSpec title = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge);
+    const ImGuiM3TypeSpec title_emphasized = ImGuiM3GetTypeStyle(ImGuiM3Type_TitleLarge, true);
+    const ImGuiM3TypeSpec label = ImGuiM3GetTypeStyle(ImGuiM3Type_LabelLarge);
+    const ImGuiM3TypeSpec label_emphasized = ImGuiM3GetTypeStyle(ImGuiM3Type_LabelLarge, true);
+    expect(title.weight == 400 && title_emphasized.weight == 500, "brand roles distinguish regular and emphasized weights");
+    expect(label.weight == 500 && label_emphasized.weight == 700, "label roles distinguish medium and emphasized weights");
+
+    ImGui::CreateContext();
+    ImGui::GetIO().DeltaTime = 1.0f / 60.0f;
+    ImGuiM3Metrics& metrics = const_cast<ImGuiM3Metrics&>(ImGuiM3GetMetrics());
+    metrics.reduced_motion = true;
+    const ImGuiID id = 0x52454455u;
+    ImGuiM3SpringStepSpatialFast(id, 0.0f);
+    expect(ImGuiM3SpringStepSpatialFast(id, 1.0f) == 1.0f, "reduced motion adopts the target immediately");
+    metrics.reduced_motion = false;
+    ImGui::DestroyContext();
+}
+
+static float minimumCornerDuringPress(bool connected)
+{
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(800.0f, 600.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    ImFontAtlasBuildMain(io.Fonts);
+    ImGuiM3ApplyToStyle(1.0f);
+
+    static const char* labels[] = {"All", "VKIntox", "AstraFX"};
+    int selected = 0;
+    const ImVec2 pos(60.0f, 60.0f);
+    float min_corner = FLT_MAX;
+
+    auto render = [&]()
+    {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
+        ImGui::Begin("##button-press-test", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+        ImGui::SetCursorScreenPos(pos);
+        if (connected)
+            ImGui::M3ConnectedButtonGroup("add-effects-tabs", labels, 3, &selected, nullptr, false);
+        else
+            ImGui::M3Button("All", ImGuiM3Button_Filled, ImVec2(120.0f, 40.0f));
+        ImGui::End();
+        ImGui::Render();
+
+        if (ImDrawData* draw = ImGui::GetDrawData())
+        {
+            for (int list_index = 0; list_index < draw->CmdListsCount; ++list_index)
+            {
+                ImDrawList* list = draw->CmdLists[list_index];
+                for (const ImDrawVert& vertex : list->VtxBuffer)
+                {
+                    if (((vertex.col >> IM_COL32_A_SHIFT) & 0xFF) != 255
+                        || std::fabs(vertex.pos.y - (pos.y + 0.5f)) > 0.1f)
+                        continue;
+                    min_corner = ImMin(min_corner, vertex.pos.x - pos.x);
+                }
+            }
+        }
+    };
+
+    render();
+    io.AddMousePosEvent(pos.x + 20.0f, pos.y + 20.0f);
+    render();
+    io.AddMouseButtonEvent(0, true);
+    for (int frame = 0; frame < 90; ++frame)
+        render();
+    io.AddMouseButtonEvent(0, false);
+    for (int frame = 0; frame < 60; ++frame)
+        render();
+    ImGui::DestroyContext();
+    return min_corner;
+}
+
+static void testButtonPressShapes()
+{
+    expect(minimumCornerDuringPress(false) >= 11.0f,
+           "regular button keeps rounded corners through press and release");
+    expect(minimumCornerDuringPress(true) >= 12.0f,
+           "connected tab keeps rounded corners through press and release");
+}
+
+static void testCustomDialogWidth()
+{
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(800.0f, 600.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    ImFontAtlasBuildMain(io.Fonts);
+    ImGuiM3ApplyToStyle(1.0f);
+
+    ImGui::NewFrame();
+    ImGui::Begin("##dialog-width-parent", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::OpenPopup("##custom-value-width");
+    const bool open = VKIntox::UI::BeginM3Dialog("##custom-value-width", "Custom value");
+    expect(open && std::fabs(ImGui::GetWindowSize().x - 440.0f) < 0.1f,
+           "custom value dialog opens at its maximum width");
+    if (open)
+        VKIntox::UI::EndM3Dialog();
+    ImGui::End();
+    ImGui::Render();
+    ImGui::DestroyContext();
+}
+
+static void testCookieContour()
+{
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(400.0f, 400.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    ImFontAtlasBuildMain(io.Fonts);
+
+    ImGui::NewFrame();
+    const ImRect bb(ImVec2(80.0f, 80.0f), ImVec2(280.0f, 280.0f));
+    ImGuiM3DrawShapeMorph(ImGui::GetBackgroundDrawList(), bb,
+                          ImGuiM3MorphShape_Cookie, ImGuiM3MorphShape_Cookie,
+                          1.0f, IM_COL32(255, 192, 203, 255));
+    ImGui::Render();
+
+    ImDrawData* draw = ImGui::GetDrawData();
+    expect(draw != nullptr && draw->CmdListsCount == 1, "cookie emits one draw list");
+    if (draw && draw->CmdListsCount == 1)
+    {
+        ImDrawList* list = draw->CmdLists[0];
+        expect(list->VtxBuffer.Size == 240, "cookie keeps 120 contour samples with an AA fringe");
+        int inner_count = 0;
+        int outer_count = 0;
+        float signed_area = 0.0f;
+        float min_radius = FLT_MAX;
+        float max_radius = 0.0f;
+        float fringe_sum = 0.0f;
+        const ImVec2 center = bb.GetCenter();
+        for (int i = 0; i + 1 < list->VtxBuffer.Size; i += 2)
+        {
+            const ImDrawVert& inner = list->VtxBuffer[i];
+            const ImDrawVert& outer = list->VtxBuffer[i + 1];
+            inner_count += ((inner.col >> IM_COL32_A_SHIFT) & 0xFF) == 255;
+            outer_count += ((outer.col >> IM_COL32_A_SHIFT) & 0xFF) == 0;
+            const ImVec2 next = list->VtxBuffer[(i + 2) % list->VtxBuffer.Size].pos;
+            signed_area += inner.pos.x * next.y - next.x * inner.pos.y;
+            const float dx = inner.pos.x - center.x;
+            const float dy = inner.pos.y - center.y;
+            const float radius = std::sqrt(dx * dx + dy * dy);
+            min_radius = ImMin(min_radius, radius);
+            max_radius = ImMax(max_radius, radius);
+            fringe_sum += std::sqrt((inner.pos.x - outer.pos.x) * (inner.pos.x - outer.pos.x)
+                                    + (inner.pos.y - outer.pos.y) * (inner.pos.y - outer.pos.y));
+        }
+        expect(inner_count == 120 && outer_count == 120, "cookie has a complete transparent AA fringe");
+        expect(signed_area > 0.0f, "cookie contour winds clockwise for outward AA");
+        expect(std::fabs((max_radius - min_radius) - 10.0f) < 1.0f,
+               "cookie lobe depth matches the shallow reference contour");
+        expect(std::fabs(fringe_sum / 120.0f - 2.0f) < 0.1f,
+               "cookie uses a two-pixel anti-aliased edge");
+    }
+    ImGui::DestroyContext();
+}
+
 int main()
 {
     const std::string dir = tempDir();
@@ -528,6 +721,10 @@ int main()
     testMotionAndSegments();
     testIconFont();
     testTypeScale();
+    testEmphasizedRolesAndReducedMotion();
+    testButtonPressShapes();
+    testCustomDialogWidth();
+    testCookieContour();
 
     ImGuiM3SetThemeFile(nullptr);
     ImGuiM3Shutdown();
